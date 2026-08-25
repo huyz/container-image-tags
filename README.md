@@ -1,8 +1,9 @@
 # container-image-tags
 
-`container-image-tags` checks whether a known local container-image tag still
-points to the same remote registry digest. It can then find other current
-registry tags that point to that digest.
+`container-image-tags` resolves a local image or remote tag to a baseline
+registry digest. For local images, it checks whether the known tag still points
+to that digest. It can then find other current registry tags that point to the
+baseline digest.
 
 Arguments can be Docker container names or IDs, local image names or IDs, or
 fully qualified `repository@sha256:...` digests. The script explains how it
@@ -21,15 +22,12 @@ interprets ambiguous input before starting registry work.
   credentials, or an on-demand AWS CLI token
 - Other OCI registries: portable lookup through Skopeo
 
-Digest comparisons always use the complete digest; they are never prefix
-matches.
-
 ## Requirements
 
 The required tools are:
 
 - Bash 4.4 or newer
-- Docker CLI
+- Docker CLI (for `auto` and `local` tag resolution)
 - `curl`
 - `jq`
 - GNU `getopt`
@@ -58,9 +56,8 @@ mkdir -p ~/bin
 ln -s "$PWD/container-image-tags.sh" ~/bin/container-image-tags
 ```
 
-Keep the `.container-image-tags` directory beside `container-image-tags.sh`.
-The executable resolves symlinks back to the checkout so it can load those
-modules.
+Keep the `lib` directory beside `container-image-tags.sh`. The executable
+resolves symlinks back to the checkout so it can load those modules.
 
 ## Usage
 
@@ -75,7 +72,10 @@ Examples:
 container-image-tags postgres
 
 # Check an exact local image tag.
-container-image-tags postgres:17
+container-image-tags --tag-resolution local postgres:17
+
+# Ignore Docker's local state and resolve this tag through the registry.
+container-image-tags --tag-resolution remote postgres:17
 
 # Check every local tag in a repository.
 container-image-tags 'postgres:*'
@@ -87,6 +87,12 @@ container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 container-image-tags $(docker ps -a --format '{{.Names}}')
 ```
 
+Tag resolution defaults to `auto`: use a matching local image when present, or
+announce a fallback and resolve the tag through the registry. Use
+`--tag-resolution local` to require a local baseline, or `--tag-resolution
+remote` to ignore Docker's local state. Remote registry queries used to compare
+or find tags are still available with a local baseline.
+
 Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
@@ -95,6 +101,21 @@ Registry access starts anonymously where possible. Private-registry access can
 reuse credentials configured by Docker, Skopeo, or Podman. When needed, the
 script can request short-lived credentials from the relevant cloud CLI.
 Credential values are not passed on command lines.
+
+## Development
+
+The executable owns argument parsing, local-input orchestration, and output.
+The `lib` directory contains shared diagnostics (`common.sh`), local image
+resolution (`local-images.sh`), generic OCI lookup (`skopeo.sh`), registry
+adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and `ecr.sh`), and
+central registry classification and dispatch (`registries.sh`).
+
+To add registry-specific support, source its adapter before `registries.sh`,
+classify its repository host in `registry_classify`, and add it to the direct
+tag and reverse-lookup dispatch functions. A direct tag lookup writes the
+digest to stdout and returns status 0 when found, 1 when the tag does not
+exist, or 2 when lookup fails. An exhaustive lookup populates `registry_tags`
+and may also populate `registry_lookup_status` and `registry_metadata`.
 
 ## History
 

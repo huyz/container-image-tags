@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Given a Docker container, local image, or registry digest, this checks
-# whether its known local tag still points to the same remote digest. It can
-# then find every current remote registry tag for that digest. Each argument
-# is classified by its shape and, where necessary, by probing the local Docker
-# daemon.
+# Given a Docker container, local image, registry tag, or registry digest, this
+# resolves a baseline digest and can then find every current remote registry
+# tag for that digest. By default, tagged references use local Docker metadata
+# when available and fall back to resolving the tag through the registry.
 #
 # The lookup is done using the image's RepoDigest (e.g. repo@sha256:...).
 # The RepoDigest is the manifest digest that Docker resolved from a registry
@@ -19,9 +18,11 @@
 # portable fallback for other OCI registries and their configured credentials.
 #
 # Steps:
-#   1. Resolve each argument as a container, local image, or registry digest.
+#   1. Resolve each argument as a container, local image, registry tag, or
+#      registry digest.
 #   2. Find the associated repository digest.
-#   3. Check whether the known local tag still points to that remote digest.
+#   3. For local baselines, check whether the known local tag still points to
+#      that remote digest.
 #   4. Optionally find and print every current registry tag for that digest.
 #
 # Prerequisites:
@@ -68,16 +69,14 @@ if [[ $OSTYPE == darwin* ]]; then
         { echo "$0: ERROR: \`$_install_cmd coreutils\` to install $REALPATH." >&2; exit 1; }
     [[ -x "${JQ:="$HOMEBREW_PREFIX/bin/jq"}" ]] || \
         { echo "$0: ERROR: \`$_install_cmd jq\` to install $JQ." >&2; exit 1; }
-    [[ -x "${DOCKER:="$HOMEBREW_PREFIX/bin/docker"}" ]] || \
-        { echo "$0: ERROR: \`$_install_cmd docker\` to install $DOCKER." >&2; exit 1; }
+    DOCKER="${DOCKER:-$HOMEBREW_PREFIX/bin/docker}"
 else
     _install_cmd="sudo apt install"
     GETOPT="getopt"
     REALPATH="realpath"
     command -v "${JQ:=jq}" &>/dev/null || \
         { echo "$0: ERROR: \`$_install_cmd jq\` to install $JQ." >&2; exit 1; }
-    command -v "${DOCKER:=docker}" &>/dev/null || \
-        { echo "$0: ERROR: \`$_install_cmd docker\` to install $DOCKER." >&2; exit 1; }
+    DOCKER="${DOCKER:-docker}"
 fi
 command -v "${CURL:=curl}" &>/dev/null ||
     { echo "$0: ERROR: \`$_install_cmd curl\` to install $CURL." >&2; exit 1; }
@@ -86,36 +85,36 @@ SCRIPT=$("$REALPATH" --no-symlinks "${BASH_SOURCE[0]}")
 # shellcheck disable=SC2034
 SCRIPT_DIR=$(dirname -- "$SCRIPT")
 SOURCE_SCRIPT=$("$REALPATH" "${BASH_SOURCE[0]}")
-MODULE_DIR=$(dirname -- "$SOURCE_SCRIPT")/.container-image-tags
+MODULE_DIR=$(dirname -- "$SOURCE_SCRIPT")/lib
 
 # Resolve the physical source path above so an installation symlink in ~/bin
 # can still load these modules from the checkout.
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/common.sh
+# shellcheck source=lib/common.sh
 source "$MODULE_DIR/common.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/skopeo.sh
+# shellcheck source=lib/skopeo.sh
 source "$MODULE_DIR/skopeo.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/docker-hub.sh
+# shellcheck source=lib/docker-hub.sh
 source "$MODULE_DIR/docker-hub.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/ghcr.sh
+# shellcheck source=lib/ghcr.sh
 source "$MODULE_DIR/ghcr.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/acr.sh
+# shellcheck source=lib/acr.sh
 source "$MODULE_DIR/acr.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/gar.sh
+# shellcheck source=lib/gar.sh
 source "$MODULE_DIR/gar.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/ecr.sh
+# shellcheck source=lib/ecr.sh
 source "$MODULE_DIR/ecr.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/registries.sh
+# shellcheck source=lib/registries.sh
 source "$MODULE_DIR/registries.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=.container-image-tags/local-images.sh
+# shellcheck source=lib/local-images.sh
 source "$MODULE_DIR/local-images.sh"
 
 function require_supported_digest_algorithm {
@@ -130,6 +129,32 @@ function require_supported_digest_algorithm {
         abort "Digest algorithm '$algorithm' in '$digest_reference' is not supported; only sha256 is supported"
 }
 
+# Resolve one registry tag as the baseline without consulting Docker. The
+# caller supplies the notice so automatic fallback and explicitly remote
+# resolution can explain their different intent before network work starts.
+function resolve_remote_tag_baseline {
+    local repository="$1"
+    local tag="$2"
+    local resolution_notice="$3"
+    local remote_reference="$repository:$tag"
+
+    notice "$resolution_notice"
+    registry_classify "$repository"
+    registry_resolve_tag_digest "$repository" "$tag"
+    case "$remote_tag_status" in
+    0) ;;
+    1) abort "Cannot resolve remote tag '$remote_reference': the tag was not found" ;;
+    *) abort "Failed to resolve remote tag '$remote_reference'" ;;
+    esac
+
+    require_supported_digest_algorithm "$remote_reference@$remote_tag_digest"
+    [[ "$remote_tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+        abort "Registry returned an invalid digest for '$remote_reference': '$remote_tag_digest'"
+    repo_digest="$repository@$remote_tag_digest"
+    local_tag="$remote_reference"
+    baseline_source=remote
+}
+
 #### Options
 
 # Defaults
@@ -137,18 +162,23 @@ opt_verbose=
 opt_debug=
 opt_ghcr_method=auto
 opt_tag_scan=
+opt_tag_resolution=auto
 docker_hub_token=
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode
-        --tag-scan: control the reverse lookup after checking the known local tag:
+        --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
+            auto: use a local image when present; otherwise resolve the tag remotely
+            local: require a local image as the baseline
+            remote: ignore local Docker state and resolve the tag through the registry
+        --tag-scan: control the reverse lookup after resolving the baseline digest:
             ask: prompt before scanning for every matching remote tag
             never: do not perform a reverse tag lookup
-            any: stop after finding the first matching tag other than the checked local tag
+            any: stop after finding the first matching tag other than the baseline tag
             all: scan for every matching remote tag
             The default is 'ask' with an interactive terminal; 'all' otherwise
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
@@ -156,8 +186,9 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-scan mode] [-
             packages: use only the GitHub Packages API; never prompt or fall back
             anonymous: use only the anonymous OCI scan; never prompt
 
-Each known local tag is checked first. Interactive runs then ask whether to scan
-the registry for every matching tag; non-interactive runs scan all tags.
+For a local baseline, its known tag is checked first. Interactive runs then ask
+whether to scan the registry for every matching tag; non-interactive runs scan
+all tags.
 Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
 interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
@@ -168,15 +199,15 @@ never passed on this command line.
 
 Arguments are interpreted as follows:
     - repository@sha256:... → use this registry digest exactly
-    - repository:* → check every local tag for that repository
-    - repository:tag → check this exact local for that repository
-    - repository (when its form includes '…/…') → assume ':latest'; if not present locally, treat as 'repository:*'
+    - repository:* → check every local tag for that repository (not supported in remote mode)
+    - repository:tag → resolve this exact tag using the selected tag-resolution mode
+    - repository → use the selected mode with an implicit ':latest'; auto/local can broaden a missing ':latest' to local 'repository:*'
     - SHA-like value → try a local container ID, then a local image ID, then a registry digest
-    - any other value → try a container name before treating it as repository (an image name without a tag)
+    - any other value → in auto/local mode, try a container name before treating it as a repository; remote mode always treats it as a repository
 END
 }
 
-opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
@@ -184,6 +215,7 @@ while true; do
         -h | --help) usage; exit 0 ;;
         -v | --verbose) opt_verbose=opt_verbose; shift ;;
         -d | --debug) opt_debug=opt_debug; shift ;;
+        --tag-resolution) opt_tag_resolution="$2"; shift 2 ;;
         --tag-scan) opt_tag_scan="$2"; shift 2 ;;
         --ghcr-method) opt_ghcr_method="$2"; shift 2 ;;
         --) shift; break ;;
@@ -200,6 +232,16 @@ case "$opt_tag_scan" in
 '' | ask | never | any | all) ;;
 *) abort "--tag-scan must be 'ask', 'never', 'any', or 'all'" ;;
 esac
+
+case "$opt_tag_resolution" in
+auto | local | remote) ;;
+*) abort "--tag-resolution must be 'auto', 'local', or 'remote'" ;;
+esac
+
+if [[ "$opt_tag_resolution" != remote ]] && ! command -v "$DOCKER" &>/dev/null; then
+    echo "$0: ERROR: \`$_install_cmd docker\` to install $DOCKER." >&2
+    exit 1
+fi
 
 if [[ -z "$opt_tag_scan" ]]; then
     if [[ -t 0 || -t 1 || -t 2 ]]; then
@@ -231,6 +273,7 @@ for input in "$@"; do
     wildcard_image_ids=
     wildcard_reference=
     wildcard_repository=
+    baseline_source=
 
     # A full repository digest is already unambiguous and does not need local
     # Docker metadata.
@@ -238,6 +281,7 @@ for input in "$@"; do
         require_supported_digest_algorithm "$input"
         if [[ "$input" =~ ^.+@sha256:[0-9a-f]{64}$ ]]; then
             repo_digest="$input"
+            baseline_source=digest
             notice "Interpreting '$input' as a complete registry digest reference."
         else
             abort "'$input' looks like a registry digest reference, but expected repository@sha256:<64 lowercase hex characters>"
@@ -246,7 +290,9 @@ for input in "$@"; do
     # SHA-like inputs are inherently ambiguous because Docker container IDs and
     # local image IDs are both hashes.  Probe in the documented order.
     elif [[ "$input" =~ ^([Ss][Hh][Aa]256:)?[0-9a-fA-F]{12,64}$ ]]; then
-        if resolved_image_id=$(
+        if [[ "$opt_tag_resolution" == remote ]]; then
+            abort "Cannot resolve SHA-like '$input' remotely without a repository; pass repository@sha256:<64 lowercase hex characters>"
+        elif resolved_image_id=$(
             $DOCKER container inspect "$input" --format '{{.Image}}' 2>/dev/null
         ); then
             container="$input"
@@ -281,6 +327,8 @@ for input in "$@"; do
         preferred_repository=$(repository_from_image_reference "$input")
         final_component="${input##*/}"
         if [[ "$final_component" == *:* && "${final_component##*:}" == '*' ]]; then
+            [[ "$opt_tag_resolution" != remote ]] ||
+                abort "Cannot use wildcard '$input' with --tag-resolution=remote; pass a concrete tag"
             if ! wildcard_image_ids=$(image_ids_for_repository "$preferred_repository"); then
                 abort "Cannot find any local image in repository '$preferred_repository'"
             fi
@@ -292,9 +340,20 @@ for input in "$@"; do
             done <<<"$wildcard_image_ids"
             notice "Explicit wildcard '$input' requested; immediately checking $wildcard_count distinct local image(s)."
         elif [[ "$final_component" == *:* ]]; then
-            inspect_local_image "$input" "$preferred_repository" "$input" ||
+            if [[ "$opt_tag_resolution" == remote ]]; then
+                resolve_remote_tag_baseline "$preferred_repository" "${final_component##*:}" \
+                    "Resolving '$input' through the registry and ignoring local Docker state."
+            elif inspect_local_image "$input" "$preferred_repository" "$input"; then
+                notice "Interpreting '$input' as a tagged local image reference."
+            elif [[ "$opt_tag_resolution" == auto ]]; then
+                resolve_remote_tag_baseline "$preferred_repository" "${final_component##*:}" \
+                    "No local image '$input' was found; falling back to remote tag resolution."
+            else
                 abort "Cannot inspect local image '$input'"
-            notice "Interpreting '$input' as a tagged local image reference."
+            fi
+        elif [[ "$opt_tag_resolution" == remote ]]; then
+            resolve_remote_tag_baseline "$preferred_repository" latest \
+                "Resolving '$preferred_repository:latest' through the registry and ignoring local Docker state."
         elif inspect_local_image "$input" "$preferred_repository" "$preferred_repository:latest"; then
             notice "Resolved '$input' using its implicit ':latest' tag; not scanning other local tags."
         elif wildcard_image_ids=$(image_ids_for_repository "$preferred_repository"); then
@@ -305,6 +364,9 @@ for input in "$@"; do
                 [[ -n "$wildcard_image_id" ]] && ((++wildcard_count))
             done <<<"$wildcard_image_ids"
             notice "No local '$input:latest' image was found; interpreting '$input' as '$input:*' and checking $wildcard_count distinct local image(s)."
+        elif [[ "$opt_tag_resolution" == auto ]]; then
+            resolve_remote_tag_baseline "$preferred_repository" latest \
+                "No local image in repository '$preferred_repository' was found; falling back to remote tag resolution for '$preferred_repository:latest'."
         else
             abort "Cannot find any local image in repository '$preferred_repository'"
         fi
@@ -312,7 +374,10 @@ for input in "$@"; do
     # Otherwise prefer a container name, then permit an image name without an
     # explicit tag.  The image lookup follows the same :latest-before-:* rule.
     else
-        if resolved_image_id=$(
+        if [[ "$opt_tag_resolution" == remote ]]; then
+            resolve_remote_tag_baseline "$input" latest \
+                "Resolving '$input:latest' through the registry and ignoring local Docker state."
+        elif resolved_image_id=$(
             $DOCKER container inspect "$input" --format '{{.Image}}' 2>/dev/null
         ); then
             container="$input"
@@ -329,6 +394,9 @@ for input in "$@"; do
                 [[ -n "$wildcard_image_id" ]] && ((++wildcard_count))
             done <<<"$wildcard_image_ids"
             notice "No container or local '$input:latest' image was found; interpreting '$input' as '$input:*' and checking $wildcard_count distinct local image(s)."
+        elif [[ "$opt_tag_resolution" == auto ]]; then
+            resolve_remote_tag_baseline "$input" latest \
+                "No local container or image repository '$input' was found; falling back to remote tag resolution for '$input:latest'."
         else
             abort "Cannot resolve '$input' as a local container name or local image repository"
         fi
@@ -414,7 +482,10 @@ for input in "$@"; do
         echo "Local tag:  $local_tag"
     fi
 
-    if [[ "$local_tag" == "<none>" ]]; then
+    if [[ "$baseline_source" == remote ]]; then
+        echo "Remote tag: $local_tag"
+        echo "Remote tag resolution: $repo:$local_tag points to ${repo_digest##*@}"
+    elif [[ "$local_tag" == "<none>" ]]; then
         echo "Remote tag check: unavailable because this image has no known local tag"
     else
         remote_tag_reference="$repo:$local_tag"
