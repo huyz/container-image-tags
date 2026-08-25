@@ -21,6 +21,20 @@ function registry_classify {
         registry_repository="${repository#ghcr.io/}"
         registry_host=ghcr.io
         ;;
+    *.azurecr.io/* | *.azurecr.cn/* | *.azurecr.de/* | *.azurecr.us/*)
+        registry_kind=acr
+        skopeo_prepare_lazy_auth
+        ;;
+    public.ecr.aws/*)
+        registry_kind=ecr
+        skopeo_prepare_lazy_auth
+        ;;
+    *.dkr.ecr.*.amazonaws.com/* | *.dkr.ecr.*.amazonaws.com.cn/* | \
+        *.dkr.ecr-fips.*.amazonaws.com/* | *.dkr.ecr-fips.*.amazonaws.com.cn/* | \
+        *.dkr-ecr.*.on.aws/* | *.dkr-ecr-fips.*.on.aws/*)
+        registry_kind=ecr
+        skopeo_prepare_lazy_auth
+        ;;
     *)
         if [[ "$repository" != */* ||
                 "$first_component" != *.* && "$first_component" != *:* &&
@@ -65,6 +79,24 @@ function registry_resolve_tag_digest {
             remote_tag_status=$?
         fi
         ;;
+    acr)
+        skopeo_is_available ||
+            abort "Install skopeo to check registry tag '$remote_tag_reference'"
+        if remote_tag_digest=$(acr_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+            remote_tag_status=0
+        else
+            remote_tag_status=$?
+        fi
+        ;;
+    ecr)
+        skopeo_is_available ||
+            abort "Install skopeo to check registry tag '$remote_tag_reference'"
+        if remote_tag_digest=$(ecr_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+            remote_tag_status=0
+        else
+            remote_tag_status=$?
+        fi
+        ;;
     other)
         skopeo_is_available ||
             abort "Install skopeo to check registry tag '$remote_tag_reference'"
@@ -94,6 +126,20 @@ function registry_find_tags_by_digest {
         ;;
     docker-hub)
         docker_hub_tags_by_digest "$registry_repository" "$digest" "$repository"
+        ;;
+    acr)
+        skopeo_is_available ||
+            abort "Install skopeo to query registry '$registry_host'"
+        registry_tags=$(acr_tags_by_digest \
+            "$registry_host" "$repository" "$digest") ||
+            abort "ACR lookup failed for $repository"
+        ;;
+    ecr)
+        skopeo_is_available ||
+            abort "Install skopeo to query registry '$registry_host'"
+        registry_tags=$(ecr_tags_by_digest \
+            "$registry_host" "$repository" "$digest") ||
+            abort "ECR lookup failed for $repository"
         ;;
     other)
         skopeo_is_available ||

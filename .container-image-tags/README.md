@@ -8,6 +8,8 @@ The sourced modules own these narrower responsibilities:
 - `skopeo.sh`: generic OCI fallback
 - `docker-hub.sh`: Docker Hub API and authentication
 - `ghcr.sh`: GitHub Packages and anonymous GHCR APIs
+- `acr.sh`: Azure Container Registry authentication and lookup
+- `ecr.sh`: Amazon ECR authentication and lookup
 - `registries.sh`: registry classification and dispatch
 
 To add a registry fast path, source its module before `registries.sh`, classify
