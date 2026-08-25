@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 
 # Registry classification and dispatch. Registry-specific modules implement
-# the fast paths; this file is the single integration point for adding another
-# registry such as ECR or ACR.
+# lookup and authentication paths; this file is the single integration point
+# for adding another registry such as GAR, ECR, or ACR.
 
 # Populate registry_kind, registry_repository, and registry_host for a Docker
 # repository reference. registry_repository is normalized for the selected
@@ -23,6 +23,10 @@ function registry_classify {
         ;;
     *.azurecr.io/* | *.azurecr.cn/* | *.azurecr.de/* | *.azurecr.us/*)
         registry_kind=acr
+        skopeo_prepare_lazy_auth
+        ;;
+    *-docker.pkg.dev/* | gcr.io/* | us.gcr.io/* | eu.gcr.io/* | asia.gcr.io/*)
+        registry_kind=gar
         skopeo_prepare_lazy_auth
         ;;
     public.ecr.aws/*)
@@ -88,6 +92,15 @@ function registry_resolve_tag_digest {
             remote_tag_status=$?
         fi
         ;;
+    gar)
+        skopeo_is_available ||
+            abort "Install skopeo to check registry tag '$remote_tag_reference'"
+        if remote_tag_digest=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+            remote_tag_status=0
+        else
+            remote_tag_status=$?
+        fi
+        ;;
     ecr)
         skopeo_is_available ||
             abort "Install skopeo to check registry tag '$remote_tag_reference'"
@@ -133,6 +146,13 @@ function registry_find_tags_by_digest {
         registry_tags=$(acr_tags_by_digest \
             "$registry_host" "$repository" "$digest") ||
             abort "ACR lookup failed for $repository"
+        ;;
+    gar)
+        skopeo_is_available ||
+            abort "Install skopeo to query registry '$registry_host'"
+        registry_tags=$(gar_tags_by_digest \
+            "$registry_host" "$repository" "$digest") ||
+            abort "Google registry lookup failed for $repository"
         ;;
     ecr)
         skopeo_is_available ||

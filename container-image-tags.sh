@@ -31,6 +31,8 @@
 # - registry credentials configured by docker login, skopeo login, or podman
 #   login, for private registries
 # - Azure CLI, optional on-demand authentication for private ACR repositories
+# - Google Cloud CLI, optional on-demand authentication for private GAR/GCR
+#   repositories
 # - AWS CLI, optional on-demand authentication for private ECR repositories
 # - Docker Hub username and PAT, only if an exhaustive anonymous scan is refused
 # - authenticated gh CLI with read:packages scope, optional fast path for GHCR
@@ -104,6 +106,9 @@ source "$MODULE_DIR/ghcr.sh"
 # shellcheck source=.container-image-tags/acr.sh
 source "$MODULE_DIR/acr.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=.container-image-tags/gar.sh
+source "$MODULE_DIR/gar.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=.container-image-tags/ecr.sh
 source "$MODULE_DIR/ecr.sh"
 # shellcheck source-path=SCRIPTDIR
@@ -141,10 +146,10 @@ to scan the registry for every tag that points to the same digest.
 Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
 interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
-login, or podman login. ACR and ECR are first tried anonymously, then reuse
-configured credentials or request a short-lived token from az or aws only after
-the registry requires authentication. Credential values are never passed on
-this command line.
+login, or podman login. ACR, GAR/GCR, and ECR are first tried anonymously, then
+reuse configured credentials or request a short-lived token from az, gcloud, or
+aws only after the registry requires authentication. Credential values are
+never passed on this command line.
 
 Arguments are interpreted as follows:
         repository@sha256:...: use this registry digest directly
