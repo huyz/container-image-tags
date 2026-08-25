@@ -461,7 +461,11 @@ for input in "$@"; do
         continue
     fi
 
-    echo "Registry tag(s):"
+    if [[ "$tag_scan_mode" == any ]]; then
+        echo "Remote tag (any):"
+    else
+        echo "Remote tag(s):"
+    fi
     printf '%s\n' "${registry_tags:-<none>}"
     registry_print_metadata
     done <<<"$images_to_process"
