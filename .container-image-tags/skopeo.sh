@@ -7,6 +7,15 @@
 
 skopeo_anonymous_authfile=
 skopeo_session_authfile=
+skopeo_inspect_platform_args=()
+
+# Native Skopeo sees macOS as Darwin, but Docker Desktop runs container images
+# inside a Linux VM. Override only the OS on macOS so multi-platform inspection
+# selects a Linux image without breaking legitimate Windows-image lookups on
+# other hosts.
+if [[ "$OSTYPE" == darwin* ]]; then
+    skopeo_inspect_platform_args=(--override-os linux)
+fi
 
 # Create isolated authfiles before entering a command substitution. The empty
 # authfile guarantees that the first request does not send cached credentials;
@@ -47,7 +56,8 @@ function skopeo_digest_for_tag {
 
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
-    "$SKOPEO" inspect "${auth_args[@]}" --format '{{.Digest}}' \
+    "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
+        "${auth_args[@]}" --format '{{.Digest}}' \
         "docker://$image_reference" 2>/dev/null
 }
 
@@ -117,7 +127,8 @@ function skopeo_digest_for_tag_with_status {
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
     error_tmp=$(mktemp)
     if manifest_digest=$(
-        "$SKOPEO" inspect "${auth_args[@]}" --format '{{.Digest}}' \
+        "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
+            "${auth_args[@]}" --format '{{.Digest}}' \
             "docker://$image_reference" 2>"$error_tmp"
     ); then
         rm -f "$error_tmp"
