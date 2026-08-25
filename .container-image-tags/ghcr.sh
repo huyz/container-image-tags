@@ -401,8 +401,8 @@ function ghcr_print_metadata {
         )
         echo
         echo "GHCR package info:"
-        echo "Created:      $($JQ -r '.created_at // "unknown"' <<<"$registry_metadata")"
-        echo "Updated:      $($JQ -r '.updated_at // "unknown"' <<<"$registry_metadata")"
+        echo "Created: $($JQ -r '.created_at // "unknown"' <<<"$registry_metadata")"
+        echo "Updated: $($JQ -r '.updated_at // "unknown"' <<<"$registry_metadata")"
         if [[ "$package_current_tags" == none ]]; then
             echo "Note: the digest is still an active GHCR package version, but no current tag points to it."
         fi
