@@ -147,7 +147,8 @@ function choose_docker_hub_authentication {
     done
 }
 
-# Populate registry_tags with every Docker Hub tag matching digest. The shared
+# Populate registry_tags with Docker Hub tags matching digest. In "any" mode,
+# stop after the first match other than registry_direct_tag. The shared
 # skip_input flag is set when the user elects to skip after anonymous
 # pagination is refused.
 function docker_hub_tags_by_digest {
@@ -217,14 +218,22 @@ function docker_hub_tags_by_digest {
         esac
         # shellcheck disable=SC2016  # jq expression, not a shell expansion
         matching_tags=$(
-            $JQ -r --arg digest "$digest" '
-                .results[]
-                | select(((.digest // "") | ltrimstr("sha256:")) == $digest)
-                | .name
+            $JQ -r \
+                --arg digest "$digest" \
+                --arg tag_scan "$registry_tag_scan" \
+                --arg direct_tag "$registry_direct_tag" '
+                [
+                    .results[]
+                    | select(((.digest // "") | ltrimstr("sha256:")) == $digest)
+                    | .name
+                    | select($tag_scan != "any" or . != $direct_tag)
+                ]
+                | if $tag_scan == "any" then .[0] // empty else .[] end
             ' "$response_tmp"
         )
         if [[ -n "$matching_tags" ]]; then
             registry_tags+="${registry_tags:+$'\n'}$matching_tags"
+            [[ "$registry_tag_scan" == any ]] && break
         fi
         next_url=$($JQ -r '.next // empty' "$response_tmp")
     done

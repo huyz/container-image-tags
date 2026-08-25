@@ -122,16 +122,22 @@ function registry_resolve_tag_digest {
     esac
 }
 
-# Populate registry_tags plus any registry-specific status and metadata for an
-# exhaustive reverse lookup.
+# Populate registry_tags plus any registry-specific status and metadata for a
+# reverse lookup. In "any" mode, registry_direct_tag is excluded because that
+# tag was already handled by the direct remote-tag check.
 function registry_find_tags_by_digest {
     local repository="$1"
     local digest="$2"
+    local tag_scan_mode="$3"
+    local direct_tag="$4"
 
     registry_tags=
     registry_lookup_status=
     registry_metadata=
     registry_digest="$digest"
+    registry_tag_scan="$tag_scan_mode"
+    registry_direct_tag=
+    [[ "$direct_tag" == '<none>' ]] || registry_direct_tag="$direct_tag"
 
     case "$registry_kind" in
     ghcr)

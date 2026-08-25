@@ -183,14 +183,15 @@ function ghcr_digest_for_tag {
     return "$lookup_status"
 }
 
-# Print every current GHCR tag whose manifest has the requested digest. This
-# uses only GHCR's anonymous OCI Registry API, but requires one request per tag.
+# Print current GHCR tags whose manifest has the requested digest. This uses
+# only GHCR's anonymous OCI Registry API, but requires one request per tag. In
+# "any" mode, skip registry_direct_tag and stop after the first other match.
 function ghcr_tags_by_digest_anonymously {
     local ghcr_repository="$1"
     local digest="$2"
     local token
     local tags="" next_url next_link page_tags tag manifest_digest
-    local header_tmp body_tmp checked=0
+    local header_tmp body_tmp checked=0 match_found
     local -a spinner=('|' '/' '-' $'\\')
 
     info "Requesting an anonymous GHCR pull token"
@@ -236,6 +237,10 @@ function ghcr_tags_by_digest_anonymously {
     fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
+        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
+            continue
+        fi
+        match_found=
         info "Resolving GHCR tag: $tag"
         if $CURL -fsS -H "Authorization: Bearer $token" \
                 -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
@@ -246,6 +251,7 @@ function ghcr_tags_by_digest_anonymously {
             )
             if [[ "$manifest_digest" == "$digest" ]]; then
                 printf '%s\n' "$tag"
+                [[ "$registry_tag_scan" == any ]] && match_found=1
             fi
         fi
         ((++checked))
@@ -253,6 +259,7 @@ function ghcr_tags_by_digest_anonymously {
             printf '\rSearching GHCR tags anonymously... %s (%d checked)' \
                 "${spinner[checked % 4]}" "$checked" >&2
         fi
+        [[ -z "$match_found" ]] || break
     done <<<"$tags"
     if [[ -z ${opt_verbose-} ]]; then
         printf '\rSearching GHCR tags anonymously... done (%d checked)\n' "$checked" >&2
@@ -314,7 +321,18 @@ function ghcr_tags_by_digest {
     while true; do
         if registry_metadata=$(ghcr_package_version_by_digest "$ghcr_repository" "$digest"); then
             registry_lookup_status=found
-            registry_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
+            if [[ "$registry_tag_scan" == any ]]; then
+                registry_tags=$(
+                    $JQ -r --arg direct_tag "$registry_direct_tag" '
+                        [
+                            .metadata.container.tags[]?
+                            | select(. != $direct_tag)
+                        ][0] // empty
+                    ' <<<"$registry_metadata"
+                )
+            else
+                registry_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
+            fi
             break
         fi
         case "$?" in

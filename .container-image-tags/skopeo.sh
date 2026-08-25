@@ -65,7 +65,7 @@ function skopeo_tags_by_digest {
     local repository="$1"
     local digest="$2"
     local authfile="${3-}"
-    local tags tag manifest_digest error_tmp skopeo_status
+    local tags tag manifest_digest error_tmp skopeo_status match_found
     local checked=0
     local matches=
     local -a auth_args=()
@@ -95,10 +95,15 @@ function skopeo_tags_by_digest {
     fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
+        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
+            continue
+        fi
+        match_found=
         info "Resolving registry tag with skopeo: $tag"
         if manifest_digest=$(skopeo_digest_for_tag "$repository:$tag" "$authfile"); then
             if [[ "$manifest_digest" == "$digest" ]]; then
                 matches+="${matches:+$'\n'}$tag"
+                [[ "$registry_tag_scan" == any ]] && match_found=1
             fi
         fi
         ((++checked))
@@ -106,6 +111,7 @@ function skopeo_tags_by_digest {
             printf '\rSearching registry tags with skopeo... %s (%d checked)' \
                 "${spinner[checked % 4]}" "$checked" >&2
         fi
+        [[ -z "$match_found" ]] || break
     done <<<"$tags"
     if [[ -z ${opt_verbose-} ]]; then
         printf '\rSearching registry tags with skopeo... done (%d checked)\n' "$checked" >&2

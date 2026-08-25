@@ -136,25 +136,28 @@ function require_supported_digest_algorithm {
 opt_verbose=
 opt_debug=
 opt_ghcr_method=auto
-opt_local_only=
-opt_all=
+opt_tag_scan=
 docker_hub_token=
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [-l|--local-only | -a|--all] [--ghcr-method method] <container-or-image-or-digest> [...]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode
-        -l|--local-only: only check whether each known local tag still points to the local digest; never prompt or scan
-        -a|--all: check each known local tag, then scan for every remote tag matching the digest; never prompt
+        --tag-scan: control the reverse lookup after checking the known local tag:
+            ask: prompt before scanning for every matching remote tag
+            never: do not perform a reverse tag lookup
+            any: stop after finding the first matching tag other than the checked local tag
+            all: scan for every matching remote tag
+            default: ask with an interactive terminal; all otherwise
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
             auto: check public tags anonymously; use the Packages API for exhaustive scans and private-tag fallback
             packages: use only the GitHub Packages API; never prompt or fall back
             anonymous: use only the anonymous OCI scan; never prompt
 
-By default, each known local tag is checked first, then you are asked whether
-to scan the registry for every tag that points to the same digest.
+Each known local tag is checked first. Interactive runs then ask whether to scan
+the registry for every matching tag; non-interactive runs scan all tags.
 Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
 interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
@@ -173,7 +176,7 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvalnd --long help,verbose,all,local-only,dry-run,debug,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
@@ -181,8 +184,7 @@ while true; do
         -h | --help) usage; exit 0 ;;
         -v | --verbose) opt_verbose=opt_verbose; shift ;;
         -d | --debug) opt_debug=opt_debug; shift ;;
-        -l | --local-only) opt_local_only=opt_local_only; shift ;;
-        -a | --all) opt_all=opt_all; shift ;;
+        --tag-scan) opt_tag_scan="$2"; shift 2 ;;
         --ghcr-method) opt_ghcr_method="$2"; shift 2 ;;
         --) shift; break ;;
         *) abort "🐛 INTERNAL: unrecognized option '$1'" ;;
@@ -194,8 +196,17 @@ auto | packages | anonymous) ;;
 *) abort "--ghcr-method must be 'auto', 'packages', or 'anonymous'" ;;
 esac
 
-if [[ -n "$opt_local_only" && -n "$opt_all" ]]; then
-    abort "--local-only and --all are mutually exclusive"
+case "$opt_tag_scan" in
+'' | ask | never | any | all) ;;
+*) abort "--tag-scan must be 'ask', 'never', 'any', or 'all'" ;;
+esac
+
+if [[ -z "$opt_tag_scan" ]]; then
+    if [[ -t 0 || -t 1 || -t 2 ]]; then
+        opt_tag_scan=ask
+    else
+        opt_tag_scan=all
+    fi
 fi
 
 [[ $# -ge 1 ]] || { usage >&2; exit 1; }
@@ -427,22 +438,24 @@ for input in "$@"; do
     fi
     echo
 
-    if [[ -n "$opt_local_only" ]]; then
+    tag_scan_mode="$opt_tag_scan"
+    if [[ "$tag_scan_mode" == never ]]; then
         continue
     fi
-    if [[ -z "$opt_all" ]]; then
+    if [[ "$tag_scan_mode" == ask ]]; then
         if choose_remote_tag_scan; then
-            :
+            tag_scan_mode=all
         else
             scan_choice_status=$?
             if (( scan_choice_status == 1 )); then
                 continue
             fi
-            abort "Cannot prompt to scan remote tags; rerun with --local-only or --all"
+            abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all"
         fi
     fi
 
-    registry_find_tags_by_digest "$repo" "sha256:$repo_sha"
+    registry_find_tags_by_digest \
+        "$repo" "sha256:$repo_sha" "$tag_scan_mode" "$local_tag"
 
     if [[ -n "$skip_input" ]]; then
         continue
