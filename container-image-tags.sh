@@ -150,7 +150,7 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-scan mode] [-
             never: do not perform a reverse tag lookup
             any: stop after finding the first matching tag other than the checked local tag
             all: scan for every matching remote tag
-            default: ask with an interactive terminal; all otherwise
+            The default is 'ask' with an interactive terminal; 'all' otherwise
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
             auto: check public tags anonymously; use the Packages API for exhaustive scans and private-tag fallback
             packages: use only the GitHub Packages API; never prompt or fall back
@@ -167,12 +167,12 @@ aws only after the registry requires authentication. Credential values are
 never passed on this command line.
 
 Arguments are interpreted as follows:
-        repository@sha256:...: use this registry digest directly
-        repository:*: immediately match every local tag in that repository
-        image name with an explicit tag: inspect that exact local image
-        SHA-like value: try a local container ID, then a local image ID, then a registry digest
-        image name without a tag (including names with '/'): try ':latest', then match every local repository tag
-        any other value: try a container name before treating it as an image name
+    - repository@sha256:... → use this registry digest exactly
+    - repository:* → check every local tag for that repository
+    - repository:tag → check this exact local for that repository
+    - repository (when its form includes '…/…') → assume ':latest'; if not present locally, treat as 'repository:*'
+    - SHA-like value → try a local container ID, then a local image ID, then a registry digest
+    - any other value → try a container name before treating it as repository (an image name without a tag)
 END
 }
 
