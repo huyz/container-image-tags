@@ -28,6 +28,14 @@ function inspect_local_image {
         $DOCKER image inspect "$image_id" \
             --format='{{with index .Config.Labels "org.opencontainers.image.version"}}{{.}}{{end}}' 2>/dev/null
     ) || return 1
+    local_image_revision=$(
+        $DOCKER image inspect "$image_id" \
+            --format='{{with index .Config.Labels "org.opencontainers.image.revision"}}{{.}}{{end}}' 2>/dev/null
+    ) || return 1
+    local_image_refname=$(
+        $DOCKER image inspect "$image_id" \
+            --format='{{with index .Config.Labels "org.opencontainers.image.ref.name"}}{{.}}{{end}}' 2>/dev/null
+    ) || return 1
 
     repo_digest=
     local_tag=

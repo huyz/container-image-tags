@@ -85,8 +85,8 @@ container-image-tags 'postgres:*'
 # Query a registry digest directly.
 container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 
-# Check all local containers.
-container-image-tags $(docker ps -a --format '{{.Names}}')
+# Check all local containers for all remote tags.
+container-image-tags --tag-scan=all $(docker ps -a --format '{{.Names}}')
 
 # Return one machine-readable array containing every result.
 container-image-tags --json --tag-scan=any postgres redis:7

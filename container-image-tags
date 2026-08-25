@@ -180,6 +180,8 @@ function append_json_result {
             --arg container "$container" \
             --arg image_id "$image_id" \
             --arg image_version "$local_image_version" \
+            --arg image_revision "$local_image_revision" \
+            --arg image_refname "$local_image_refname" \
             --arg local_tag "$local_tag" \
             --arg repository "$repo" \
             --arg digest "sha256:$repo_sha" \
@@ -203,6 +205,8 @@ function append_json_result {
                         else {
                             id: $image_id,
                             version: ($image_version | nullable),
+                            revision: ($image_revision | nullable),
+                            refname: ($image_refname | nullable),
                             tag: (
                                 if $local_tag == "<none>" then null
                                 else $local_tag
@@ -552,7 +556,13 @@ for input in "$@"; do
         if [[ -n "$image_id" ]]; then
             echo "Local Image ID: $image_id"
             if [[ -n "$local_image_version" ]]; then
-                echo "Image version:  $local_image_version"
+                echo "OCI annotation » Version:  $local_image_version"
+            fi
+            if [[ -n "$local_image_revision" ]]; then
+                echo "OCI annotation » Revision: $local_image_revision"
+            fi
+            if [[ -n "$local_image_refname" ]]; then
+                echo "OCI annotation » Ref name: $local_image_refname"
             fi
         fi
         echo "Repository:     $repo"
