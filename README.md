@@ -27,23 +27,26 @@ interprets ambiguous input before starting registry work.
 The required tools are:
 
 - Bash 4.4 or newer
-- Docker CLI (for `auto` and `local` tag resolution)
+- GNU `realpath` (coreutils)
+- GNU `getopt`
 - `curl`
 - `jq`
-- GNU `getopt`
-- `realpath`
 
-Skopeo is required for generic OCI registries and private-registry fallback.
-Depending on the registry, `gh`, `az`, `gcloud`, or `aws` can provide optional
+Recommended:
+- Docker CLI (for `auto` and `local` tag resolution) is required unless you
+  only want to query a specific image digest or use `--tag-resolution remote`.
+
+Optional:
+- Skopeo is required for generic OCI registries and private-registry fallback.
+- Depending on the registry, `gh` (GitHub Container Registry), `gcloud` (Google Container Registry),
+`az` (Azure Container Registry), or `aws` (Elastic Container Registry) can provide optional
 authenticated fast paths or short-lived credentials.
 
-On macOS, Homebrew users can install the core requirements with:
+On macOS and Linux, Homebrew users can install all with:
 
 ```sh
-brew install bash coreutils gnu-getopt jq
+brew install bash coreutils gnu-getopt curl jq docker skopeo gh gcloud-cli azure-cli awscli
 ```
-
-Install Docker and Skopeo separately if they are not already available.
 
 ## Installation
 
@@ -52,11 +55,10 @@ Clone the repository and symlink the executable into a directory on `PATH`:
 ```sh
 git clone https://github.com/huyz/container-image-tags.git
 cd container-image-tags
-mkdir -p ~/bin
-ln -s "$PWD/container-image-tags.sh" ~/bin/container-image-tags
+sudo ln -s "$PWD/container-image-tags" /usr/local/bin/container-image-tags
 ```
 
-Keep the `lib` directory beside `container-image-tags.sh`. The executable
+Keep the `lib` directory beside `container-image-tags`. The executable
 resolves symlinks back to the checkout so it can load those modules.
 
 ## Usage
@@ -71,13 +73,13 @@ Examples:
 # Check a container by name.
 container-image-tags postgres
 
-# Check an exact local image tag.
+# Check an exact local image with tag.
 container-image-tags --tag-resolution local postgres:17
 
 # Ignore Docker's local state and resolve this tag through the registry.
 container-image-tags --tag-resolution remote postgres:17
 
-# Check every local tag in a repository.
+# Check every local tag for a repository (local image with any tag).
 container-image-tags 'postgres:*'
 
 # Query a registry digest directly.
@@ -117,12 +119,10 @@ digest to stdout and returns status 0 when found, 1 when the tag does not
 exist, or 2 when lookup fails. An exhaustive lookup populates `registry_tags`
 and may also populate `registry_lookup_status` and `registry_metadata`.
 
-## History
+As of 2026-08-25, authored mostly by OpenAI GPT 5.6 Sol and DeepSeek V4 Flash.
 
-This repository retains the complete file history from
-[`huyz/trustytools`](https://github.com/huyz/trustytools), including the
-original `docker-image-tags.sh` name and its later rename to
-`container-image-tags.sh`.
+If this project proves useful, it will be rewritten in go for portability and
+fewer dependencies.
 
 ## License
 
