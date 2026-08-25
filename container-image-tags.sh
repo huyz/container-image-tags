@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Given a Docker container, local image, or registry digest, this checks
 # whether its known local tag still points to the same remote digest. It can
 # then find every current remote registry tag for that digest. Each argument
