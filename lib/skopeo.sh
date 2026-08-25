@@ -120,9 +120,10 @@ function skopeo_tags_by_digest {
     printf '%s' "$matches"
 }
 
-# Resolve one tag while distinguishing a missing manifest from an
-# authentication challenge. Return 0 for success, 1 for not found, 2 for other
-# failures, and 3 when authentication is required.
+# Resolve one tag while distinguishing a missing manifest from an access
+# denial. Return 0 for success, 1 for not found, 2 for other failures, and 3
+# for a denial that may require authentication or may hide an unavailable
+# repository.
 function skopeo_digest_for_tag_with_status {
     local image_reference="$1"
     local authfile="${2-}"

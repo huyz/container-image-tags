@@ -143,6 +143,12 @@ function resolve_remote_tag_baseline {
     case "$remote_tag_status" in
     0) ;;
     1) abort "Cannot resolve remote tag '$remote_reference': the tag was not found" ;;
+    3)
+        if [[ -n "$remote_tag_error" ]]; then
+            abort "Google registry denied access to '$remote_reference': $remote_tag_error"
+        fi
+        abort "Registry denied access to '$remote_reference' after authentication; the repository may be unavailable or the authenticated account may lack permission"
+        ;;
     *) abort "Failed to resolve remote tag '$remote_reference'" ;;
     esac
 
@@ -249,7 +255,8 @@ function usage {
 Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
-        -d|--debug: turn on debug mode
+        -d|--debug: turn on debug mode; could trigger more requests
+            to find get more error details from registries
         --json: write one JSON array containing all results to stdout
         --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
@@ -274,7 +281,7 @@ interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
 login, or podman login. ACR, GAR/GCR, and ECR are first tried anonymously, then
 reuse configured credentials or request a short-lived token from az, gcloud, or
-aws only after the registry requires authentication. Credential values are
+aws only after the registry denies anonymous access. Credential values are
 never passed on this command line.
 
 Arguments are interpreted as follows:
@@ -606,6 +613,12 @@ for input in "$@"; do
         1)
             remote_check_status=not_found
             [[ -n "$opt_json" ]] || echo "Remote tag check: ❌ NOT FOUND — $remote_tag_reference no longer exists at the registry"
+            ;;
+        3)
+            if [[ -n "$remote_tag_error" ]]; then
+                abort "Google registry denied access to '$remote_tag_reference': $remote_tag_error"
+            fi
+            abort "Registry denied access to '$remote_tag_reference' after authentication; the repository may be unavailable or the authenticated account may lack permission"
             ;;
         *)
             abort "Failed to check remote tag '$remote_tag_reference'"

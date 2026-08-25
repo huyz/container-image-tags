@@ -61,8 +61,10 @@ function registry_resolve_tag_digest {
     local repository="$1"
     local tag="$2"
     local remote_tag_reference="$repository:$tag"
+    local lookup_output
 
     remote_tag_digest=
+    remote_tag_error=
     case "$registry_kind" in
     docker-hub)
         if remote_tag_digest=$(docker_hub_digest_for_tag "$registry_repository" "$tag"); then
@@ -95,10 +97,12 @@ function registry_resolve_tag_digest {
     gar)
         skopeo_is_available ||
             abort "Install skopeo to check registry tag '$remote_tag_reference'"
-        if remote_tag_digest=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+        if lookup_output=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+            remote_tag_digest="$lookup_output"
             remote_tag_status=0
         else
             remote_tag_status=$?
+            remote_tag_error="$lookup_output"
         fi
         ;;
     ecr)

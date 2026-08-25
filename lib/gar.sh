@@ -1,8 +1,9 @@
 # shellcheck shell=bash
 
 # Google Artifact Registry and Google Container Registry support. Public
-# access stays anonymous; private access obtains a short-lived Google Cloud
-# CLI token only after an authentication challenge.
+# access stays anonymous; after the registry denies anonymous access, retry
+# with a short-lived Google Cloud CLI token. A denial can also mean that the
+# repository is unavailable, so do not claim that authentication is required.
 
 function gar_authenticate {
     local registry="$1"
@@ -12,7 +13,7 @@ function gar_authenticate {
         return 1
     }
 
-    notice "Google registry requires authentication; requesting a short-lived token from Google Cloud CLI."
+    notice "Google registry denied anonymous access; retrying with a short-lived token from Google Cloud CLI."
     if ! "$GCLOUD" auth print-access-token --quiet |
             "$SKOPEO" login --authfile "$skopeo_session_authfile" \
                 --username oauth2accesstoken --password-stdin "$registry" >/dev/null; then
@@ -21,11 +22,52 @@ function gar_authenticate {
     fi
 }
 
+# Skopeo reports only the HTTP status for some Google registry token failures,
+# while Docker's manifest client can preserve the registry's response body.
+# Make this extra network request only in debug mode and return just the
+# registry-provided denial reason when one is available.
+function gar_debug_denial_detail {
+    local image_reference="$1"
+    local docker_error error_tmp
+
+    [[ -n ${opt_debug-} ]] || return 1
+    command -v "$DOCKER" &>/dev/null || return 1
+
+    debug "Requesting a Docker manifest diagnostic for $image_reference after the authenticated Skopeo request was denied"
+    error_tmp=$(mktemp)
+    if "$DOCKER" manifest inspect "$image_reference" >/dev/null 2>"$error_tmp"; then
+        rm -f "$error_tmp"
+        debug "Docker manifest inspection succeeded for $image_reference but provided no denial detail"
+        return 1
+    fi
+
+    docker_error=$(tr '\r\n' '  ' <"$error_tmp" | sed -E 's/[[:space:]]+$//')
+    rm -f "$error_tmp"
+    if [[ "$docker_error" != *'denied: '* ]]; then
+        debug "Docker manifest diagnostic for $image_reference did not include a registry denial reason: $docker_error"
+        return 1
+    fi
+
+    printf '%s\n' "${docker_error#*denied: }"
+}
+
 function gar_digest_for_tag {
     local registry="$1"
     local image_reference="$2"
+    local digest lookup_status
 
-    skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" gar_authenticate
+    if digest=$(skopeo_digest_for_tag_with_lazy_auth \
+            "$registry" "$image_reference" gar_authenticate); then
+        printf '%s\n' "$digest"
+        return 0
+    else
+        lookup_status=$?
+    fi
+
+    if (( lookup_status == 3 )); then
+        gar_debug_denial_detail "$image_reference" || true
+    fi
+    return "$lookup_status"
 }
 
 function gar_tags_by_digest {
