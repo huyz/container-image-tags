@@ -14,30 +14,45 @@ function ghcr_package_version {
     local ghcr_repository="$1"
     local selector="$2"
     local wanted="$3"
-    local owner package_name package_encoded owner_kind endpoint response_tmp match
+    local owner package_name package_encoded owner_kind endpoint response_tmp error_tmp match
+    local api_status gh_error
     local queried_api=
 
     owner="${ghcr_repository%%/*}"
     package_name="${ghcr_repository#*/}"
-    if [[ -z "$owner" || -z "$package_name" || "$package_name" == "$owner" ]]; then
+    if [[ "$ghcr_repository" != */* || -z "$owner" || -z "$package_name" ]]; then
+        debug "GHCR Packages API rejected repository components: repository=$ghcr_repository owner=$owner package=$package_name"
         return 2
     fi
 
     # shellcheck disable=SC2016  # jq expression, not a shell expansion
     package_encoded=$($JQ -rn --arg value "$package_name" '$value | @uri')
 
-    command -v "${GH:=gh}" &>/dev/null || return 2
+    if ! command -v "${GH:=gh}" &>/dev/null; then
+        debug "GitHub Packages API command is unavailable: $GH"
+        return 2
+    fi
     response_tmp=$(mktemp)
+    error_tmp=$(mktemp)
 
     # A GHCR namespace can belong to either an organization or a user. Try
     # both owner-specific Packages API endpoints.
     for owner_kind in orgs users; do
         endpoint="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100"
         info "Searching GitHub package versions for $owner_kind/$owner/$package_name"
-        if ! "$GH" api --paginate "$endpoint" >"$response_tmp" 2>/dev/null; then
+        if "$GH" api --paginate "$endpoint" >"$response_tmp" 2>"$error_tmp"; then
+            queried_api=1
+        else
+            api_status=$?
+            gh_error=$(<"$error_tmp")
+            gh_error=${gh_error//$'\n'/; }
+            if ((${#gh_error} > 1000)); then
+                gh_error="${gh_error:0:1000}..."
+            fi
+            [[ -n "$gh_error" ]] || gh_error="no stderr output"
+            debug "GitHub Packages API request failed: endpoint=$endpoint status=$api_status error=$gh_error"
             continue
         fi
-        queried_api=1
 
         # gh emits one JSON array per page. Combine the pages and use GitHub's
         # creation timestamp as the recency signal before selecting a version.
@@ -60,13 +75,13 @@ function ghcr_package_version {
             ' "$response_tmp"
         )
         if [[ -n "$match" ]]; then
-            rm -f "$response_tmp"
+            rm -f "$response_tmp" "$error_tmp"
             printf '%s\n' "$match"
             return 0
         fi
     done
 
-    rm -f "$response_tmp"
+    rm -f "$response_tmp" "$error_tmp"
     [[ -n "$queried_api" ]] && return 1
     return 2
 }
@@ -310,6 +325,8 @@ function ghcr_tags_by_digest {
     local display_repository="$3"
     local can_refresh ghcr_choice package_lookup_status
 
+    debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository method=$opt_ghcr_method scan=$registry_tag_scan"
+
     if [[ "$opt_ghcr_method" == anonymous ]]; then
         if ! registry_tags=$(ghcr_tags_by_digest_anonymously "$ghcr_repository" "$digest"); then
             abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
@@ -339,20 +356,22 @@ function ghcr_tags_by_digest {
         fi
         case "$package_lookup_status" in
         1)
+            debug "GHCR Packages API was reachable, but no active version matched $ghcr_repository@$digest"
             registry_lookup_result=not_found
             registry_lookup_backend=github-packages-api
             break
             ;;
         esac
 
-        if [[ "$opt_ghcr_method" == auto ]] &&
-                skopeo_has_registry_credentials ghcr.io; then
-            notice "Using configured registry credentials for private GHCR lookup."
-            if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest"); then
-                abort "Authenticated Skopeo lookup failed for $display_repository"
+        if [[ "$opt_ghcr_method" == auto ]]; then
+            if skopeo_has_registry_credentials ghcr.io; then
+                notice "Using configured registry credentials for private GHCR lookup."
+                if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest"); then
+                    abort "Authenticated Skopeo lookup failed for $display_repository"
+                fi
+                registry_lookup_backend=skopeo
+                break
             fi
-            registry_lookup_backend=skopeo
-            break
         fi
 
         if [[ "$opt_ghcr_method" == packages ]]; then
