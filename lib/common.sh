@@ -21,21 +21,27 @@ function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
 function notice { printf "ℹ️ %s\n" "$*" >&2; }
 
-# Ask whether to perform the exhaustive reverse lookup after the known local
-# tag has been checked. Return 0 for scan, 1 for no scan, and 2 when prompting
-# is unavailable.
+# Ask which reverse lookup to perform after the known local tag has been
+# checked. Return 0 for any match, 1 for all matches, 2 for no scan, and 3
+# when prompting is unavailable.
 function choose_remote_tag_scan {
-    local choice
+    local choice choice_lower
 
     if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
-        return 2
+        return 3
     fi
+    echo "Scan remote tags?" >&2
+    echo "  [1] Stop after any matching tag" >&2
+    echo "  [a] Find all matching tags" >&2
+    echo "  [n] Do not scan" >&2
     while true; do
-        printf 'Scan for every remote tag that matches this digest? [y/N]: ' >&2
-        IFS= read -r choice </dev/tty || return 2
-        case "$choice" in
-        y | Y | yes | YES | Yes) return 0 ;;
-        '' | n | N | no | NO | No) return 1 ;;
+        printf 'Choose [1/a/n]: ' >&2
+        IFS= read -r choice </dev/tty || return 3
+        choice_lower=$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')
+        case "$choice_lower" in
+        1 | any) return 0 ;;
+        a | all) return 1 ;;
+        '' | n | no) return 2 ;;
         esac
     done
 }

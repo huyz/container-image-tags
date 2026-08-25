@@ -47,6 +47,11 @@
 
 #### Preamble (v2026-08-24)
 
+# Check for bash 4.4 for namerefs, `readarray -d`, associative arrays, `local -` (function-local options), etc.
+[ "${BASH_VERSINFO[0]:-0}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -ge 4 ] ||
+    [ "${BASH_VERSINFO:-0}" -gt 4 ] ||
+    { echo "${BASH_SOURCE[0]}: ERROR: bash v4.4+ required." >&2; exit 1; }
+
 set -Eeuo pipefail
 shopt -s failglob inherit_errexit
 SCRIPT_NAME=${BASH_SOURCE[0]##*/}
@@ -247,9 +252,9 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-reso
             local: require a local image as the baseline
             remote: ignore local Docker state and resolve the tag through the registry
         --tag-scan: control the reverse lookup after resolving the baseline digest:
-            ask: prompt before scanning for every matching remote tag
+            ask: prompt to scan for any or all matching remote tags
             never: do not perform a reverse tag lookup
-            any: stop after finding the first matching tag other than the baseline tag
+: stop after finding the first matching tag other than the baseline tag
             all: scan for every matching remote tag
             The default is 'ask' with an interactive terminal; 'all' otherwise or with --json
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
@@ -258,8 +263,8 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-reso
             anonymous: use only the anonymous OCI scan; never prompt
 
 For a local baseline, its known tag is checked first. Interactive runs then ask
-whether to scan the registry for every matching tag; non-interactive runs scan
-all tags.
+whether to scan for any matching tag or  all matching tags;
+non-interactive runs scan all tags unless '--tag-scan any' is specified.
 Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
 interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
@@ -572,7 +577,6 @@ for input in "$@"; do
         fi
     elif [[ "$local_tag" == "<none>" ]]; then
         remote_check_status=unavailable
-        [[ -n "$opt_json" ]] || echo "Remote tag check: unavailable because this image has no known local tag"
     else
         remote_tag_reference="$repo:$local_tag"
         registry_resolve_tag_digest "$repo" "$local_tag"
@@ -607,15 +611,19 @@ for input in "$@"; do
     fi
     if [[ "$tag_scan_mode" == ask ]]; then
         if choose_remote_tag_scan; then
-            tag_scan_mode=all
+            scan_choice_status=0
         else
             scan_choice_status=$?
-            if (( scan_choice_status == 1 )); then
-                [[ -z "$opt_json" ]] || append_json_result ask declined '' '' ''
-                continue
-            fi
-            abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all"
         fi
+        case "$scan_choice_status" in
+        0) tag_scan_mode=any ;;
+        1) tag_scan_mode=all ;;
+        2)
+            [[ -z "$opt_json" ]] || append_json_result ask declined '' '' ''
+            continue
+            ;;
+        *) abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all" ;;
+        esac
     fi
 
     registry_find_tags_by_digest \
