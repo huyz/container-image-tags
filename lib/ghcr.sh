@@ -308,19 +308,19 @@ function ghcr_tags_by_digest {
     local ghcr_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local can_refresh ghcr_choice
+    local can_refresh ghcr_choice package_lookup_status
 
     if [[ "$opt_ghcr_method" == anonymous ]]; then
         if ! registry_tags=$(ghcr_tags_by_digest_anonymously "$ghcr_repository" "$digest"); then
             abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
         fi
-        registry_lookup_status=anonymous
+        registry_lookup_backend=oci-registry-api
         return
     fi
 
     while true; do
         if registry_metadata=$(ghcr_package_version_by_digest "$ghcr_repository" "$digest"); then
-            registry_lookup_status=found
+            registry_lookup_backend=github-packages-api
             if [[ "$registry_tag_scan" == any ]]; then
                 registry_tags=$(
                     $JQ -r --arg direct_tag "$registry_direct_tag" '
@@ -334,10 +334,13 @@ function ghcr_tags_by_digest {
                 registry_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
             fi
             break
+        else
+            package_lookup_status=$?
         fi
-        case "$?" in
+        case "$package_lookup_status" in
         1)
-            registry_lookup_status=not-found
+            registry_lookup_result=not_found
+            registry_lookup_backend=github-packages-api
             break
             ;;
         esac
@@ -348,7 +351,7 @@ function ghcr_tags_by_digest {
             if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest"); then
                 abort "Authenticated Skopeo lookup failed for $display_repository"
             fi
-            registry_lookup_status=skopeo
+            registry_lookup_backend=skopeo
             break
         fi
 
@@ -377,7 +380,7 @@ function ghcr_tags_by_digest {
             if ! registry_tags=$(ghcr_tags_by_digest_anonymously "$ghcr_repository" "$digest"); then
                 abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
             fi
-            registry_lookup_status=anonymous
+            registry_lookup_backend=oci-registry-api
             break
             ;;
         skip)
@@ -391,8 +394,8 @@ function ghcr_tags_by_digest {
 function ghcr_print_metadata {
     local package_current_tags
 
-    case "$registry_lookup_status" in
-    found)
+    case "$registry_lookup_result:$registry_lookup_backend" in
+    completed:github-packages-api)
         package_current_tags=$(
             $JQ -r '
                 .metadata.container.tags // []
@@ -407,10 +410,10 @@ function ghcr_print_metadata {
             echo "Note: the digest is still an active GHCR package version, but no current tag points to it."
         fi
         ;;
-    not-found)
+    not_found:github-packages-api)
         warn "No active GHCR package version was found for $registry_digest"
         ;;
-    anonymous)
+    completed:oci-registry-api)
         if [[ -z "$registry_tags" ]]; then
             warn "No current GHCR tag was found for $registry_digest"
         fi

@@ -122,9 +122,9 @@ function registry_resolve_tag_digest {
     esac
 }
 
-# Populate registry_tags plus any registry-specific status and metadata for a
-# reverse lookup. In "any" mode, registry_direct_tag is excluded because that
-# tag was already handled by the direct remote-tag check.
+# Populate registry_tags plus the reverse lookup result, backend, and optional
+# provider metadata. In "any" mode, registry_direct_tag is excluded because
+# that tag was already handled by the direct remote-tag check.
 function registry_find_tags_by_digest {
     local repository="$1"
     local digest="$2"
@@ -132,7 +132,8 @@ function registry_find_tags_by_digest {
     local direct_tag="$4"
 
     registry_tags=
-    registry_lookup_status=
+    registry_lookup_result=completed
+    registry_lookup_backend=
     registry_metadata=
     registry_digest="$digest"
     registry_tag_scan="$tag_scan_mode"
@@ -144,9 +145,11 @@ function registry_find_tags_by_digest {
         ghcr_tags_by_digest "$registry_repository" "$digest" "$repository"
         ;;
     docker-hub)
+        registry_lookup_backend=docker-hub-api
         docker_hub_tags_by_digest "$registry_repository" "$digest" "$repository"
         ;;
     acr)
+        registry_lookup_backend=skopeo
         skopeo_is_available ||
             abort "Install skopeo to query registry '$registry_host'"
         registry_tags=$(acr_tags_by_digest \
@@ -154,6 +157,7 @@ function registry_find_tags_by_digest {
             abort "ACR lookup failed for $repository"
         ;;
     gar)
+        registry_lookup_backend=skopeo
         skopeo_is_available ||
             abort "Install skopeo to query registry '$registry_host'"
         registry_tags=$(gar_tags_by_digest \
@@ -161,6 +165,7 @@ function registry_find_tags_by_digest {
             abort "Google registry lookup failed for $repository"
         ;;
     ecr)
+        registry_lookup_backend=skopeo
         skopeo_is_available ||
             abort "Install skopeo to query registry '$registry_host'"
         registry_tags=$(ecr_tags_by_digest \
@@ -168,6 +173,7 @@ function registry_find_tags_by_digest {
             abort "ECR lookup failed for $repository"
         ;;
     other)
+        registry_lookup_backend=skopeo
         skopeo_is_available ||
             abort "Install skopeo to query registry '$registry_host'"
         registry_tags=$(skopeo_tags_by_digest "$repository" "$digest") ||

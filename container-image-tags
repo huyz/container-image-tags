@@ -154,17 +154,94 @@ function resolve_remote_tag_baseline {
 # Defaults
 opt_verbose=
 opt_debug=
+opt_json=
 opt_ghcr_method=auto
 opt_tag_scan=
 opt_tag_resolution=auto
 docker_hub_token=
+json_results=
+
+function append_json_result {
+    local scan_mode="$1"
+    local scan_status="$2"
+    local tags="$3"
+    local scan_backend="$4"
+    local provider_metadata="$5"
+    local result
+
+    result=$(
+        "$JQ" -cn \
+            --arg input "$input" \
+            --arg container "$container" \
+            --arg image_id "$image_id" \
+            --arg image_version "$local_image_version" \
+            --arg local_tag "$local_tag" \
+            --arg repository "$repo" \
+            --arg digest "sha256:$repo_sha" \
+            --arg baseline_source "${baseline_source:-local}" \
+            --arg registry_kind "$registry_kind" \
+            --arg registry_host "$registry_host" \
+            --arg remote_check_status "$remote_check_status" \
+            --arg remote_check_reference "$remote_check_reference" \
+            --arg remote_check_digest "$remote_check_digest" \
+            --arg scan_mode "$scan_mode" \
+            --arg scan_status "$scan_status" \
+            --arg tags "$tags" \
+            --arg scan_backend "$scan_backend" \
+            --arg provider_metadata "$provider_metadata" '
+                def nullable: if length == 0 then null else . end;
+                {
+                    input: $input,
+                    container: ($container | nullable),
+                    local_image: (
+                        if $image_id == "" then null
+                        else {
+                            id: $image_id,
+                            version: ($image_version | nullable),
+                            tag: (
+                                if $local_tag == "<none>" then null
+                                else $local_tag
+                                end
+                            )
+                        }
+                        end
+                    ),
+                    repository: $repository,
+                    digest: $digest,
+                    baseline_source: $baseline_source,
+                    registry: {
+                        kind: $registry_kind,
+                        host: $registry_host
+                    },
+                    remote_tag_check: {
+                        status: $remote_check_status,
+                        reference: ($remote_check_reference | nullable),
+                        digest: ($remote_check_digest | nullable)
+                    },
+                    tag_scan: {
+                        mode: $scan_mode,
+                        status: $scan_status,
+                        backend: ($scan_backend | nullable),
+                        provider_metadata: (
+                            if $provider_metadata == "" then null
+                            else ($provider_metadata | fromjson)
+                            end
+                        ),
+                        tags: ($tags | split("\n") | map(select(length > 0)))
+                    }
+                }
+            '
+    )
+    json_results+="${json_results:+$'\n'}$result"
+}
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode
+        --json: write one JSON array containing all results to stdout
         --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
             local: require a local image as the baseline
@@ -174,7 +251,7 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--tag-resolution mo
             never: do not perform a reverse tag lookup
             any: stop after finding the first matching tag other than the baseline tag
             all: scan for every matching remote tag
-            The default is 'ask' with an interactive terminal; 'all' otherwise
+            The default is 'ask' with an interactive terminal; 'all' otherwise or with --json
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
             auto: check public tags anonymously; use the Packages API for exhaustive scans and private-tag fallback
             packages: use only the GitHub Packages API; never prompt or fall back
@@ -201,7 +278,7 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,json,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
@@ -209,6 +286,7 @@ while true; do
         -h | --help) usage; exit 0 ;;
         -v | --verbose) opt_verbose=opt_verbose; shift ;;
         -d | --debug) opt_debug=opt_debug; shift ;;
+        --json) opt_json=opt_json; shift ;;
         --tag-resolution) opt_tag_resolution="$2"; shift 2 ;;
         --tag-scan) opt_tag_scan="$2"; shift 2 ;;
         --ghcr-method) opt_ghcr_method="$2"; shift 2 ;;
@@ -238,7 +316,9 @@ if [[ "$opt_tag_resolution" != remote ]] && ! command -v "$DOCKER" &>/dev/null; 
 fi
 
 if [[ -z "$opt_tag_scan" ]]; then
-    if [[ -t 0 || -t 1 || -t 2 ]]; then
+    if [[ -n "$opt_json" ]]; then
+        opt_tag_scan=all
+    elif [[ -t 0 || -t 1 || -t 2 ]]; then
         opt_tag_scan=ask
     else
         opt_tag_scan=all
@@ -252,7 +332,7 @@ fi
 
 input_index=0
 for input in "$@"; do
-    if (( input_index > 0 )); then
+    if [[ -z "$opt_json" ]] && (( input_index > 0 )); then
         separator_columns="${COLUMNS:-$(tput cols 2>/dev/null || true)}"
         (( separator_columns > 0 )) || separator_columns=80
         printf '%*s\n' "$separator_columns" '' | tr ' ' '-'
@@ -275,7 +355,7 @@ for input in "$@"; do
         require_supported_digest_algorithm "$input"
         if [[ "$input" =~ ^.+@sha256:[0-9a-f]{64}$ ]]; then
             repo_digest="$input"
-            baseline_source=digest
+            baseline_source=input
             notice "Interpreting '$input' as a complete registry digest reference."
         else
             abort "'$input' looks like a registry digest reference, but expected repository@sha256:<64 lowercase hex characters>"
@@ -433,7 +513,7 @@ for input in "$@"; do
             continue
         fi
         seen_wildcard_repo_digests+="${seen_wildcard_repo_digests:+$'\n'}$repo_digest"
-        if (( wildcard_output_index > 0 )); then
+        if [[ -z "$opt_json" ]] && (( wildcard_output_index > 0 )); then
             separator_columns="${COLUMNS:-$(tput cols 2>/dev/null || true)}"
             (( separator_columns > 0 )) || separator_columns=80
             printf '%*s\n' "$separator_columns" '' | tr ' ' '-'
@@ -459,52 +539,70 @@ for input in "$@"; do
     # exhaustive scan use the same normalization.
     registry_classify "$repo"
 
-    if [[ -n "$container" ]]; then
-        echo "Container: $container"
+    if [[ -z "$opt_json" ]]; then
+        if [[ -n "$container" ]]; then
+            echo "Container: $container"
+            echo
+        fi
+        if [[ -n "$image_id" ]]; then
+            echo "Local Image ID: $image_id"
+            if [[ -n "$local_image_version" ]]; then
+                echo "Image version:  $local_image_version"
+            fi
+        fi
+        echo "Repository:     $repo"
+        echo "Package digest: ${repo_digest##*@}"
         echo
-    fi
-    if [[ -n "$image_id" ]]; then
-        echo "Local Image ID: $image_id"
-        if [[ -n "$local_image_version" ]]; then
-            echo "Image version:  $local_image_version"
+        if [[ -n "$image_id" ]]; then
+            echo "Local tag:  $local_tag"
         fi
     fi
-    echo "Repository:     $repo"
-    echo "Package digest: ${repo_digest##*@}"
-    echo
-    if [[ -n "$image_id" ]]; then
-        echo "Local tag:  $local_tag"
-    fi
+
+    remote_check_status=
+    remote_check_reference=
+    remote_check_digest=
 
     if [[ "$baseline_source" == remote ]]; then
-        echo "Remote tag: $local_tag"
-        echo "Remote tag resolution: $repo:$local_tag points to ${repo_digest##*@}"
+        remote_check_status=resolved
+        remote_check_reference="$repo:$local_tag"
+        remote_check_digest="${repo_digest##*@}"
+        if [[ -z "$opt_json" ]]; then
+            echo "Remote tag: $local_tag"
+            echo "Remote tag resolution: $repo:$local_tag points to ${repo_digest##*@}"
+        fi
     elif [[ "$local_tag" == "<none>" ]]; then
-        echo "Remote tag check: unavailable because this image has no known local tag"
+        remote_check_status=unavailable
+        [[ -n "$opt_json" ]] || echo "Remote tag check: unavailable because this image has no known local tag"
     else
         remote_tag_reference="$repo:$local_tag"
         registry_resolve_tag_digest "$repo" "$local_tag"
+        remote_check_reference="$remote_tag_reference"
 
         case "$remote_tag_status" in
         0)
+            remote_check_digest="$remote_tag_digest"
             if [[ "${remote_tag_digest#sha256:}" == "$repo_sha" ]]; then
-                echo "Remote tag check: MATCH — $remote_tag_reference still points to ${repo_digest##*@}"
+                remote_check_status=match
+                [[ -n "$opt_json" ]] || echo "Remote tag check: MATCH — $remote_tag_reference still points to ${repo_digest##*@}"
             else
-                echo "Remote tag check: MISMATCH — $remote_tag_reference now points to $remote_tag_digest"
+                remote_check_status=mismatch
+                [[ -n "$opt_json" ]] || echo "Remote tag check: MISMATCH — $remote_tag_reference now points to $remote_tag_digest"
             fi
             ;;
         1)
-            echo "Remote tag check: NOT FOUND — $remote_tag_reference no longer exists at the registry"
+            remote_check_status=not_found
+            [[ -n "$opt_json" ]] || echo "Remote tag check: NOT FOUND — $remote_tag_reference no longer exists at the registry"
             ;;
         *)
             abort "Failed to check remote tag '$remote_tag_reference'"
             ;;
         esac
     fi
-    echo
+    [[ -n "$opt_json" ]] || echo
 
     tag_scan_mode="$opt_tag_scan"
     if [[ "$tag_scan_mode" == never ]]; then
+        [[ -z "$opt_json" ]] || append_json_result never not_requested '' '' ''
         continue
     fi
     if [[ "$tag_scan_mode" == ask ]]; then
@@ -513,6 +611,7 @@ for input in "$@"; do
         else
             scan_choice_status=$?
             if (( scan_choice_status == 1 )); then
+                [[ -z "$opt_json" ]] || append_json_result ask declined '' '' ''
                 continue
             fi
             abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all"
@@ -523,15 +622,32 @@ for input in "$@"; do
         "$repo" "sha256:$repo_sha" "$tag_scan_mode" "$local_tag"
 
     if [[ -n "$skip_input" ]]; then
+        [[ -z "$opt_json" ]] || append_json_result \
+            "$tag_scan_mode" skipped "$registry_tags" \
+            "${registry_lookup_backend-}" "${registry_metadata-}"
         continue
     fi
 
-    if [[ "$tag_scan_mode" == any ]]; then
-        echo "Remote tag (any):"
+    if [[ -n "$opt_json" ]]; then
+        append_json_result "$tag_scan_mode" \
+            "${registry_lookup_result:-completed}" "$registry_tags" \
+            "${registry_lookup_backend-}" "${registry_metadata-}"
     else
-        echo "Remote tag(s):"
+        if [[ "$tag_scan_mode" == any ]]; then
+            echo "Remote tag (any):"
+        else
+            echo "Remote tag(s):"
+        fi
+        printf '%s\n' "${registry_tags:-<none>}"
+        registry_print_metadata
     fi
-    printf '%s\n' "${registry_tags:-<none>}"
-    registry_print_metadata
     done <<<"$images_to_process"
 done
+
+if [[ -n "$opt_json" ]]; then
+    if [[ -n "$json_results" ]]; then
+        printf '%s\n' "$json_results" | "$JQ" -s '.'
+    else
+        printf '[]\n'
+    fi
+fi

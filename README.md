@@ -87,6 +87,9 @@ container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 
 # Check all local containers.
 container-image-tags $(docker ps -a --format '{{.Names}}')
+
+# Return one machine-readable array containing every result.
+container-image-tags --json --tag-scan=any postgres redis:7
 ```
 
 Tag resolution defaults to `auto`: use a matching local image when present, or
@@ -98,6 +101,61 @@ or find tags are still available with a local baseline.
 Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
+
+### JSON Output
+
+Use `--json` for automation. Standard output is a single JSON array with one
+object per resolved image; wildcard inputs may therefore add multiple objects.
+Diagnostics continue to use standard error. JSON mode defaults to
+`--tag-scan=all` even on an interactive terminal, while an explicit
+`--tag-scan` value takes precedence. Each result includes the original input,
+baseline source, local image and container details, repository digest, registry
+classification, direct remote-tag check, and reverse-scan status and tags.
+
+For example, the standard output from
+`container-image-tags --json --tag-scan=any postgres:17` has this shape:
+
+```json
+[
+  {
+    "input": "postgres:17",
+    "container": null,
+    "local_image": {
+      "id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "version": "17.6",
+      "tag": "17"
+    },
+    "repository": "postgres",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "baseline_source": "local",
+    "registry": {
+      "kind": "docker-hub",
+      "host": "docker.io"
+    },
+    "remote_tag_check": {
+      "status": "match",
+      "reference": "postgres:17",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "tag_scan": {
+      "mode": "any",
+      "status": "completed",
+      "backend": "docker-hub-api",
+      "provider_metadata": null,
+      "tags": [
+        "17-alpine"
+      ]
+    }
+  }
+]
+```
+
+`tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
+`skipped`. `tag_scan.backend` identifies the implementation used for a scan:
+`docker-hub-api`, `github-packages-api`, `oci-registry-api`, or `skopeo`; it is
+`null` when no scan ran. `tag_scan.provider_metadata` contains provider-specific
+response data when available, currently for successful GitHub Packages API
+lookups, and is otherwise `null`.
 
 Registry access starts anonymously where possible. Private-registry access can
 reuse credentials configured by Docker, Skopeo, or Podman. When needed, the
@@ -117,7 +175,8 @@ classify its repository host in `registry_classify`, and add it to the direct
 tag and reverse-lookup dispatch functions. A direct tag lookup writes the
 digest to stdout and returns status 0 when found, 1 when the tag does not
 exist, or 2 when lookup fails. An exhaustive lookup populates `registry_tags`
-and may also populate `registry_lookup_status` and `registry_metadata`.
+plus `registry_lookup_result`, `registry_lookup_backend`, and optional
+`registry_metadata`.
 
 As of 2026-08-25, authored mostly by OpenAI GPT 5.6 Sol and DeepSeek V4 Flash.
 

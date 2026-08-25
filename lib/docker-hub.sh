@@ -192,6 +192,7 @@ function docker_hub_tags_by_digest {
                     rm -f "$response_tmp"
                     abort "Authenticated Skopeo lookup failed for $display_repository"
                 fi
+                registry_lookup_backend=skopeo
                 next_url=
                 break
             fi
