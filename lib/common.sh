@@ -19,7 +19,7 @@ function err { printf "%s: ❗ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
 function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
-function notice { printf "ℹ️ %s\n" "$*" >&2; }
+function notice { printf "INFO: %s\n" "$*" >&2; }
 
 # Ask which reverse lookup to perform after the known local tag has been
 # checked. Return 0 for any match, 1 for all matches, 2 for no scan, and 3

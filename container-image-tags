@@ -597,15 +597,15 @@ for input in "$@"; do
             remote_check_digest="$remote_tag_digest"
             if [[ "${remote_tag_digest#sha256:}" == "$repo_sha" ]]; then
                 remote_check_status=match
-                [[ -n "$opt_json" ]] || echo "Remote tag check: MATCH — $remote_tag_reference still points to ${repo_digest##*@}"
+                [[ -n "$opt_json" ]] || echo "Remote tag check: ✅ MATCH — $remote_tag_reference still points to ${repo_digest##*@}"
             else
                 remote_check_status=mismatch
-                [[ -n "$opt_json" ]] || echo "Remote tag check: MISMATCH — $remote_tag_reference now points to $remote_tag_digest"
+                [[ -n "$opt_json" ]] || echo "Remote tag check: ❗️ MISMATCH — $remote_tag_reference now points to $remote_tag_digest"
             fi
             ;;
         1)
             remote_check_status=not_found
-            [[ -n "$opt_json" ]] || echo "Remote tag check: NOT FOUND — $remote_tag_reference no longer exists at the registry"
+            [[ -n "$opt_json" ]] || echo "Remote tag check: ❌ NOT FOUND — $remote_tag_reference no longer exists at the registry"
             ;;
         *)
             abort "Failed to check remote tag '$remote_tag_reference'"
@@ -652,9 +652,9 @@ for input in "$@"; do
             "${registry_lookup_backend-}" "${registry_metadata-}"
     else
         if [[ "$tag_scan_mode" == any ]]; then
-            echo "Remote tag (any):"
+            echo "Other remote tag (any):"
         else
-            echo "Remote tag(s):"
+            echo "Other remote tags:"
         fi
         printf '%s\n' "${registry_tags:-<none>}"
         registry_print_metadata
