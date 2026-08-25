@@ -118,6 +118,18 @@ source "$MODULE_DIR/registries.sh"
 # shellcheck source=.container-image-tags/local-images.sh
 source "$MODULE_DIR/local-images.sh"
 
+function require_supported_digest_algorithm {
+    local digest_reference="$1"
+    local digest="${digest_reference##*@}"
+    local algorithm
+
+    [[ "$digest" == *:* ]] || return 0
+    algorithm="${digest%%:*}"
+    [[ -n "$algorithm" ]] || return 0
+    [[ "$algorithm" == sha256 ]] ||
+        abort "Digest algorithm '$algorithm' in '$digest_reference' is not supported; only sha256 is supported"
+}
+
 #### Options
 
 # Defaults
@@ -212,6 +224,7 @@ for input in "$@"; do
     # A full repository digest is already unambiguous and does not need local
     # Docker metadata.
     if [[ "$input" == *@* ]]; then
+        require_supported_digest_algorithm "$input"
         if [[ "$input" =~ ^.+@sha256:[0-9a-f]{64}$ ]]; then
             repo_digest="$input"
             notice "Interpreting '$input' as a complete registry digest reference."
@@ -336,6 +349,10 @@ for input in "$@"; do
         fi
         exit 1
     fi
+
+    # Docker metadata should normally contain sha256 RepoDigests, but reject a
+    # different algorithm explicitly before registry lookup can misinterpret it.
+    require_supported_digest_algorithm "$repo_digest"
 
     if [[ -n "$wildcard_image_ids" ]]; then
         if grep -Fxq -- "$repo_digest" <<<"$seen_wildcard_repo_digests"; then
