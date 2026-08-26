@@ -166,6 +166,7 @@ function resolve_remote_tag_baseline {
 opt_verbose=
 opt_debug=
 opt_json=
+opt_allow_expensive_scan=
 opt_ghcr_method=auto
 opt_tag_scan=
 opt_tag_resolution=auto
@@ -252,12 +253,13 @@ function append_json_result {
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-expensive-scan] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode; could trigger more requests
             to find get more error details from registries
         --json: write one JSON array containing all results to stdout
+        --allow-expensive-scan: permit an expensive non-interactive Skopeo tag scan
         --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
             local: require a local image as the baseline
@@ -276,6 +278,8 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--tag-reso
 For a local baseline, its known tag is checked first. Interactive runs then ask
 whether to scan for any matching tag or  all matching tags;
 non-interactive runs scan all tags unless '--tag-scan any' is specified.
+Expensive interactive Skopeo scans print an advisory and continue. Expensive
+non-interactive scans fail fast unless '--allow-expensive-scan' is specified.
 Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
 interactive run can exchange a username and PAT for an in-memory access token.
 Private registry access reuses credentials configured by docker login, skopeo
@@ -294,7 +298,7 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,json,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
@@ -303,6 +307,7 @@ while true; do
         -v | --verbose) opt_verbose=opt_verbose; shift ;;
         -d | --debug) opt_debug=opt_debug; shift ;;
         --json) opt_json=opt_json; shift ;;
+        --allow-expensive-scan) opt_allow_expensive_scan=opt_allow_expensive_scan; shift ;;
         --tag-resolution) opt_tag_resolution="$2"; shift 2 ;;
         --tag-scan) opt_tag_scan="$2"; shift 2 ;;
         --ghcr-method) opt_ghcr_method="$2"; shift 2 ;;

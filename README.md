@@ -88,6 +88,9 @@ container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 # Check all local containers for all remote tags.
 container-image-tags --tag-scan=all $(docker ps -a --format '{{.Names}}')
 
+# Explicitly permit a long non-interactive Skopeo fallback scan.
+container-image-tags --tag-scan=all --allow-expensive-scan registry.example/app:1
+
 # Return one machine-readable array containing every result.
 container-image-tags --json --tag-scan=any postgres redis:7
 ```
@@ -101,6 +104,11 @@ or find tags are still available with a local baseline.
 Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
+
+Before Skopeo performs its generic per-tag fallback, it estimates the scan time
+from the number of candidate tags. Interactive scans estimated above three
+minutes print an advisory and continue. Non-interactive scans estimated above
+ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
 
 ### JSON Output
 

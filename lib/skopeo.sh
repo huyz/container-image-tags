@@ -9,6 +9,13 @@ skopeo_anonymous_authfile=
 skopeo_session_authfile=
 skopeo_inspect_platform_args=()
 
+# Skopeo's generic reverse lookup launches one manifest inspection per tag.
+# Keep the estimate deliberately simple and stable: its purpose is to identify
+# obviously expensive scans, not to promise an exact completion time.
+readonly SKOPEO_ESTIMATED_SECONDS_PER_TAG=2
+readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE=180
+readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE=600
+
 # Native Skopeo sees macOS as Darwin, but Docker Desktop runs container images
 # inside a Linux VM. Override only the OS on macOS so multi-platform inspection
 # selects a Linux image without breaking legitimate Windows-image lookups on
@@ -61,11 +68,61 @@ function skopeo_digest_for_tag {
         "docker://$image_reference" 2>/dev/null
 }
 
+function skopeo_format_estimated_duration {
+    local total_seconds="$1"
+    local minutes=$(( total_seconds / 60 ))
+    local seconds=$(( total_seconds % 60 ))
+
+    if (( minutes > 0 && seconds > 0 )); then
+        printf '%dm %ds' "$minutes" "$seconds"
+    elif (( minutes > 0 )); then
+        printf '%dm' "$minutes"
+    else
+        printf '%ds' "$seconds"
+    fi
+}
+
+# Warn before an expensive interactive scan. Non-interactive callers cannot
+# acknowledge an advisory, so require an explicit override and fail before the
+# first per-tag manifest lookup.
+function skopeo_expensive_scan_preflight {
+    local repository="$1"
+    local candidate_count="$2"
+    local estimated_seconds=$(( candidate_count * SKOPEO_ESTIMATED_SECONDS_PER_TAG ))
+    local estimated_duration scan_description threshold
+
+    if [[ "$registry_tag_scan" == any ]]; then
+        scan_description="may inspect up to $candidate_count tags"
+    else
+        scan_description="will inspect $candidate_count tags"
+    fi
+    estimated_duration=$(skopeo_format_estimated_duration "$estimated_seconds")
+
+    if [[ -t 0 || -t 1 || -t 2 ]]; then
+        threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE
+        if (( estimated_seconds > threshold )); then
+            warn "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Continuing because this is an interactive run."
+        fi
+        return 0
+    fi
+
+    threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE
+    if (( estimated_seconds > threshold )); then
+        if [[ -n ${opt_allow_expensive_scan-} ]]; then
+            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Continuing because --allow-expensive-scan was specified."
+        else
+            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Rerun with --allow-expensive-scan to permit this non-interactive scan."
+            return 4
+        fi
+    fi
+}
+
 function skopeo_tags_by_digest {
     local repository="$1"
     local digest="$2"
     local authfile="${3-}"
     local tags tag manifest_digest error_tmp skopeo_status match_found
+    local candidate_count=0
     local checked=0
     local matches=
     local -a auth_args=()
@@ -89,6 +146,15 @@ function skopeo_tags_by_digest {
         rm -f "$error_tmp"
         return "$skopeo_status"
     fi
+
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
+            continue
+        fi
+        ((++candidate_count))
+    done <<<"$tags"
+    skopeo_expensive_scan_preflight "$repository" "$candidate_count" || return $?
 
     if [[ -z ${opt_verbose-} ]]; then
         printf 'Searching registry tags with skopeo... %s (0 checked)' "${spinner[0]}" >&2
