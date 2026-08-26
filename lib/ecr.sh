@@ -317,7 +317,7 @@ function ecr_digest_for_tag {
         fi
         (( lookup_status == LOOKUP_NOT_FOUND )) && return "$LOOKUP_NOT_FOUND"
         (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
-        info "ECR API lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
+        notice "ECR API lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
     fi
 
     skopeo_is_available || return "$LOOKUP_UNAVAILABLE"

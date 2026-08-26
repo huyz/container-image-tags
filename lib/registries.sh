@@ -79,7 +79,7 @@ function registry_resolve_tag_digest {
         fi
         if [[ "$remote_tag_status" == "$LOOKUP_UNAVAILABLE" ]] &&
                 remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
-            info "Resolved Docker Hub tag with configured registry credentials"
+            notice "Resolved Docker Hub tag with configured registry credentials"
             remote_tag_status=$LOOKUP_SUCCEEDED
         fi
         ;;
@@ -154,7 +154,7 @@ function registry_resolve_tag_digest {
                 skopeo_is_available ||
                     abort "Install skopeo to check registry tag '$remote_tag_reference'"
                 if remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
-                    info "Resolved registry tag with the Skopeo fallback"
+                    notice "Resolved registry tag with the Skopeo fallback"
                     remote_tag_status=$LOOKUP_SUCCEEDED
                 else
                     remote_tag_status=$LOOKUP_UNAVAILABLE
@@ -204,7 +204,7 @@ function registry_find_tags_by_digest {
             "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
             "$LOOKUP_STOPPED") abort "ACR API lookup stopped for $repository" ;;
             *)
-                info "ACR metadata lookup is unavailable for $repository; falling back to Skopeo"
+                notice "ACR metadata lookup is unavailable for $repository; falling back to Skopeo"
                 registry_lookup_backend=skopeo
                 skopeo_is_available ||
                     abort "Install skopeo to query registry '$registry_host'"
@@ -249,7 +249,7 @@ function registry_find_tags_by_digest {
                 "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
                 "$LOOKUP_STOPPED") abort "ECR API lookup stopped for $repository" ;;
                 *)
-                    info "ECR API lookup is unavailable for $repository; falling back to Skopeo"
+                    notice "ECR API lookup is unavailable for $repository; falling back to Skopeo"
                     registry_lookup_backend=skopeo
                     skopeo_is_available ||
                         abort "Install skopeo to query registry '$registry_host'"
@@ -270,7 +270,7 @@ function registry_find_tags_by_digest {
                 "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
                 "$LOOKUP_STOPPED") abort "ECR Public API lookup stopped for $repository" ;;
                 *)
-                    info "ECR Public API lookup is unavailable for $repository; falling back to Skopeo"
+                    notice "ECR Public API lookup is unavailable for $repository; falling back to Skopeo"
                     registry_lookup_backend=skopeo
                     skopeo_is_available ||
                         abort "Install skopeo to query registry '$registry_host'"
@@ -292,7 +292,7 @@ function registry_find_tags_by_digest {
             lookup_status=$?
             (( lookup_status == LOOKUP_STOPPED )) &&
                 abort "OCI registry lookup stopped for $repository"
-            info "Anonymous OCI HEAD lookup is unavailable for $repository; falling back to Skopeo"
+            notice "Anonymous OCI HEAD lookup is unavailable for $repository; falling back to Skopeo"
             registry_lookup_backend=skopeo
             skopeo_is_available ||
                 abort "Install skopeo to query registry '$registry_host'"

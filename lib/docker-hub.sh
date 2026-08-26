@@ -63,6 +63,7 @@ function docker_hub_digest_for_tag {
         # registry-credential Skopeo fallback used by the dispatcher.
         if [[ -z "$docker_hub_token" ]] && token=$(docker_hub_token_from_environment); then
             docker_hub_token=$token
+            notice "Docker Hub anonymous tag lookup failed; retrying with the configured username and PAT."
             docker_hub_digest_for_tag "$hub_repository" "$tag"
             return $?
         fi
@@ -234,7 +235,7 @@ function docker_hub_tags_by_digest {
     next_url="https://hub.docker.com/v2/repositories/$hub_repository/tags/?page_size=100"
     response_tmp=$(mktemp)
     while [[ -n "$next_url" ]]; do
-        info "Listing Docker Hub tags from: $next_url"
+        verbose "Listing Docker Hub tags from: $next_url"
         request_args=(-sS -o "$response_tmp" -w '%{http_code}')
         if [[ -n "$docker_hub_token" ]]; then
             request_args+=(-H "Authorization: Bearer $docker_hub_token")
@@ -260,6 +261,7 @@ function docker_hub_tags_by_digest {
             fi
             if token=$(docker_hub_token_from_environment); then
                 docker_hub_token=$token
+                notice "Docker Hub refused anonymous tag pagination; retrying with the configured username and PAT."
                 continue
             fi
             if skopeo_has_registry_credentials docker.io; then

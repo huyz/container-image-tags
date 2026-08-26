@@ -14,7 +14,9 @@ readonly LOOKUP_STOPPED=4
 # shellcheck disable=SC2329
 function debug { [[ -z ${opt_debug-} ]] || printf "%s: 🔧 DEBUG: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
-function info { [[ -z ${opt_verbose-} ]] || printf "%s\n" "$*" >&2; }
+# Print repeated progress and implementation detail only when verbose output is
+# requested. Hide these messages when they do not change the user's decisions.
+function verbose { [[ -z ${opt_verbose-} ]] || printf "%s\n" "$*" >&2; }
 # shellcheck disable=SC2329
 function warn { printf "%s: ⚠️ WARNING: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
@@ -22,7 +24,10 @@ function err { printf "%s: ❗ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
 function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
-function notice { printf "INFO: %s\n" "$*" >&2; }
+# Print one-time events that change input meaning, credentials, backend,
+# expected duration, completeness, or result scope. These remain visible
+# without verbose output.
+function notice { printf "NOTICE: %s\n" "$*" >&2; }
 
 function is_interactive_session {
     [[ -t 0 || -t 1 || -t 2 ]]
@@ -73,7 +78,7 @@ function tags_by_digest_with_rolling_pool {
             result_tmp="$worker_tmp/$tag_index.result"
             status_tmp="$worker_tmp/$tag_index.status"
             done_tmp="$worker_tmp/$tag_index.done"
-            info "$worker_label: $tag"
+            verbose "$worker_label: $tag"
             (
                 if "$lookup_function" "$repository" "$tag" "$@" >"$result_tmp"; then
                     printf '%d\n' "$LOOKUP_SUCCEEDED" >"$status_tmp"

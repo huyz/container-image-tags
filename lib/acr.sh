@@ -192,7 +192,7 @@ function acr_digest_for_tag {
     fi
     (( lookup_status == LOOKUP_NOT_FOUND )) && return "$LOOKUP_NOT_FOUND"
     (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
-    info "ACR metadata lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
+    notice "ACR metadata lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
 
     skopeo_is_available || return "$LOOKUP_UNAVAILABLE"
     skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" acr_authenticate

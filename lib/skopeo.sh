@@ -149,7 +149,7 @@ function skopeo_tags_by_digest {
 
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
-    info "Listing registry tags with skopeo for $repository"
+    verbose "Listing registry tags with skopeo for $repository"
     error_tmp=$(mktemp)
     if tags=$(
         "$SKOPEO" list-tags "${auth_args[@]}" "docker://$repository" 2>"$error_tmp" |

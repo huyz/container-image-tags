@@ -145,7 +145,7 @@ function oci_list_tags_anonymously {
     next_url="https://$registry/v2/$repository/tags/list?n=100"
 
     while [[ -n "$next_url" ]]; do
-        info "Listing OCI registry tags from: $next_url"
+        verbose "Listing OCI registry tags from: $next_url"
         if ! http_code=$(oci_request_tag_page \
                 "$next_url" "$request_headers" "$response_headers" "$response_body"); then
             lookup_status=$LOOKUP_UNAVAILABLE
@@ -272,7 +272,7 @@ function oci_tags_by_digest_with_curl_parallel {
             "url = \"https://$registry/v2/$repository/manifests/$tag_encoded\"" \
             "dump-header = \"$header_file\"" \
             'output = "/dev/null"' >>"$config_tmp"
-        info "Queueing OCI registry tag for parallel HEAD: $tag"
+        verbose "Queueing OCI registry tag for parallel HEAD: $tag"
     done
 
     if is_interactive_session; then

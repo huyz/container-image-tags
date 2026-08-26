@@ -39,7 +39,7 @@ function ghcr_package_version {
     # both owner-specific Packages API endpoints.
     for owner_kind in orgs users; do
         endpoint="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100"
-        info "Searching GitHub package versions for $owner_kind/$owner/$package_name"
+        verbose "Searching GitHub package versions for $owner_kind/$owner/$package_name"
         if "$GH" api --paginate "$endpoint" >"$response_tmp" 2>"$error_tmp"; then
             queried_api=1
         else
@@ -194,7 +194,7 @@ function ghcr_digest_for_tag {
     if [[ "$lookup_status" == "$LOOKUP_UNAVAILABLE" &&
             "$opt_ghcr_method" == auto ]] &&
             manifest_digest=$(skopeo_digest_for_tag "ghcr.io/$ghcr_repository:$tag"); then
-        info "Resolved private GHCR tag with configured registry credentials"
+        notice "Resolved private GHCR tag with configured registry credentials"
         printf '%s\n' "$manifest_digest"
         return "$LOOKUP_SUCCEEDED"
     fi
@@ -212,14 +212,14 @@ function ghcr_tags_by_digest_anonymously {
     local header_tmp body_tmp checked=0 match_found
     local -a spinner=('|' '/' '-' $'\\')
 
-    info "Requesting an anonymous GHCR pull token"
+    verbose "Requesting an anonymous GHCR pull token"
     token=$(ghcr_anonymous_pull_token "$ghcr_repository") || return 1
 
     header_tmp=$(mktemp)
     body_tmp=$(mktemp)
     next_url="https://ghcr.io/v2/$ghcr_repository/tags/list?n=100"
     while [[ -n "$next_url" ]]; do
-        info "Listing GHCR tags from: $next_url"
+        verbose "Listing GHCR tags from: $next_url"
         if ! $CURL -fsS -H "Authorization: Bearer $token" \
                 -D "$header_tmp" -o "$body_tmp" "$next_url"; then
             rm -f "$header_tmp" "$body_tmp"
@@ -259,7 +259,7 @@ function ghcr_tags_by_digest_anonymously {
             continue
         fi
         match_found=
-        info "Resolving GHCR tag: $tag"
+        verbose "Resolving GHCR tag: $tag"
         if $CURL -fsS -H "Authorization: Bearer $token" \
                 -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
                 -D "$header_tmp" -o /dev/null \

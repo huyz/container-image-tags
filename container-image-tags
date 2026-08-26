@@ -547,7 +547,7 @@ for input in "$@"; do
 
     if [[ -n "$wildcard_image_ids" ]]; then
         if grep -Fxq -- "$repo_digest" <<<"$seen_wildcard_repo_digests"; then
-            notice "Skipping local image $image_id because repository digest '$repo_digest' was already checked."
+            verbose "Skipping local image $image_id because repository digest '$repo_digest' was already checked."
             continue
         fi
         seen_wildcard_repo_digests+="${seen_wildcard_repo_digests:+$'\n'}$repo_digest"
