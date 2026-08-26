@@ -315,7 +315,7 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvnd --long help,verbose,dry-run,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvd --long help,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do

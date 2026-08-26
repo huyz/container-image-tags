@@ -3,12 +3,6 @@
 # Shared output and prompting helpers for container-image-tags.
 
 # shellcheck disable=SC2329
-function run_cmd {
-    [[ -z ${opt_verbose-} ]] || { printf '#❯'; printf ' %q' "$@"; printf '\n'; } >&2 || true
-    [[ -n ${opt_dry_run-} ]] || "$@"
-}
-
-# shellcheck disable=SC2329
 function debug { [[ -z ${opt_debug-} ]] || printf "%s: 🔧 DEBUG: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
 function info { [[ -z ${opt_verbose-} ]] || printf "%s\n" "$*" >&2; }

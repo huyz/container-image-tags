@@ -14,16 +14,19 @@ interprets ambiguous input before starting registry work.
 - Docker Hub: direct tag checks and digest-to-tag lookup through the tags API
 - GitHub Container Registry: anonymous OCI lookup and an optional faster
   GitHub Packages API path
-- Azure Container Registry: anonymous access, configured credentials, or an
-  on-demand Azure CLI token
 - Google Container Registry: direct digest/tag metadata lookup, with configured
   credentials or an on-demand Google Cloud CLI token as fallbacks
 - Google Artifact Registry: anonymous access, configured credentials, or an
   on-demand Google Cloud CLI token
+  - WARNING: less tested than the other registries; please report any issues
+- Azure Container Registry: anonymous access, configured credentials, or an
+  on-demand Azure CLI token
+  - WARNING: less tested than the other registries; please report any issues
 - Amazon ECR and ECR Public: anonymous access where available, configured
   credentials, or an on-demand AWS CLI token
-- Other OCI registries: anonymous parallel manifest `HEAD` lookup, with Skopeo
-  as the private/incompatible-registry fallback
+  - WARNING: less tested than the other registries; please report any issues
+- Other OCI registries (e.g. Codeberg, LinuxServer.io): anonymous parallel manifest `HEAD` lookup,
+  with Skopeo as the private/incompatible-registry fallback
 
 ## Requirements
 
@@ -177,10 +180,10 @@ For example, the standard output from
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
 `skipped`. `tag_scan.backend` identifies the implementation used for a scan:
-`docker-hub-api`, `github-packages-api`, `oci-registry-api`, or `skopeo`; it is
-`null` when no scan ran. `tag_scan.provider_metadata` contains provider-specific
-response data when available, currently for successful GitHub Packages API
-lookups, and is otherwise `null`.
+`docker-hub-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, or
+`skopeo`; it is `null` when no scan ran. `tag_scan.provider_metadata` contains
+provider-specific response data when available, currently for successful
+GitHub Packages API lookups, and is otherwise `null`.
 
 Registry access starts anonymously where possible. Private-registry access can
 reuse credentials configured by Docker, Skopeo, or Podman. When needed, the

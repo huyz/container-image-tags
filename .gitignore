@@ -1,0 +1,9 @@
+# Local coding-agent instructions and state
+/AGENTS.md
+/CLAUDE.md
+/CODEX.md
+/GEMINI.md
+/.agents/
+/.claude/
+/.codex/
+/.gemini/
