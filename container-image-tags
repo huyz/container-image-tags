@@ -356,7 +356,7 @@ fi
 if [[ -z "$opt_tag_scan" ]]; then
     if [[ -n "$opt_json" ]]; then
         opt_tag_scan=all
-    elif [[ -t 0 || -t 1 || -t 2 ]]; then
+    elif is_interactive_session; then
         opt_tag_scan=ask
     else
         opt_tag_scan=all

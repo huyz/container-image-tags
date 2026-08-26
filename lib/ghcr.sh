@@ -247,7 +247,7 @@ function ghcr_tags_by_digest_anonymously {
         esac
     done
 
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf 'Searching GHCR tags anonymously... %s (0 checked)' "${spinner[0]}" >&2
     fi
     while IFS= read -r tag; do
@@ -270,13 +270,13 @@ function ghcr_tags_by_digest_anonymously {
             fi
         fi
         ((++checked))
-        if [[ -z ${opt_verbose-} ]]; then
+        if is_interactive_session; then
             printf '\rSearching GHCR tags anonymously... %s (%d checked)' \
                 "${spinner[checked % 4]}" "$checked" >&2
         fi
         [[ -z "$match_found" ]] || break
     done <<<"$tags"
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf '\rSearching GHCR tags anonymously... done (%d checked)\n' "$checked" >&2
     fi
 
@@ -289,7 +289,7 @@ function choose_ghcr_fallback {
     local can_refresh="$1"
     local choice
 
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
+    if ! is_interactive_session; then
         return 1
     fi
 

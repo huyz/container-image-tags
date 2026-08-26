@@ -128,7 +128,7 @@ function docker_hub_token_from_environment {
 function docker_hub_token_interactively {
     local identifier secret token
 
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
+    if ! is_interactive_session; then
         return 2
     fi
     printf 'Docker Hub username: ' >&2
@@ -158,7 +158,7 @@ function choose_docker_hub_authentication {
     local allow_skopeo_fallback="${2-}"
     local choice token auth_status
 
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
+    if ! is_interactive_session; then
         return 2
     fi
     echo "$SCRIPT_NAME: Docker Hub refused further anonymous tag pagination." >&2

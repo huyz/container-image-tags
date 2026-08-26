@@ -273,7 +273,7 @@ function oci_tags_by_digest_with_curl_parallel {
         info "Queueing OCI registry tag for parallel HEAD: $tag"
     done
 
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf 'Searching OCI registry tags with parallel HEAD... %s (0 checked)' \
             "${spinner[0]}" >&2
     fi
@@ -291,7 +291,7 @@ function oci_tags_by_digest_with_curl_parallel {
                 rate_limited=1
                 kill "$curl_pid" 2>/dev/null || true
             fi
-            if [[ -z ${opt_verbose-} ]]; then
+            if is_interactive_session; then
                 printf '\rSearching OCI registry tags with parallel HEAD... %s (%d checked)' \
                     "${spinner[checked % 4]}" "$checked" >&2
             fi
@@ -327,7 +327,7 @@ function oci_tags_by_digest_with_curl_parallel {
             matches+="${matches:+$'\n'}$tag"
         fi
     done
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf '\rSearching OCI registry tags with parallel HEAD... done (%d checked)\n' \
             "$checked" >&2
     fi

@@ -114,7 +114,7 @@ function registry_expensive_scan_preflight {
     worker_description="$parallel_jobs parallel worker"
     (( parallel_jobs == 1 )) || worker_description+=s
 
-    if [[ -t 0 || -t 1 || -t 2 ]]; then
+    if is_interactive_session; then
         threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE
         if (( estimated_seconds > threshold )); then
             warn "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because this is an interactive run."

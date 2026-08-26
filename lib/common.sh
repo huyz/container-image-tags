@@ -15,6 +15,10 @@ function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
 function notice { printf "INFO: %s\n" "$*" >&2; }
 
+function is_interactive_session {
+    [[ -t 0 || -t 1 || -t 2 ]]
+}
+
 # Run one digest lookup per candidate tag while keeping a bounded number of
 # workers in flight. Bash 4.4 has wait -n but cannot report which PID finished,
 # so workers publish completion markers. Results are emitted in candidate order
@@ -45,7 +49,7 @@ function tags_by_digest_with_rolling_pool {
     local -a matching_indices=()
     local -a spinner=('|' '/' '-' $'\\')
 
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf '%s... %s (0 checked)' "$progress_label" "${spinner[0]}" >&2
     fi
     worker_tmp=$(mktemp -d)
@@ -106,7 +110,7 @@ function tags_by_digest_with_rolling_pool {
                 [[ "$registry_tag_scan" == any ]] && match_found=1
             fi
             ((++checked))
-            if [[ -z ${opt_verbose-} ]]; then
+            if is_interactive_session; then
                 printf '\r%s... %s (%d checked)' \
                     "$progress_label" "${spinner[checked % 4]}" "$checked" >&2
             fi
@@ -120,7 +124,7 @@ function tags_by_digest_with_rolling_pool {
         matches+="${matches:+$'\n'}$tag"
         [[ "$registry_tag_scan" == any ]] && break
     done
-    if [[ -z ${opt_verbose-} ]]; then
+    if is_interactive_session; then
         printf '\r%s... done (%d checked)\n' "$progress_label" "$checked" >&2
     fi
 
@@ -141,7 +145,7 @@ function tags_by_digest_with_rolling_pool {
 function choose_remote_tag_scan {
     local choice choice_lower
 
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
+    if ! is_interactive_session; then
         return 3
     fi
     echo "Scan remote tags?" >&2
