@@ -244,9 +244,10 @@ function registry_find_tags_by_digest {
                 :
             else
                 lookup_status=$?
-                if (( lookup_status == 1 )); then
-                    registry_lookup_result=not_found
-                else
+                case "$lookup_status" in
+                1) registry_lookup_result=not_found ;;
+                4) abort "ECR API lookup stopped for $repository" ;;
+                *)
                     info "ECR API lookup is unavailable for $repository; falling back to Skopeo"
                     registry_lookup_backend=skopeo
                     skopeo_is_available ||
@@ -254,15 +255,30 @@ function registry_find_tags_by_digest {
                     registry_tags=$(ecr_tags_by_digest_with_skopeo \
                         "$registry_host" "$repository" "$digest") ||
                         abort "ECR lookup failed for $repository"
-                fi
+                    ;;
+                esac
             fi
         else
-            registry_lookup_backend=skopeo
-            skopeo_is_available ||
-                abort "Install skopeo to query registry '$registry_host'"
-            registry_tags=$(ecr_tags_by_digest_with_skopeo \
-                "$registry_host" "$repository" "$digest") ||
-                abort "ECR lookup failed for $repository"
+            registry_lookup_backend=ecr-api
+            if registry_tags=$(ecr_public_tags_by_digest_api \
+                    "${registry_repository#*/}" "$digest"); then
+                :
+            else
+                lookup_status=$?
+                case "$lookup_status" in
+                1) registry_lookup_result=not_found ;;
+                4) abort "ECR Public API lookup stopped for $repository" ;;
+                *)
+                    info "ECR Public API lookup is unavailable for $repository; falling back to Skopeo"
+                    registry_lookup_backend=skopeo
+                    skopeo_is_available ||
+                        abort "Install skopeo to query registry '$registry_host'"
+                    registry_tags=$(ecr_tags_by_digest_with_skopeo \
+                        "$registry_host" "$repository" "$digest") ||
+                        abort "ECR lookup failed for $repository"
+                    ;;
+                esac
+            fi
         fi
         ;;
     other)

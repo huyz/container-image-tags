@@ -24,6 +24,15 @@ function ecr_account_from_registry {
     printf '%s\n' "$account"
 }
 
+function ecr_aws_credentials_may_be_available {
+    [[ -n ${AWS_ACCESS_KEY_ID-} || -n ${AWS_PROFILE-} ||
+        -n ${AWS_DEFAULT_PROFILE-} || -n ${AWS_WEB_IDENTITY_TOKEN_FILE-} ||
+        -n ${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI-} ||
+        -n ${AWS_CONTAINER_CREDENTIALS_FULL_URI-} ]] && return 0
+
+    "$AWS" configure list-profiles 2>/dev/null | grep -q .
+}
+
 # Query the signed ECR service API for one private-registry image identifier.
 # Unlike the OCI registry API, DescribeImages returns every current tag for a
 # digest in the same response. Return 0 with validated JSON, 1 when the image
@@ -55,6 +64,11 @@ function ecr_private_image_details {
             rm -f "$error_tmp"
             return 1
         fi
+        if grep -Eqi 'ThrottlingException|TooManyRequestsException|rate exceeded' "$error_tmp"; then
+            warn "ECR API rate limit reached for $registry/$repository"
+            rm -f "$error_tmp"
+            return 4
+        fi
         error_message=$(tr '\n' ' ' <"$error_tmp")
         debug "ECR DescribeImages failed for $registry/$repository: $error_message"
         rm -f "$error_tmp"
@@ -63,6 +77,93 @@ function ecr_private_image_details {
 
     if ! "$JQ" -e '.imageDetails | type == "array"' <<<"$response" >/dev/null; then
         debug "ECR DescribeImages returned an invalid response for $registry/$repository"
+        return 2
+    fi
+    printf '%s\n' "$response"
+}
+
+# Resolve an ECR Public registry alias without exhaustively paging the global
+# registry catalog. A first-page hit enables the fast path; a miss is merely
+# inconclusive and lets the caller retain anonymous OCI/Skopeo behavior.
+function ecr_public_registry_id_for_alias {
+    local alias="$1"
+    local response error_tmp error_message registry_ids
+
+    command -v "${AWS:=aws}" &>/dev/null || return 2
+    ecr_aws_credentials_may_be_available || return 2
+    error_tmp=$(mktemp)
+    if response=$(
+        "$AWS" ecr-public describe-registries \
+            --region us-east-1 \
+            --page-size 1000 \
+            --no-paginate \
+            --no-cli-pager \
+            --output json 2>"$error_tmp"
+    ); then
+        rm -f "$error_tmp"
+    else
+        error_message=$(tr '\n' ' ' <"$error_tmp")
+        debug "ECR Public registry-alias lookup failed for $alias: $error_message"
+        rm -f "$error_tmp"
+        return 2
+    fi
+    if ! "$JQ" -e '.registries | type == "array"' <<<"$response" >/dev/null; then
+        debug "ECR Public DescribeRegistries returned an invalid response"
+        return 2
+    fi
+    registry_ids=$(
+        "$JQ" -r --arg alias "$alias" '
+            [
+                .registries[]
+                | select(any(.aliases[]?; .name == $alias and .status == "ACTIVE"))
+                | .registryId
+            ]
+            | unique[]
+        ' <<<"$response"
+    )
+    [[ -n "$registry_ids" && "$registry_ids" != *$'\n'* ]] || return 2
+    [[ "$registry_ids" =~ ^[0-9]{12}$ ]] || return 2
+    printf '%s\n' "$registry_ids"
+}
+
+function ecr_public_image_details {
+    local repository_path="$1"
+    local image_id="$2"
+    local alias="${repository_path%%/*}"
+    local repository="${repository_path#*/}"
+    local registry_id response error_tmp error_message
+
+    [[ "$alias" != "$repository_path" && -n "$repository" ]] || return 2
+    registry_id=$(ecr_public_registry_id_for_alias "$alias") || return $?
+
+    error_tmp=$(mktemp)
+    if response=$(
+        "$AWS" ecr-public describe-images \
+            --registry-id "$registry_id" \
+            --repository-name "$repository" \
+            --image-ids "$image_id" \
+            --region us-east-1 \
+            --no-cli-pager \
+            --output json 2>"$error_tmp"
+    ); then
+        rm -f "$error_tmp"
+    else
+        if grep -q 'ImageNotFoundException' "$error_tmp"; then
+            rm -f "$error_tmp"
+            return 1
+        fi
+        if grep -Eqi 'ThrottlingException|TooManyRequestsException|rate exceeded' "$error_tmp"; then
+            warn "ECR Public API rate limit reached for public.ecr.aws/$repository_path"
+            rm -f "$error_tmp"
+            return 4
+        fi
+        error_message=$(tr '\n' ' ' <"$error_tmp")
+        debug "ECR Public DescribeImages failed for $repository_path: $error_message"
+        rm -f "$error_tmp"
+        return 2
+    fi
+    if ! "$JQ" -e '.imageDetails | type == "array"' <<<"$response" >/dev/null; then
+        debug "ECR Public DescribeImages returned an invalid response for $repository_path"
         return 2
     fi
     printf '%s\n' "$response"
@@ -109,6 +210,42 @@ function ecr_tags_by_digest_api {
     1) ;;
     *)
         debug "ECR returned multiple image records for $registry/$repository@$digest"
+        return 2
+        ;;
+    esac
+
+    "$JQ" -r \
+        --arg digest "$digest" \
+        --arg tag_scan "$registry_tag_scan" \
+        --arg direct_tag "$registry_direct_tag" '
+            [
+                .imageDetails[]
+                | select(.imageDigest == $digest)
+                | .imageTags[]?
+                | select($tag_scan != "any" or . != $direct_tag)
+            ]
+            | unique
+            | if $tag_scan == "any" then .[0] // empty else .[] end
+        ' <<<"$response"
+}
+
+function ecr_public_tags_by_digest_api {
+    local repository_path="$1"
+    local digest="$2"
+    local response matching_images
+
+    response=$(ecr_public_image_details \
+        "$repository_path" "imageDigest=$digest") || return $?
+    matching_images=$(
+        "$JQ" -r --arg digest "$digest" '
+            [.imageDetails[] | select(.imageDigest == $digest)] | length
+        ' <<<"$response"
+    )
+    case "$matching_images" in
+    0) return 1 ;;
+    1) ;;
+    *)
+        debug "ECR Public returned multiple image records for $repository_path@$digest"
         return 2
         ;;
     esac
@@ -176,6 +313,7 @@ function ecr_digest_for_tag {
             lookup_status=$?
         fi
         (( lookup_status == 1 )) && return 1
+        (( lookup_status == 4 )) && return 4
         info "ECR API lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
     fi
 

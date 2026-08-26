@@ -19,11 +19,13 @@ interprets ambiguous input before starting registry work.
 - Google Artifact Registry: anonymous access, configured credentials, or an
   on-demand Google Cloud CLI token
   - WARNING: less tested than the other registries; please report any issues
-- Azure Container Registry: anonymous access, configured credentials, or an
-  on-demand Azure CLI token
+- Azure Container Registry: digest/tag metadata API, with configured
+  credentials or an on-demand Azure CLI token as fallbacks
   - WARNING: less tested than the other registries; please report any issues
-- Amazon ECR and ECR Public: anonymous access where available, configured
-  credentials, or an on-demand AWS CLI token
+- Amazon ECR: signed digest/tag metadata API, with configured registry
+  credentials or an on-demand AWS CLI token as fallbacks
+- ECR Public: opportunistic digest metadata API when a configured AWS profile
+  can resolve the registry alias cheaply, otherwise anonymous registry access
   - WARNING: less tested than the other registries; please report any issues
 - Other OCI registries (e.g. Codeberg, LinuxServer.io): anonymous parallel manifest `HEAD` lookup,
   with Skopeo as the private/incompatible-registry fallback
