@@ -11,11 +11,12 @@
 # local image config) cannot be used to match registry tags.
 #
 # Why not use Skopeo for every registry?  Skopeo can list tags and inspect a
-# tag's manifest, but it cannot reverse-lookup tags by digest.  Its generic
-# approach therefore requires one manifest lookup per tag.  Docker Hub's tags
-# API, GitHub's Packages API, and GCR's extended tag listing include digests
-# and tags together, making those common lookups much faster.  Skopeo remains
-# the portable fallback for other OCI registries and configured credentials.
+# tag's manifest, but it cannot reverse-lookup tags by digest. Docker Hub's
+# tags API, GitHub's Packages API, and GCR's extended tag listing include
+# digests and tags together. For other public OCI registries, lightweight
+# parallel manifest HEAD requests avoid Skopeo's per-tag process overhead.
+# Skopeo remains the portable fallback for configured credentials and
+# registries that do not support the anonymous OCI fast path.
 #
 # Steps:
 #   1. Resolve each argument as a container, local image, registry tag, or
@@ -38,8 +39,7 @@
 # - AWS CLI, optional on-demand authentication for private ECR repositories
 # - Docker Hub username and PAT, only if an exhaustive anonymous scan is refused
 # - authenticated gh CLI with read:packages scope, optional fast path for GHCR
-# - skopeo, for private-registry fallback and registries other than Docker Hub
-#   and GHCR
+# - skopeo, for private-registry and incompatible-OCI fallback
 #
 # TIP:
 # - To list all the Repo digests for your containers:
@@ -94,6 +94,9 @@ source "$MODULE_DIR/common.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/skopeo.sh
 source "$MODULE_DIR/skopeo.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/oci.sh
+source "$MODULE_DIR/oci.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/docker-hub.sh
 source "$MODULE_DIR/docker-hub.sh"
@@ -264,7 +267,7 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
         -d|--debug: turn on debug mode; could trigger more requests
             to find get more error details from registries
         --json: write one JSON array containing all results to stdout
-        --allow-expensive-scan: permit an expensive non-interactive Skopeo tag scan
+        --allow-expensive-scan: permit an expensive non-interactive per-tag registry scan
         --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
             local: require a local image as the baseline
@@ -285,8 +288,10 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
 For a local baseline, its known tag is checked first. Interactive runs then ask
 whether to scan for any matching tag or  all matching tags;
 non-interactive runs scan all tags unless '--tag-scan any' is specified.
-Expensive interactive Skopeo scans print an advisory and continue. Expensive
-non-interactive scans fail fast unless '--allow-expensive-scan' is specified.
+Expensive interactive per-tag registry scans print an advisory and continue.
+Expensive non-interactive scans fail fast unless '--allow-expensive-scan' is
+specified. Public generic OCI registries use parallel manifest HEAD requests;
+Skopeo remains the fallback for private or incompatible registries.
 Docker Hub scans start anonymously. Set environment variables 'DOCKER_HUB_USERNAME'
 and 'DOCKER_HUB_PAT' to exchange a Hub PAT for an in-memory access token without
 prompting; these credentials keep the fast Hub API ahead of any Skopeo fallback.

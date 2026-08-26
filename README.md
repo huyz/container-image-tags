@@ -22,7 +22,8 @@ interprets ambiguous input before starting registry work.
   on-demand Google Cloud CLI token
 - Amazon ECR and ECR Public: anonymous access where available, configured
   credentials, or an on-demand AWS CLI token
-- Other OCI registries: portable lookup through Skopeo
+- Other OCI registries: anonymous parallel manifest `HEAD` lookup, with Skopeo
+  as the private/incompatible-registry fallback
 
 ## Requirements
 
@@ -39,7 +40,8 @@ Recommended:
   only want to query a specific image digest or use `--tag-resolution remote`.
 
 Optional:
-- Skopeo is required for generic OCI registries and private-registry fallback.
+- Skopeo is required only for private registries and registries incompatible
+  with the anonymous OCI fast path.
 - Depending on the registry, `gh` (GitHub Container Registry),
   `gcloud` (Google Container Registry), `az` (Azure Container Registry), or
   `aws` (Elastic Container Registry) can provide optional authenticated fast
@@ -100,7 +102,7 @@ container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 # Check all local containers for all remote tags.
 container-image-tags --tag-scan=all $(docker ps -a --format '{{.Names}}')
 
-# Explicitly permit a long non-interactive Skopeo fallback scan.
+# Explicitly permit a long non-interactive per-tag registry scan.
 container-image-tags --tag-scan=all --allow-expensive-scan registry.example/app:1
 
 # Return one machine-readable array containing every result.
@@ -117,9 +119,11 @@ Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
 
-Before Skopeo performs its generic per-tag fallback, it estimates the scan time
-from the number of candidate tags and keeps up to eight manifest lookups in
-flight with a rolling worker pool. Interactive scans estimated above three
+Generic public OCI scans list tags once, reuse one anonymous repository token,
+and issue manifest `HEAD` requests with up to eight transfers in flight. Curl's
+parallel engine reuses connections for exhaustive scans; `any` mode uses the
+rolling worker pool so it can stop scheduling early. Skopeo uses the same pool
+when the OCI fast path is unavailable. Interactive scans estimated above three
 minutes print an advisory and continue. Non-interactive scans estimated above
 ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
 
@@ -186,10 +190,11 @@ Credential values are not passed on command lines.
 ## Development
 
 The executable owns argument parsing, local-input orchestration, and output.
-The `lib` directory contains shared diagnostics (`common.sh`), local image
-resolution (`local-images.sh`), generic OCI lookup (`skopeo.sh`), registry
-adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and `ecr.sh`), and
-central registry classification and dispatch (`registries.sh`).
+The `lib` directory contains shared diagnostics and rolling workers
+(`common.sh`), local image resolution (`local-images.sh`), anonymous generic
+OCI lookup (`oci.sh`), its portable credential-aware fallback (`skopeo.sh`),
+registry adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and
+`ecr.sh`), and central registry classification and dispatch (`registries.sh`).
 
 To add registry-specific support, source its adapter before `registries.sh`,
 classify its repository host in `registry_classify`, and add it to the direct

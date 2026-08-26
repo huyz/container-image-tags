@@ -66,7 +66,7 @@ function registry_resolve_tag_digest {
     local repository="$1"
     local tag="$2"
     local remote_tag_reference="$repository:$tag"
-    local lookup_output
+    local lookup_output lookup_status oci_repository
 
     remote_tag_digest=
     remote_tag_error=
@@ -140,12 +140,26 @@ function registry_resolve_tag_digest {
         fi
         ;;
     other)
-        skopeo_is_available ||
-            abort "Install skopeo to check registry tag '$remote_tag_reference'"
-        if remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
+        oci_repository="${repository#*/}"
+        if remote_tag_digest=$(oci_digest_for_tag_anonymously \
+                "$registry_host" "$oci_repository" "$tag"); then
             remote_tag_status=0
         else
-            remote_tag_status=2
+            lookup_status=$?
+            case "$lookup_status" in
+            1) remote_tag_status=1 ;;
+            4) abort "OCI registry lookup stopped for '$remote_tag_reference'" ;;
+            *)
+                skopeo_is_available ||
+                    abort "Install skopeo to check registry tag '$remote_tag_reference'"
+                if remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
+                    info "Resolved registry tag with the Skopeo fallback"
+                    remote_tag_status=0
+                else
+                    remote_tag_status=2
+                fi
+                ;;
+            esac
         fi
         ;;
     esac
@@ -159,6 +173,7 @@ function registry_find_tags_by_digest {
     local digest="$2"
     local tag_scan_mode="$3"
     local direct_tag="$4"
+    local lookup_status oci_repository
 
     registry_tags=
     registry_lookup_result=completed
@@ -216,11 +231,22 @@ function registry_find_tags_by_digest {
             abort "ECR lookup failed for $repository"
         ;;
     other)
-        registry_lookup_backend=skopeo
-        skopeo_is_available ||
-            abort "Install skopeo to query registry '$registry_host'"
-        registry_tags=$(skopeo_tags_by_digest "$repository" "$digest") ||
-            abort "Skopeo lookup failed for $repository"
+        oci_repository="${repository#*/}"
+        registry_lookup_backend=oci-registry-api
+        if registry_tags=$(oci_tags_by_digest_anonymously \
+                "$registry_host" "$oci_repository" "$digest"); then
+            :
+        else
+            lookup_status=$?
+            (( lookup_status == 4 )) &&
+                abort "OCI registry lookup stopped for $repository"
+            info "Anonymous OCI HEAD lookup is unavailable for $repository; falling back to Skopeo"
+            registry_lookup_backend=skopeo
+            skopeo_is_available ||
+                abort "Install skopeo to query registry '$registry_host'"
+            registry_tags=$(skopeo_tags_by_digest "$repository" "$digest") ||
+                abort "Skopeo lookup failed for $repository"
+        fi
         ;;
     esac
 }

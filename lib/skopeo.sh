@@ -69,6 +69,14 @@ function skopeo_digest_for_tag {
         "$SKOPEO" manifest-digest /dev/stdin 2>/dev/null
 }
 
+function skopeo_digest_for_tag_worker {
+    local repository="$1"
+    local tag="$2"
+    local authfile="${3-}"
+
+    skopeo_digest_for_tag "$repository:$tag" "$authfile"
+}
+
 function skopeo_format_estimated_duration {
     local total_seconds="$1"
     local minutes=$(( total_seconds / 60 ))
@@ -85,13 +93,16 @@ function skopeo_format_estimated_duration {
 
 # Warn before an expensive interactive scan. Non-interactive callers cannot
 # acknowledge an advisory, so require an explicit override and fail before the
-# first per-tag manifest lookup.
-function skopeo_expensive_scan_preflight {
-    local repository="$1"
-    local candidate_count="$2"
-    local parallel_jobs="$3"
+# first per-tag manifest lookup. Registry fast paths share the same thresholds
+# while supplying their own conservative per-batch estimate.
+function registry_expensive_scan_preflight {
+    local backend="$1"
+    local repository="$2"
+    local candidate_count="$3"
+    local parallel_jobs="$4"
+    local estimated_seconds_per_batch="$5"
     local estimated_batches=$(( (candidate_count + parallel_jobs - 1) / parallel_jobs ))
-    local estimated_seconds=$(( estimated_batches * SKOPEO_ESTIMATED_SECONDS_PER_TAG ))
+    local estimated_seconds=$(( estimated_batches * estimated_seconds_per_batch ))
     local estimated_duration scan_description threshold worker_description
 
     if [[ "$registry_tag_scan" == any ]]; then
@@ -106,7 +117,7 @@ function skopeo_expensive_scan_preflight {
     if [[ -t 0 || -t 1 || -t 2 ]]; then
         threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE
         if (( estimated_seconds > threshold )); then
-            warn "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because this is an interactive run."
+            warn "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because this is an interactive run."
         fi
         return 0
     fi
@@ -114,28 +125,27 @@ function skopeo_expensive_scan_preflight {
     threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE
     if (( estimated_seconds > threshold )); then
         if [[ -n ${opt_allow_expensive_scan-} ]]; then
-            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because --allow-expensive-scan was specified."
+            notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because --allow-expensive-scan was specified."
         else
-            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Rerun with --allow-expensive-scan to permit this non-interactive scan."
+            notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Rerun with --allow-expensive-scan to permit this non-interactive scan."
             return 4
         fi
     fi
+}
+
+function skopeo_expensive_scan_preflight {
+    registry_expensive_scan_preflight \
+        Skopeo "$1" "$2" "$3" "$SKOPEO_ESTIMATED_SECONDS_PER_TAG"
 }
 
 function skopeo_tags_by_digest {
     local repository="$1"
     local digest="$2"
     local authfile="${3-}"
-    local tags tag manifest_digest error_tmp skopeo_status match_found
-    local candidate_count parallel_jobs tag_index next_tag_index active_jobs
-    local worker_tmp result_tmp status_tmp done_tmp lookup_status worker_pid
-    local checked=0
-    local matches=
+    local tags tag error_tmp skopeo_status
+    local candidate_count parallel_jobs
     local -a auth_args=()
     local -a candidate_tags=()
-    local -a active_pids=()
-    local -a matching_indices=()
-    local -a spinner=('|' '/' '-' $'\\')
 
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
@@ -170,90 +180,11 @@ function skopeo_tags_by_digest {
     skopeo_expensive_scan_preflight \
         "$repository" "$candidate_count" "$parallel_jobs" || return $?
 
-    if [[ -z ${opt_verbose-} ]]; then
-        printf 'Searching registry tags with skopeo... %s (0 checked)' "${spinner[0]}" >&2
-    fi
-    match_found=
-    worker_tmp=$(mktemp -d)
-    next_tag_index=0
-    active_jobs=0
-    while (( next_tag_index < candidate_count || active_jobs > 0 )); do
-        # Keep every slot occupied until all candidates are scheduled. In
-        # "any" mode, stop adding work as soon as one worker finds a match,
-        # then drain the workers already in flight.
-        while [[ -z "$match_found" ]] &&
-                (( active_jobs < parallel_jobs && next_tag_index < candidate_count )); do
-            tag_index=$next_tag_index
-            tag=${candidate_tags[$tag_index]}
-            result_tmp="$worker_tmp/$tag_index.result"
-            status_tmp="$worker_tmp/$tag_index.status"
-            done_tmp="$worker_tmp/$tag_index.done"
-            info "Resolving registry tag with skopeo: $tag"
-            (
-                if skopeo_digest_for_tag "$repository:$tag" "$authfile" >"$result_tmp"; then
-                    printf '0\n' >"$status_tmp"
-                else
-                    printf '%d\n' "$?" >"$status_tmp"
-                fi
-                : >"$done_tmp"
-            ) &
-            active_pids[$tag_index]=$!
-            ((++next_tag_index))
-            ((++active_jobs))
-        done
-
-        (( active_jobs > 0 )) || break
-        # Bash 4.4 has wait -n but cannot report which PID completed. Each
-        # worker therefore publishes a small done marker; after wait -n wakes
-        # us, collect every completed worker and immediately refill its slot.
-        wait -n || true
-
-        for tag_index in "${!active_pids[@]}"; do
-            done_tmp="$worker_tmp/$tag_index.done"
-            [[ -e "$done_tmp" ]] || continue
-            tag=${candidate_tags[$tag_index]}
-            result_tmp="$worker_tmp/$tag_index.result"
-            status_tmp="$worker_tmp/$tag_index.status"
-            worker_pid=${active_pids[$tag_index]}
-            # wait -n may already have reaped this PID; the status file is the
-            # authoritative result, so this exact wait is only for cleanup.
-            wait "$worker_pid" 2>/dev/null || true
-            lookup_status=$(<"$status_tmp")
-            manifest_digest=
-            if (( lookup_status == 0 )); then
-                manifest_digest=$(<"$result_tmp")
-            fi
-            rm -f "$result_tmp" "$status_tmp" "$done_tmp"
-            unset 'active_pids[tag_index]'
-            active_jobs=$((active_jobs - 1))
-
-            if [[ "$manifest_digest" == "$digest" ]]; then
-                matching_indices[$tag_index]=1
-                [[ "$registry_tag_scan" == any ]] && match_found=1
-            fi
-            ((++checked))
-            if [[ -z ${opt_verbose-} ]]; then
-                printf '\rSearching registry tags with skopeo... %s (%d checked)' \
-                    "${spinner[checked % 4]}" "$checked" >&2
-            fi
-        done
-    done
-    rmdir "$worker_tmp"
-
-    # Completion order varies, but user-visible tag order remains identical to
-    # the registry tag listing. "any" therefore selects the earliest matching
-    # candidate even if a later lookup happened to finish first.
-    for (( tag_index = 0; tag_index < next_tag_index; ++tag_index )); do
-        [[ -n ${matching_indices[$tag_index]-} ]] || continue
-        tag=${candidate_tags[$tag_index]}
-        matches+="${matches:+$'\n'}$tag"
-        [[ "$registry_tag_scan" == any ]] && break
-    done
-    if [[ -z ${opt_verbose-} ]]; then
-        printf '\rSearching registry tags with skopeo... done (%d checked)\n' "$checked" >&2
-    fi
-
-    printf '%s' "$matches"
+    tags_by_digest_with_rolling_pool \
+        "$repository" "$digest" candidate_tags "$parallel_jobs" \
+        'Searching registry tags with skopeo' \
+        'Resolving registry tag with skopeo' \
+        skopeo_digest_for_tag_worker '' "$authfile"
 }
 
 # Resolve one tag while distinguishing a missing manifest from an access
