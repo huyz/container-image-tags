@@ -180,8 +180,9 @@ For example, the standard output from
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
 `skipped`. `tag_scan.backend` identifies the implementation used for a scan:
-`docker-hub-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, or
-`skopeo`; it is `null` when no scan ran. `tag_scan.provider_metadata` contains
+`docker-hub-api`, `ecr-api`, `github-packages-api`, `gcr-api`,
+`oci-registry-api`, or `skopeo`; it is `null` when no scan ran.
+`tag_scan.provider_metadata` contains
 provider-specific response data when available, currently for successful
 GitHub Packages API lookups, and is otherwise `null`.
 
