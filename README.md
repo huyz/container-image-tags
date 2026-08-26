@@ -118,10 +118,10 @@ Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `container-image-tags --help` for the full option and input-resolution guide.
 
 Before Skopeo performs its generic per-tag fallback, it estimates the scan time
-from the number of candidate tags and runs up to eight manifest lookups in
-parallel. Interactive scans estimated above three minutes print an advisory and
-continue. Non-interactive scans estimated above ten minutes fail fast; pass
-`--allow-expensive-scan` to permit one explicitly.
+from the number of candidate tags and keeps up to eight manifest lookups in
+flight with a rolling worker pool. Interactive scans estimated above three
+minutes print an advisory and continue. Non-interactive scans estimated above
+ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
 
 ### JSON Output
 

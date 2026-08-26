@@ -127,15 +127,14 @@ function skopeo_tags_by_digest {
     local digest="$2"
     local authfile="${3-}"
     local tags tag manifest_digest error_tmp skopeo_status match_found
-    local candidate_count parallel_jobs batch_start batch_count batch_offset tag_index
-    local result_tmp lookup_status
+    local candidate_count parallel_jobs tag_index next_tag_index active_jobs
+    local worker_tmp result_tmp status_tmp done_tmp lookup_status worker_pid
     local checked=0
     local matches=
     local -a auth_args=()
     local -a candidate_tags=()
-    local -a batch_pids=()
-    local -a batch_results=()
-    local -a batch_statuses=()
+    local -a active_pids=()
+    local -a matching_indices=()
     local -a spinner=('|' '/' '-' $'\\')
 
     skopeo_is_available || return 127
@@ -175,45 +174,61 @@ function skopeo_tags_by_digest {
         printf 'Searching registry tags with skopeo... %s (0 checked)' "${spinner[0]}" >&2
     fi
     match_found=
-    for (( batch_start = 0; batch_start < candidate_count; batch_start += parallel_jobs )); do
-        batch_count=$parallel_jobs
-        (( batch_start + batch_count <= candidate_count )) ||
-            batch_count=$(( candidate_count - batch_start ))
-        batch_pids=()
-        batch_results=()
-        batch_statuses=()
-
-        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
-            tag_index=$(( batch_start + batch_offset ))
+    worker_tmp=$(mktemp -d)
+    next_tag_index=0
+    active_jobs=0
+    while (( next_tag_index < candidate_count || active_jobs > 0 )); do
+        # Keep every slot occupied until all candidates are scheduled. In
+        # "any" mode, stop adding work as soon as one worker finds a match,
+        # then drain the workers already in flight.
+        while [[ -z "$match_found" ]] &&
+                (( active_jobs < parallel_jobs && next_tag_index < candidate_count )); do
+            tag_index=$next_tag_index
             tag=${candidate_tags[$tag_index]}
-            result_tmp=$(mktemp)
-            batch_results+=("$result_tmp")
+            result_tmp="$worker_tmp/$tag_index.result"
+            status_tmp="$worker_tmp/$tag_index.status"
+            done_tmp="$worker_tmp/$tag_index.done"
             info "Resolving registry tag with skopeo: $tag"
-            skopeo_digest_for_tag "$repository:$tag" "$authfile" >"$result_tmp" &
-            batch_pids+=("$!")
+            (
+                if skopeo_digest_for_tag "$repository:$tag" "$authfile" >"$result_tmp"; then
+                    printf '0\n' >"$status_tmp"
+                else
+                    printf '%d\n' "$?" >"$status_tmp"
+                fi
+                : >"$done_tmp"
+            ) &
+            active_pids[$tag_index]=$!
+            ((++next_tag_index))
+            ((++active_jobs))
         done
 
-        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
-            if wait "${batch_pids[$batch_offset]}"; then
-                batch_statuses+=(0)
-            else
-                batch_statuses+=("$?")
-            fi
-        done
+        (( active_jobs > 0 )) || break
+        # Bash 4.4 has wait -n but cannot report which PID completed. Each
+        # worker therefore publishes a small done marker; after wait -n wakes
+        # us, collect every completed worker and immediately refill its slot.
+        wait -n || true
 
-        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
-            tag_index=$(( batch_start + batch_offset ))
+        for tag_index in "${!active_pids[@]}"; do
+            done_tmp="$worker_tmp/$tag_index.done"
+            [[ -e "$done_tmp" ]] || continue
             tag=${candidate_tags[$tag_index]}
-            result_tmp=${batch_results[$batch_offset]}
-            lookup_status=${batch_statuses[$batch_offset]}
+            result_tmp="$worker_tmp/$tag_index.result"
+            status_tmp="$worker_tmp/$tag_index.status"
+            worker_pid=${active_pids[$tag_index]}
+            # wait -n may already have reaped this PID; the status file is the
+            # authoritative result, so this exact wait is only for cleanup.
+            wait "$worker_pid" 2>/dev/null || true
+            lookup_status=$(<"$status_tmp")
             manifest_digest=
             if (( lookup_status == 0 )); then
                 manifest_digest=$(<"$result_tmp")
             fi
-            rm -f "$result_tmp"
+            rm -f "$result_tmp" "$status_tmp" "$done_tmp"
+            unset 'active_pids[tag_index]'
+            active_jobs=$((active_jobs - 1))
 
-            if [[ -z "$match_found" && "$manifest_digest" == "$digest" ]]; then
-                matches+="${matches:+$'\n'}$tag"
+            if [[ "$manifest_digest" == "$digest" ]]; then
+                matching_indices[$tag_index]=1
                 [[ "$registry_tag_scan" == any ]] && match_found=1
             fi
             ((++checked))
@@ -222,8 +237,17 @@ function skopeo_tags_by_digest {
                     "${spinner[checked % 4]}" "$checked" >&2
             fi
         done
+    done
+    rmdir "$worker_tmp"
 
-        [[ -z "$match_found" ]] || break
+    # Completion order varies, but user-visible tag order remains identical to
+    # the registry tag listing. "any" therefore selects the earliest matching
+    # candidate even if a later lookup happened to finish first.
+    for (( tag_index = 0; tag_index < next_tag_index; ++tag_index )); do
+        [[ -n ${matching_indices[$tag_index]-} ]] || continue
+        tag=${candidate_tags[$tag_index]}
+        matches+="${matches:+$'\n'}$tag"
+        [[ "$registry_tag_scan" == any ]] && break
     done
     if [[ -z ${opt_verbose-} ]]; then
         printf '\rSearching registry tags with skopeo... done (%d checked)\n' "$checked" >&2
