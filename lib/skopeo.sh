@@ -13,6 +13,7 @@ skopeo_inspect_platform_args=()
 # Keep the estimate deliberately simple and stable: its purpose is to identify
 # obviously expensive scans, not to promise an exact completion time.
 readonly SKOPEO_ESTIMATED_SECONDS_PER_TAG=2
+readonly SKOPEO_MAX_PARALLEL_JOBS=8
 readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE=180
 readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE=600
 
@@ -88,8 +89,10 @@ function skopeo_format_estimated_duration {
 function skopeo_expensive_scan_preflight {
     local repository="$1"
     local candidate_count="$2"
-    local estimated_seconds=$(( candidate_count * SKOPEO_ESTIMATED_SECONDS_PER_TAG ))
-    local estimated_duration scan_description threshold
+    local parallel_jobs="$3"
+    local estimated_batches=$(( (candidate_count + parallel_jobs - 1) / parallel_jobs ))
+    local estimated_seconds=$(( estimated_batches * SKOPEO_ESTIMATED_SECONDS_PER_TAG ))
+    local estimated_duration scan_description threshold worker_description
 
     if [[ "$registry_tag_scan" == any ]]; then
         scan_description="may inspect up to $candidate_count tags"
@@ -97,11 +100,13 @@ function skopeo_expensive_scan_preflight {
         scan_description="will inspect $candidate_count tags"
     fi
     estimated_duration=$(skopeo_format_estimated_duration "$estimated_seconds")
+    worker_description="$parallel_jobs parallel worker"
+    (( parallel_jobs == 1 )) || worker_description+=s
 
     if [[ -t 0 || -t 1 || -t 2 ]]; then
         threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE
         if (( estimated_seconds > threshold )); then
-            warn "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Continuing because this is an interactive run."
+            warn "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because this is an interactive run."
         fi
         return 0
     fi
@@ -109,9 +114,9 @@ function skopeo_expensive_scan_preflight {
     threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE
     if (( estimated_seconds > threshold )); then
         if [[ -n ${opt_allow_expensive_scan-} ]]; then
-            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Continuing because --allow-expensive-scan was specified."
+            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because --allow-expensive-scan was specified."
         else
-            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration (${SKOPEO_ESTIMATED_SECONDS_PER_TAG}s per tag). Rerun with --allow-expensive-scan to permit this non-interactive scan."
+            notice "Skopeo $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Rerun with --allow-expensive-scan to permit this non-interactive scan."
             return 4
         fi
     fi
@@ -122,10 +127,15 @@ function skopeo_tags_by_digest {
     local digest="$2"
     local authfile="${3-}"
     local tags tag manifest_digest error_tmp skopeo_status match_found
-    local candidate_count=0
+    local candidate_count parallel_jobs batch_start batch_count batch_offset tag_index
+    local result_tmp lookup_status
     local checked=0
     local matches=
     local -a auth_args=()
+    local -a candidate_tags=()
+    local -a batch_pids=()
+    local -a batch_results=()
+    local -a batch_statuses=()
     local -a spinner=('|' '/' '-' $'\\')
 
     skopeo_is_available || return 127
@@ -152,33 +162,69 @@ function skopeo_tags_by_digest {
         if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
             continue
         fi
-        ((++candidate_count))
+        candidate_tags+=("$tag")
     done <<<"$tags"
-    skopeo_expensive_scan_preflight "$repository" "$candidate_count" || return $?
+    candidate_count=${#candidate_tags[@]}
+    parallel_jobs=$SKOPEO_MAX_PARALLEL_JOBS
+    (( candidate_count < parallel_jobs )) && parallel_jobs=$candidate_count
+    (( parallel_jobs > 0 )) || parallel_jobs=1
+    skopeo_expensive_scan_preflight \
+        "$repository" "$candidate_count" "$parallel_jobs" || return $?
 
     if [[ -z ${opt_verbose-} ]]; then
         printf 'Searching registry tags with skopeo... %s (0 checked)' "${spinner[0]}" >&2
     fi
-    while IFS= read -r tag; do
-        [[ -n "$tag" ]] || continue
-        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
-            continue
-        fi
-        match_found=
-        info "Resolving registry tag with skopeo: $tag"
-        if manifest_digest=$(skopeo_digest_for_tag "$repository:$tag" "$authfile"); then
-            if [[ "$manifest_digest" == "$digest" ]]; then
+    match_found=
+    for (( batch_start = 0; batch_start < candidate_count; batch_start += parallel_jobs )); do
+        batch_count=$parallel_jobs
+        (( batch_start + batch_count <= candidate_count )) ||
+            batch_count=$(( candidate_count - batch_start ))
+        batch_pids=()
+        batch_results=()
+        batch_statuses=()
+
+        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
+            tag_index=$(( batch_start + batch_offset ))
+            tag=${candidate_tags[$tag_index]}
+            result_tmp=$(mktemp)
+            batch_results+=("$result_tmp")
+            info "Resolving registry tag with skopeo: $tag"
+            skopeo_digest_for_tag "$repository:$tag" "$authfile" >"$result_tmp" &
+            batch_pids+=("$!")
+        done
+
+        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
+            if wait "${batch_pids[$batch_offset]}"; then
+                batch_statuses+=(0)
+            else
+                batch_statuses+=("$?")
+            fi
+        done
+
+        for (( batch_offset = 0; batch_offset < batch_count; ++batch_offset )); do
+            tag_index=$(( batch_start + batch_offset ))
+            tag=${candidate_tags[$tag_index]}
+            result_tmp=${batch_results[$batch_offset]}
+            lookup_status=${batch_statuses[$batch_offset]}
+            manifest_digest=
+            if (( lookup_status == 0 )); then
+                manifest_digest=$(<"$result_tmp")
+            fi
+            rm -f "$result_tmp"
+
+            if [[ -z "$match_found" && "$manifest_digest" == "$digest" ]]; then
                 matches+="${matches:+$'\n'}$tag"
                 [[ "$registry_tag_scan" == any ]] && match_found=1
             fi
-        fi
-        ((++checked))
-        if [[ -z ${opt_verbose-} ]]; then
-            printf '\rSearching registry tags with skopeo... %s (%d checked)' \
-                "${spinner[checked % 4]}" "$checked" >&2
-        fi
+            ((++checked))
+            if [[ -z ${opt_verbose-} ]]; then
+                printf '\rSearching registry tags with skopeo... %s (%d checked)' \
+                    "${spinner[checked % 4]}" "$checked" >&2
+            fi
+        done
+
         [[ -z "$match_found" ]] || break
-    done <<<"$tags"
+    done
     if [[ -z ${opt_verbose-} ]]; then
         printf '\rSearching registry tags with skopeo... done (%d checked)\n' "$checked" >&2
     fi
