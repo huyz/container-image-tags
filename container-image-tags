@@ -13,9 +13,9 @@
 # Why not use Skopeo for every registry?  Skopeo can list tags and inspect a
 # tag's manifest, but it cannot reverse-lookup tags by digest.  Its generic
 # approach therefore requires one manifest lookup per tag.  Docker Hub's tags
-# API and GitHub's Packages API include digests and tags in their paginated
-# results, making those common lookups much faster.  Skopeo remains the
-# portable fallback for other OCI registries and their configured credentials.
+# API, GitHub's Packages API, and GCR's extended tag listing include digests
+# and tags together, making those common lookups much faster.  Skopeo remains
+# the portable fallback for other OCI registries and configured credentials.
 #
 # Steps:
 #   1. Resolve each argument as a container, local image, registry tag, or
@@ -106,6 +106,9 @@ source "$MODULE_DIR/acr.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/gar.sh
 source "$MODULE_DIR/gar.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/gcr.sh
+source "$MODULE_DIR/gcr.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/ecr.sh
 source "$MODULE_DIR/ecr.sh"

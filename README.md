@@ -16,8 +16,10 @@ interprets ambiguous input before starting registry work.
   GitHub Packages API path
 - Azure Container Registry: anonymous access, configured credentials, or an
   on-demand Azure CLI token
-- Google Artifact Registry and Google Container Registry: anonymous access,
-  configured credentials, or an on-demand Google Cloud CLI token
+- Google Container Registry: direct digest/tag metadata lookup, with configured
+  credentials or an on-demand Google Cloud CLI token as fallbacks
+- Google Artifact Registry: anonymous access, configured credentials, or an
+  on-demand Google Cloud CLI token
 - Amazon ECR and ECR Public: anonymous access where available, configured
   credentials, or an on-demand AWS CLI token
 - Other OCI registries: portable lookup through Skopeo

@@ -25,7 +25,12 @@ function registry_classify {
         registry_kind=acr
         skopeo_prepare_lazy_auth
         ;;
-    *-docker.pkg.dev/* | gcr.io/* | us.gcr.io/* | eu.gcr.io/* | asia.gcr.io/*)
+    gcr.io/* | us.gcr.io/* | eu.gcr.io/* | asia.gcr.io/*)
+        registry_kind=gcr
+        registry_repository="${repository#*/}"
+        skopeo_prepare_lazy_auth
+        ;;
+    *-docker.pkg.dev/*)
         registry_kind=gar
         skopeo_prepare_lazy_auth
         ;;
@@ -105,6 +110,26 @@ function registry_resolve_tag_digest {
             remote_tag_error="$lookup_output"
         fi
         ;;
+    gcr)
+        if lookup_output=$(gcr_digest_for_tag_anonymously \
+                "$registry_host" "$registry_repository" "$tag"); then
+            remote_tag_digest="$lookup_output"
+            remote_tag_status=0
+        else
+            remote_tag_status=$?
+            if (( remote_tag_status == 2 || remote_tag_status == 3 )); then
+                skopeo_is_available ||
+                    abort "Install skopeo to check registry tag '$remote_tag_reference'"
+                if lookup_output=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
+                    remote_tag_digest="$lookup_output"
+                    remote_tag_status=0
+                else
+                    remote_tag_status=$?
+                    remote_tag_error="$lookup_output"
+                fi
+            fi
+        fi
+        ;;
     ecr)
         skopeo_is_available ||
             abort "Install skopeo to check registry tag '$remote_tag_reference'"
@@ -167,6 +192,20 @@ function registry_find_tags_by_digest {
         registry_tags=$(gar_tags_by_digest \
             "$registry_host" "$repository" "$digest") ||
             abort "Google registry lookup failed for $repository"
+        ;;
+    gcr)
+        registry_lookup_backend=gcr-api
+        if registry_tags=$(gcr_tags_by_digest_anonymously \
+                "$registry_host" "$registry_repository" "$digest"); then
+            :
+        else
+            registry_lookup_backend=skopeo
+            skopeo_is_available ||
+                abort "Install skopeo to query registry '$registry_host'"
+            registry_tags=$(gar_tags_by_digest \
+                "$registry_host" "$repository" "$digest") ||
+                abort "Google Container Registry lookup failed for $repository"
+        fi
         ;;
     ecr)
         registry_lookup_backend=skopeo

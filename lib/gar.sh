@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 
-# Google Artifact Registry and Google Container Registry support. Public
-# access stays anonymous; after the registry denies anonymous access, retry
-# with a short-lived Google Cloud CLI token. A denial can also mean that the
-# repository is unavailable, so do not claim that authentication is required.
+# Google registry Skopeo support, used directly for Artifact Registry and as
+# the authenticated fallback for Container Registry. Public access stays
+# anonymous; after the registry denies anonymous access, retry with a
+# short-lived Google Cloud CLI token. A denial can also mean that the repository
+# is unavailable, so do not claim that authentication is required.
 
 function gar_authenticate {
     local registry="$1"
