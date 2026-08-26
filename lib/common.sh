@@ -29,8 +29,27 @@ function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 # without verbose output.
 function notice { printf "NOTICE: %s\n" "$*" >&2; }
 
+# Interactive choices read from /dev/tty and prompts are written to stderr.
+# Requiring both terminal input and terminal diagnostics ensures there is a user
+# available to answer a visible prompt. stdout is intentionally excluded because
+# normal command results may be redirected without making the session noninteractive.
 function is_interactive_session {
-    [[ -t 0 || -t 1 || -t 2 ]]
+    [[ -t 0 && -t 2 ]]
+}
+
+# Normalize one documented scan-choice spelling. Keeping this parser separate
+# from /dev/tty access makes the accepted interactive vocabulary testable
+# without depending on the test runner's terminal.
+function remote_tag_scan_choice {
+    local choice_lower
+
+    choice_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    case "$choice_lower" in
+    1 | any) printf 'any\n' ;;
+    a | all) printf 'all\n' ;;
+    '' | n | no) printf 'none\n' ;;
+    *) return 1 ;;
+    esac
 }
 
 # Run one digest lookup per candidate tag while keeping a bounded number of
@@ -158,7 +177,7 @@ function tags_by_digest_with_rolling_pool {
 # checked. Print "any", "all", or "none"; return nonzero only when prompting
 # is unavailable.
 function choose_remote_tag_scan {
-    local choice choice_lower
+    local choice action
 
     if ! is_interactive_session; then
         return 1
@@ -170,11 +189,9 @@ function choose_remote_tag_scan {
     while true; do
         printf 'Choose [1/a/n]: ' >&2
         IFS= read -r choice </dev/tty || return 1
-        choice_lower=$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')
-        case "$choice_lower" in
-        1 | any) printf 'any\n'; return ;;
-        a | all) printf 'all\n'; return ;;
-        '' | n | no) printf 'none\n'; return ;;
-        esac
+        if action=$(remote_tag_scan_choice "$choice"); then
+            printf '%s\n' "$action"
+            return
+        fi
     done
 }

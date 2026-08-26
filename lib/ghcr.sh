@@ -2,6 +2,18 @@
 
 # GitHub Container Registry fast paths: GitHub Packages API and anonymous OCI.
 
+readonly GHCR_MANIFEST_ACCEPT_HEADER='Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json'
+
+function ghcr_write_request_headers {
+    local header_file="$1"
+    local token="$2"
+
+    : >"$header_file"
+    chmod 600 "$header_file"
+    printf 'Authorization: Bearer %s\n' "$token" >"$header_file"
+    printf '%s\n' "$GHCR_MANIFEST_ACCEPT_HEADER" >>"$header_file"
+}
+
 # Look up an active GHCR package version by immutable digest or current tag.
 # GitHub's Packages API exposes the digest, timestamps, and current tags in the
 # same object, so no tag-by-tag manifest lookup is needed.
@@ -128,35 +140,36 @@ function ghcr_anonymous_pull_token {
 function ghcr_digest_for_tag_anonymously {
     local ghcr_repository="$1"
     local tag="$2"
-    local tag_encoded token header_tmp http_code manifest_digest
+    local tag_encoded token request_headers header_tmp http_code manifest_digest
 
     token=$(ghcr_anonymous_pull_token "$ghcr_repository") ||
         return "$LOOKUP_UNAVAILABLE"
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
+    request_headers=$(mktemp)
+    ghcr_write_request_headers "$request_headers" "$token"
     header_tmp=$(mktemp)
     if ! http_code=$(
         $CURL -sS -I -D "$header_tmp" -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $token" \
-            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            -H "@$request_headers" \
             "https://ghcr.io/v2/$ghcr_repository/manifests/$tag_encoded"
     ); then
-        rm -f "$header_tmp"
+        rm -f "$request_headers" "$header_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
     if [[ "$http_code" == 404 ]]; then
-        rm -f "$header_tmp"
+        rm -f "$request_headers" "$header_tmp"
         return "$LOOKUP_NOT_FOUND"
     fi
     if [[ "$http_code" != 200 ]]; then
         debug "Anonymous GHCR tag lookup returned HTTP $http_code for $ghcr_repository:$tag"
-        rm -f "$header_tmp"
+        rm -f "$request_headers" "$header_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
 
     manifest_digest=$(
         perl -ne 'if (/^docker-content-digest:\s*(\S+)/i) { print "$1\n"; exit }' "$header_tmp"
     )
-    rm -f "$header_tmp"
+    rm -f "$request_headers" "$header_tmp"
     [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
     printf '%s\n' "$manifest_digest"
 }
@@ -207,22 +220,24 @@ function ghcr_digest_for_tag {
 function ghcr_tags_by_digest_anonymously {
     local ghcr_repository="$1"
     local digest="$2"
-    local token
+    local token request_headers
     local tags="" next_url next_link page_tags tag manifest_digest
     local header_tmp body_tmp checked=0 match_found
     local -a spinner=('|' '/' '-' $'\\')
 
     verbose "Requesting an anonymous GHCR pull token"
     token=$(ghcr_anonymous_pull_token "$ghcr_repository") || return 1
+    request_headers=$(mktemp)
+    ghcr_write_request_headers "$request_headers" "$token"
 
     header_tmp=$(mktemp)
     body_tmp=$(mktemp)
     next_url="https://ghcr.io/v2/$ghcr_repository/tags/list?n=100"
     while [[ -n "$next_url" ]]; do
         verbose "Listing GHCR tags from: $next_url"
-        if ! $CURL -fsS -H "Authorization: Bearer $token" \
+        if ! $CURL -fsS -H "@$request_headers" \
                 -D "$header_tmp" -o "$body_tmp" "$next_url"; then
-            rm -f "$header_tmp" "$body_tmp"
+            rm -f "$request_headers" "$header_tmp" "$body_tmp"
             return 1
         fi
 
@@ -260,8 +275,7 @@ function ghcr_tags_by_digest_anonymously {
         fi
         match_found=
         verbose "Resolving GHCR tag: $tag"
-        if $CURL -fsS -H "Authorization: Bearer $token" \
-                -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+        if $CURL -fsS -H "@$request_headers" \
                 -D "$header_tmp" -o /dev/null \
                 "https://ghcr.io/v2/$ghcr_repository/manifests/$tag" 2>/dev/null; then
             manifest_digest=$(
@@ -283,7 +297,7 @@ function ghcr_tags_by_digest_anonymously {
         printf '\rSearching GHCR tags anonymously... done (%d checked)\n' "$checked" >&2
     fi
 
-    rm -f "$header_tmp" "$body_tmp"
+    rm -f "$request_headers" "$header_tmp" "$body_tmp"
 }
 
 # Ask how to proceed when the Packages API cannot be used. The selected action

@@ -229,12 +229,19 @@ function registry_find_tags_by_digest {
                 "$registry_host" "$registry_repository" "$digest"); then
             :
         else
-            registry_lookup_backend=skopeo
-            skopeo_is_available ||
-                abort "Install skopeo to query registry '$registry_host'"
-            registry_tags=$(gar_tags_by_digest \
-                "$registry_host" "$repository" "$digest") ||
-                abort "Google Container Registry lookup failed for $repository"
+            lookup_status=$?
+            case "$lookup_status" in
+            "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
+            "$LOOKUP_STOPPED") abort "GCR API lookup stopped for $repository" ;;
+            *)
+                registry_lookup_backend=skopeo
+                skopeo_is_available ||
+                    abort "Install skopeo to query registry '$registry_host'"
+                registry_tags=$(gar_tags_by_digest \
+                    "$registry_host" "$repository" "$digest") ||
+                    abort "Google Container Registry lookup failed for $repository"
+                ;;
+            esac
         fi
         ;;
     ecr)

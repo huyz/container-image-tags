@@ -1,0 +1,17 @@
+name: Set up pinned Bats Core
+description: Download the repository's pinned Bats Core release
+
+runs:
+  using: composite
+  steps:
+    - name: Download Bats Core 1.14.0
+      shell: bash
+      env:
+        BATS_VERSION: 1.14.0
+      run: |
+        bats_root="$RUNNER_TEMP/bats-core-$BATS_VERSION"
+        curl -fsSLo "$RUNNER_TEMP/bats-core.tar.gz" \
+          "https://github.com/bats-core/bats-core/archive/refs/tags/v$BATS_VERSION.tar.gz"
+        tar -xzf "$RUNNER_TEMP/bats-core.tar.gz" -C "$RUNNER_TEMP"
+        echo "BATS_ROOT=$bats_root" >> "$GITHUB_ENV"
+        echo "$bats_root/bin" >> "$GITHUB_PATH"

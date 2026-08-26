@@ -48,6 +48,11 @@ function gcr_metadata_anonymously {
         rm -f "$response_tmp"
         return "$LOOKUP_NOT_FOUND"
         ;;
+    429)
+        notice "GCR rate limited tag metadata for $registry/$repository; not falling back to the more request-intensive Skopeo scan."
+        rm -f "$response_tmp"
+        return "$LOOKUP_STOPPED"
+        ;;
     *)
         debug "GCR tag listing failed for $registry/$repository (HTTP $http_code)${error_message:+: $error_message}"
         rm -f "$response_tmp"

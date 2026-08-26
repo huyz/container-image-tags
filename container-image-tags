@@ -380,6 +380,8 @@ for input in "$@"; do
     container=
     image_id=
     local_image_version=
+    local_image_revision=
+    local_image_refname=
     repo_digest=
     local_tag=
     wildcard_image_ids=
@@ -516,10 +518,13 @@ for input in "$@"; do
 
     # Most arguments resolve to one lookup.  An untagged repository without a
     # local :latest image can expand to multiple distinct image IDs.
-    images_to_process="${wildcard_image_ids:-__current_resolution__}"
+    # Keep stdin attached to the invoking terminal throughout processing. The
+    # prompt contract checks fd 0, so feeding this loop with a here-string would
+    # incorrectly turn an interactive invocation into a noninteractive one.
+    readarray -t images_to_process <<<"${wildcard_image_ids:-__current_resolution__}"
     wildcard_output_index=0
     seen_wildcard_repo_digests=
-    while IFS= read -r image_to_process; do
+    for image_to_process in "${images_to_process[@]}"; do
         skip_input=
         if [[ "$image_to_process" != __current_resolution__ ]]; then
             container=
@@ -583,7 +588,7 @@ for input in "$@"; do
             echo
         fi
         if [[ -n "$image_id" ]]; then
-            echo "Local Image ID: $image_id"
+            echo "Local Image ID:  $image_id"
             if [[ -n "$local_image_version" ]]; then
                 echo "OCI annotation » Version:  $local_image_version"
             fi
@@ -594,8 +599,8 @@ for input in "$@"; do
                 echo "OCI annotation » Ref name: $local_image_refname"
             fi
         fi
-        echo "Repository:     $repo"
-        echo "Package digest: ${repo_digest##*@}"
+        echo "Repository:      $repo"
+        echo "Manifest digest: ${repo_digest##*@}"
         echo
         if [[ -n "$image_id" ]]; then
             echo "Local tag:  $local_tag"
@@ -687,7 +692,7 @@ for input in "$@"; do
         printf '%s\n' "${registry_tags:-<none>}"
         registry_print_metadata
     fi
-    done <<<"$images_to_process"
+    done
 done
 
 if [[ -n "$opt_json" ]]; then

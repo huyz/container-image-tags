@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# By default, runs all tests except for static, stress, and live.
+
+set -Eeuo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+BATS=${BATS:-bats}
+cd -- "$SCRIPT_DIR/.."
+
+case "${1:-all}" in
+all)
+    suites=(unit integration security)
+    ;;
+static)
+    bash_bin=${SYSTEM_BASH:-bash}
+    command -v "$bash_bin" >/dev/null 2>&1 || {
+        printf 'tests/run: Bash is required for static checks.\n' >&2
+        exit 1
+    }
+    command -v shellcheck >/dev/null 2>&1 || {
+        printf 'tests/run: ShellCheck is required for static checks.\n' >&2
+        exit 1
+    }
+    # STATIC-001 runs this parser gate again in the Bash 4.4 CI job.
+    # STATIC-002 exercises the same complete source set with current Bash.
+    "$bash_bin" -n container-image-tags lib/*.sh tests/run tests/helpers/*.bash tests/test-helper.bash
+    # STATIC-003 resolves all sourced modules from the top-level executable.
+    shellcheck -x container-image-tags tests/run
+    # STATIC-004 intentionally gates trailing whitespace, not repository-wide formatting.
+    if rg -n '[[:blank:]]+$' --glob '*.sh' --glob '*.bash' --glob '*.bats' \
+            --glob '*.md' --glob '*.yml' --glob '*.yaml' .; then
+        printf 'tests/run: trailing whitespace found.\n' >&2
+        exit 1
+    fi
+    exit 0
+    ;;
+unit | integration | security | stress)
+    suites=("$1")
+    ;;
+live)
+    [[ ${CIT_LIVE_TESTS:-} == 1 ]] || {
+        printf 'tests/run: set CIT_LIVE_TESTS=1 to run live registry tests.\n' >&2
+        exit 2
+    }
+    suites=(live)
+    ;;
+*)
+    printf 'Usage: tests/run [static|unit|integration|security|stress|live]\n' >&2
+    exit 2
+    ;;
+esac
+
+command -v "$BATS" >/dev/null 2>&1 || {
+    printf 'tests/run: Bats Core is required (brew install bats-core).\n' >&2
+    exit 1
+}
+exec "$BATS" --timing "${suites[@]/#/$SCRIPT_DIR/}"

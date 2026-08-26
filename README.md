@@ -213,6 +213,39 @@ successful exhaustive lookups populate `registry_tags` plus
 `registry_metadata`. User-choice helpers produce string actions so nonzero
 exit statuses remain reserved for actual failures.
 
+### Tests
+
+The offline test suite uses [Bats Core](https://bats-core.readthedocs.io/) 1.5
+or newer; CI pins Bats Core 1.14.0. On macOS, install the development
+dependencies with:
+
+```sh
+brew install bats-core shellcheck
+```
+
+Run the same required checks used by CI from any directory:
+
+```sh
+tests/run static
+tests/run  # Runs unit, integration, security tests
+```
+
+The required suite isolates `HOME`, Docker configuration, cloud configuration,
+and all external commands. It does not use the network, a Docker daemon, or
+real credentials. Narrower and optional tiers are also available:
+
+```sh
+tests/run unit
+tests/run integration
+tests/run security
+tests/run stress
+CIT_LIVE_TESTS=1 CIT_LIVE_GENERIC_OCI_REF='alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b' tests/run live
+```
+
+Live tests are opt-in and skipped unless their target environment variables are
+configured. See [`docs/test-plan.md`](docs/test-plan.md) for the behavioral
+matrix, test IDs, and completion requirements.
+
 As of 2026-08-25, authored mostly by OpenAI GPT 5.6 Sol and DeepSeek V4 Flash.
 
 If this project proves useful, it will be rewritten in go for portability and

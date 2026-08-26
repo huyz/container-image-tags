@@ -24,28 +24,42 @@ function docker_hub_repository {
     printf '%s\n' "$repository"
 }
 
+# Write the short-lived Hub API bearer token to a mode-0600 curl header file so
+# it cannot be observed in the process list.
+function docker_hub_write_request_headers {
+    local header_file="$1"
+
+    : >"$header_file"
+    chmod 600 "$header_file"
+    printf 'Authorization: Bearer %s\n' "$docker_hub_token" >"$header_file"
+}
+
 # Return the digest in one Docker Hub tag record without walking paginated tag
 # results. Use LOOKUP_NOT_FOUND for a missing tag and LOOKUP_UNAVAILABLE for
 # authentication or transport failures.
 function docker_hub_digest_for_tag {
     local hub_repository="$1"
     local tag="$2"
-    local tag_encoded response_tmp http_code manifest_digest token
+    local tag_encoded response_tmp request_headers= http_code manifest_digest token
     local -a request_args
 
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
     response_tmp=$(mktemp)
     request_args=(-sS -o "$response_tmp" -w '%{http_code}')
     if [[ -n "$docker_hub_token" ]]; then
-        request_args+=(-H "Authorization: Bearer $docker_hub_token")
+        request_headers=$(mktemp)
+        docker_hub_write_request_headers "$request_headers"
+        request_args+=(-H "@$request_headers")
     fi
     if ! http_code=$(
         $CURL "${request_args[@]}" \
             "https://hub.docker.com/v2/repositories/$hub_repository/tags/$tag_encoded"
     ); then
         rm -f "$response_tmp"
+        [[ -z "$request_headers" ]] || rm -f "$request_headers"
         return "$LOOKUP_UNAVAILABLE"
     fi
+    [[ -z "$request_headers" ]] || rm -f "$request_headers"
     case "$http_code" in
     200)
         manifest_digest=$($JQ -r '.digest // empty' "$response_tmp")
@@ -164,6 +178,21 @@ function docker_hub_token_interactively {
     return "$DOCKER_HUB_TOKEN_REJECTED"
 }
 
+function docker_hub_authentication_action {
+    local choice="$1"
+    local allow_skopeo_fallback="${2-}"
+
+    case "$choice" in
+    a | A) printf 'authenticate\n' ;;
+    f | F)
+        [[ -n "$allow_skopeo_fallback" ]] || return 1
+        printf 'skopeo\n'
+        ;;
+    s | S) printf 'skip\n' ;;
+    *) return 1 ;;
+    esac
+}
+
 # Explain why anonymous pagination stopped and offer the fast API retry, the
 # available slower Skopeo fallback, or a per-image skip. Write "authenticated",
 # "skopeo", or "skip" to the caller's named variable; return nonzero only when
@@ -173,7 +202,7 @@ function choose_docker_hub_authentication {
     local allow_skopeo_fallback="${2-}"
     local choice_variable="$3"
     local -n docker_hub_auth_result_ref="$choice_variable"
-    local user_choice token auth_status
+    local user_choice action token auth_status
 
     docker_hub_auth_result_ref=
     if ! is_interactive_session; then
@@ -193,8 +222,10 @@ function choose_docker_hub_authentication {
             printf 'Choose [a/s]: ' >&2
         fi
         IFS= read -r user_choice </dev/tty || return 1
-        case "$user_choice" in
-        a | A)
+        action=$(docker_hub_authentication_action \
+            "$user_choice" "$allow_skopeo_fallback") || continue
+        case "$action" in
+        authenticate)
             if token=$(docker_hub_token_interactively); then
                 docker_hub_token=$token
                 docker_hub_auth_result_ref=authenticated
@@ -204,13 +235,11 @@ function choose_docker_hub_authentication {
             fi
             (( auth_status == DOCKER_HUB_TOKEN_UNAVAILABLE )) && return 1
             ;;
-        f | F)
-            if [[ -n "$allow_skopeo_fallback" ]]; then
-                docker_hub_auth_result_ref=skopeo
-                return
-            fi
+        skopeo)
+            docker_hub_auth_result_ref=skopeo
+            return
             ;;
-        s | S)
+        skip)
             docker_hub_auth_result_ref=skip
             return
             ;;
@@ -226,7 +255,7 @@ function docker_hub_tags_by_digest {
     local hub_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local next_url response_tmp http_code error_message matching_tags token
+    local next_url response_tmp request_headers= http_code error_message matching_tags token
     local authentication_choice
     local has_skopeo_credentials=
     local -a request_args
@@ -238,18 +267,24 @@ function docker_hub_tags_by_digest {
         verbose "Listing Docker Hub tags from: $next_url"
         request_args=(-sS -o "$response_tmp" -w '%{http_code}')
         if [[ -n "$docker_hub_token" ]]; then
-            request_args+=(-H "Authorization: Bearer $docker_hub_token")
+            request_headers=$(mktemp)
+            docker_hub_write_request_headers "$request_headers"
+            request_args+=(-H "@$request_headers")
         fi
         if ! http_code=$(
             $CURL "${request_args[@]}" "$next_url"
         ); then
             rm -f "$response_tmp"
+            [[ -z "$request_headers" ]] || rm -f "$request_headers"
             abort "Failed to list tags for $display_repository"
         fi
+        [[ -z "$request_headers" ]] || rm -f "$request_headers"
+        request_headers=
         error_message=$(
             $JQ -r '
                 (.message // .detail // .error // empty)
                 | if type == "string" then gsub("[\\r\\n]+"; " ") else tostring end
+                | .[0:512]
             ' "$response_tmp" 2>/dev/null || true
         )
         case "$http_code" in

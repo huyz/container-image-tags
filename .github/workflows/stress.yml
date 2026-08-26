@@ -1,0 +1,21 @@
+name: Stress tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 9 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq coreutils util-linux
+      - uses: ./.github/actions/setup-bats
+      - name: Run scheduler stress tests
+        run: tests/run stress
