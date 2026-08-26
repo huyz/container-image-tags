@@ -256,7 +256,9 @@ function append_json_result {
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-expensive-scan] [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method] <container-or-image-or-digest> [...]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-expensive-scan]
+                    [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method]
+                    <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode; could trigger more requests
@@ -270,11 +272,13 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
         --tag-scan: control the reverse lookup after resolving the baseline digest:
             ask: prompt to scan for any or all matching remote tags
             never: do not perform a reverse tag lookup
-: stop after finding the first matching tag other than the baseline tag
+            any: stop after finding the first matching tag other than the baseline tag
             all: scan for every matching remote tag
             The default is 'ask' with an interactive terminal; 'all' otherwise or with --json
-        --ghcr-method: select the GHCR tag-check and exhaustive-scan method (default: $opt_ghcr_method):
-            auto: check public tags anonymously; use the Packages API for exhaustive scans and private-tag fallback
+        --ghcr-method: select the GHCR tag-check and exhaustive-scan method
+                    (default: $opt_ghcr_method):
+            auto: check public tags anonymously; use the Packages API for exhaustive scans and
+                private-tag fallback
             packages: use only the GitHub Packages API; never prompt or fall back
             anonymous: use only the anonymous OCI scan; never prompt
 
@@ -283,8 +287,11 @@ whether to scan for any matching tag or  all matching tags;
 non-interactive runs scan all tags unless '--tag-scan any' is specified.
 Expensive interactive Skopeo scans print an advisory and continue. Expensive
 non-interactive scans fail fast unless '--allow-expensive-scan' is specified.
-Docker Hub scans start anonymously. If deeper pagination requires sign-in, an
-interactive run can exchange a username and PAT for an in-memory access token.
+Docker Hub scans start anonymously. Set environment variables 'DOCKER_HUB_USERNAME'
+and 'DOCKER_HUB_PAT' to exchange a Hub PAT for an in-memory access token without
+prompting; these credentials keep the fast Hub API ahead of any Skopeo fallback.
+If deeper pagination requires sign-in, an interactive run offers that fast retry
+and any available slower Skopeo fallback together.
 Private registry access reuses credentials configured by docker login, skopeo
 login, or podman login. ACR, GAR/GCR, and ECR are first tried anonymously, then
 reuse configured credentials or request a short-lived token from az, gcloud, or
@@ -295,9 +302,11 @@ Arguments are interpreted as follows:
     - repository@sha256:... → use this registry digest exactly
     - repository:* → check every local tag for that repository (not supported in remote mode)
     - repository:tag → resolve this exact tag using the selected tag-resolution mode
-    - repository → use the selected mode with an implicit ':latest'; auto/local can broaden a missing ':latest' to local 'repository:*'
+    - repository → use the selected mode with an implicit ':latest';
+        auto/local can broaden a missing ':latest' to local 'repository:*'
     - SHA-like value → try a local container ID, then a local image ID, then a registry digest
-    - any other value → in auto/local mode, try a container name before treating it as a repository; remote mode always treats it as a repository
+    - any other value → in auto/local mode, try a container name before treating
+        it as a repository; remote mode always treats it as a repository
 END
 }
 

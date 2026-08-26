@@ -23,7 +23,7 @@ function docker_hub_repository {
 function docker_hub_digest_for_tag {
     local hub_repository="$1"
     local tag="$2"
-    local tag_encoded response_tmp http_code manifest_digest
+    local tag_encoded response_tmp http_code manifest_digest token
     local -a request_args
 
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
@@ -51,30 +51,26 @@ function docker_hub_digest_for_tag {
         return 1
         ;;
     *)
-        debug "Docker Hub tag lookup returned HTTP $http_code for $hub_repository:$tag"
         rm -f "$response_tmp"
+        # An explicitly supplied Hub PAT takes precedence over the slower
+        # registry-credential Skopeo fallback used by the dispatcher.
+        if [[ -z "$docker_hub_token" ]] && token=$(docker_hub_token_from_environment); then
+            docker_hub_token=$token
+            docker_hub_digest_for_tag "$hub_repository" "$tag"
+            return $?
+        fi
+        debug "Docker Hub tag lookup returned HTTP $http_code for $hub_repository:$tag"
         return 2
         ;;
     esac
 }
 
 # Exchange a Docker Hub username and PAT for a short-lived API access token.
-# Credentials are read from the controlling terminal, sent through stdin, and
-# retained only long enough to perform the exchange.
-function docker_hub_token_interactively {
-    local identifier secret response http_code response_body token error_message
-
-    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
-        return 2
-    fi
-    printf 'Docker Hub username: ' >&2
-    IFS= read -r identifier </dev/tty || return 2
-    [[ -n "$identifier" ]] || { warn "Docker Hub username cannot be empty"; return 1; }
-
-    printf 'Docker Hub personal access token ("Public Repo Read-only" minimum): ' >&2
-    IFS= read -rs secret </dev/tty || return 2
-    printf '\n' >&2
-    [[ -n "$secret" ]] || { warn "Docker Hub personal access token cannot be empty"; return 1; }
+# Both callers keep the credentials only long enough to make this request.
+function docker_hub_token_from_credentials {
+    local identifier="$1"
+    local secret="$2"
+    local response http_code response_body token error_message
 
     if ! response=$(
         printf '%s\n%s\n' "$identifier" "$secret" |
@@ -113,11 +109,53 @@ function docker_hub_token_interactively {
     return 1
 }
 
-# Explain why anonymous pagination stopped and offer authentication or a
-# per-image skip. The access token is printed on success; return 1 for skip and
-# 2 when no controlling terminal is available.
+# Exchange environment-supplied credentials only after Docker Hub refuses the
+# anonymous request. This keeps the normal public path anonymous while letting
+# automated callers retain the fast Hub API rather than falling back to Skopeo.
+# Return 1 when neither variable is set and 2 when only one is set.
+function docker_hub_token_from_environment {
+    if [[ -z ${DOCKER_HUB_USERNAME-} && -z ${DOCKER_HUB_PAT-} ]]; then
+        return 1
+    fi
+    if [[ -z ${DOCKER_HUB_USERNAME-} || -z ${DOCKER_HUB_PAT-} ]]; then
+        warn "Set both DOCKER_HUB_USERNAME and DOCKER_HUB_PAT to authenticate Docker Hub's fast tags API."
+        return 2
+    fi
+    docker_hub_token_from_credentials "$DOCKER_HUB_USERNAME" "$DOCKER_HUB_PAT"
+}
+
+# Exchange a Docker Hub username and PAT read from the controlling terminal.
+function docker_hub_token_interactively {
+    local identifier secret token
+
+    if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
+        return 2
+    fi
+    printf 'Docker Hub username: ' >&2
+    IFS= read -r identifier </dev/tty || return 2
+    [[ -n "$identifier" ]] || { warn "Docker Hub username cannot be empty"; return 1; }
+
+    printf 'Docker Hub personal access token ("Public Repo Read-only" minimum): ' >&2
+    IFS= read -rs secret </dev/tty || return 2
+    printf '\n' >&2
+    [[ -n "$secret" ]] || { warn "Docker Hub personal access token cannot be empty"; return 1; }
+
+    if token=$(docker_hub_token_from_credentials "$identifier" "$secret"); then
+        secret=
+        printf '%s\n' "$token"
+        return 0
+    fi
+    secret=
+    return 1
+}
+
+# Explain why anonymous pagination stopped and offer the fast API retry, the
+# available slower Skopeo fallback, or a per-image skip. The access token is
+# printed on success; return 1 for skip, 2 without a terminal, and 3 for the
+# Skopeo choice.
 function choose_docker_hub_authentication {
     local failure_message="$1"
+    local allow_skopeo_fallback="${2-}"
     local choice token auth_status
 
     if [[ ! -t 0 && ! -t 1 && ! -t 2 ]]; then
@@ -125,10 +163,17 @@ function choose_docker_hub_authentication {
     fi
     echo "$SCRIPT_NAME: Docker Hub refused further anonymous tag pagination." >&2
     [[ -z "$failure_message" ]] || echo "  $failure_message" >&2
-    echo "  [a] Authenticate for this run with a Docker Hub username and PAT" >&2
+    echo "  [a] Authenticate with a Docker Hub username and PAT (fast tags API)" >&2
+    if [[ -n "$allow_skopeo_fallback" ]]; then
+        echo "  [f] Use configured registry credentials with slower Skopeo lookup" >&2
+    fi
     echo "  [s] Skip this image" >&2
     while true; do
-        printf 'Choose [a/s]: ' >&2
+        if [[ -n "$allow_skopeo_fallback" ]]; then
+            printf 'Choose [a/f/s]: ' >&2
+        else
+            printf 'Choose [a/s]: ' >&2
+        fi
         IFS= read -r choice </dev/tty || return 2
         case "$choice" in
         a | A)
@@ -139,6 +184,9 @@ function choose_docker_hub_authentication {
                 auth_status=$?
             fi
             (( auth_status == 2 )) && return 2
+            ;;
+        f | F)
+            [[ -n "$allow_skopeo_fallback" ]] && return 3
             ;;
         s | S)
             return 1
@@ -155,7 +203,8 @@ function docker_hub_tags_by_digest {
     local hub_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local next_url response_tmp http_code error_message matching_tags auth_status
+    local next_url response_tmp http_code error_message matching_tags token auth_status
+    local has_skopeo_credentials=
     local -a request_args
 
     digest="${digest#sha256:}"
@@ -186,8 +235,24 @@ function docker_hub_tags_by_digest {
                 rm -f "$response_tmp"
                 abort "Authenticated Docker Hub request failed with HTTP $http_code${error_message:+: $error_message}"
             fi
+            if token=$(docker_hub_token_from_environment); then
+                docker_hub_token=$token
+                continue
+            fi
             if skopeo_has_registry_credentials docker.io; then
-                notice "Using configured registry credentials for private Docker Hub lookup."
+                has_skopeo_credentials=1
+            fi
+            if docker_hub_token=$(
+                choose_docker_hub_authentication \
+                    "HTTP $http_code${error_message:+: $error_message}" \
+                    "$has_skopeo_credentials"
+            ); then
+                continue
+            else
+                auth_status=$?
+            fi
+            if (( auth_status == 3 )); then
+                notice "Using configured registry credentials with slower Skopeo lookup."
                 if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "sha256:$digest"); then
                     rm -f "$response_tmp"
                     abort "Authenticated Skopeo lookup failed for $display_repository"
@@ -195,18 +260,19 @@ function docker_hub_tags_by_digest {
                 registry_lookup_backend=skopeo
                 next_url=
                 break
-            fi
-            if docker_hub_token=$(
-                choose_docker_hub_authentication \
-                    "HTTP $http_code${error_message:+: $error_message}"
-            ); then
-                continue
-            else
-                auth_status=$?
-            fi
-            if (( auth_status == 1 )); then
+            elif (( auth_status == 1 )); then
                 notice "Skipping Docker Hub lookup for $display_repository."
                 skip_input=1
+                break
+            fi
+            if [[ -n "$has_skopeo_credentials" ]]; then
+                notice "Docker Hub tags API was refused anonymously; using configured registry credentials with slower Skopeo lookup. Set DOCKER_HUB_USERNAME and DOCKER_HUB_PAT to retry the faster Docker Hub tags API."
+                if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "sha256:$digest"); then
+                    rm -f "$response_tmp"
+                    abort "Authenticated Skopeo lookup failed for $display_repository"
+                fi
+                registry_lookup_backend=skopeo
+                next_url=
                 break
             fi
             rm -f "$response_tmp"

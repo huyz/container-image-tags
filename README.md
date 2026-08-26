@@ -40,9 +40,19 @@ Recommended:
 
 Optional:
 - Skopeo is required for generic OCI registries and private-registry fallback.
-- Depending on the registry, `gh` (GitHub Container Registry), `gcloud` (Google Container Registry),
-`az` (Azure Container Registry), or `aws` (Elastic Container Registry) can provide optional
-authenticated fast paths or short-lived credentials.
+- Depending on the registry, `gh` (GitHub Container Registry),
+  `gcloud` (Google Container Registry), `az` (Azure Container Registry), or
+  `aws` (Elastic Container Registry) can provide optional authenticated fast
+  paths or short-lived credentials.
+
+### Docker Hub authentication
+
+Docker Hub scans start anonymously. When Hub refuses anonymous tag pagination,
+set environment variables `DOCKER_HUB_USERNAME` and `DOCKER_HUB_PAT` (a Public Repo Read-only PAT is
+sufficient) to retry its fast paginated tags API without a prompt. These
+variables take precedence over the slower Skopeo fallback, including in
+non-interactive runs. Interactive runs without them offer both choices when
+Docker/Skopeo registry credentials are configured.
 
 On macOS and Linux, Homebrew users can install all with:
 
