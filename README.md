@@ -204,11 +204,14 @@ registry adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and
 
 To add registry-specific support, source its adapter before `registries.sh`,
 classify its repository host in `registry_classify`, and add it to the direct
-tag and reverse-lookup dispatch functions. A direct tag lookup writes the
-digest to stdout and returns status 0 when found, 1 when the tag does not
-exist, or 2 when lookup fails. An exhaustive lookup populates `registry_tags`
-plus `registry_lookup_result`, `registry_lookup_backend`, and optional
-`registry_metadata`.
+tag and reverse-lookup dispatch functions. Lookup helpers use the named status
+contract in `common.sh`: `LOOKUP_SUCCEEDED` (0), `LOOKUP_NOT_FOUND` (1),
+`LOOKUP_UNAVAILABLE` (2), `LOOKUP_DENIED` (3), and terminal
+`LOOKUP_STOPPED` (4). Successful direct lookups write a digest to stdout;
+successful exhaustive lookups populate `registry_tags` plus
+`registry_lookup_result`, `registry_lookup_backend`, and optional
+`registry_metadata`. User-choice helpers produce string actions so nonzero
+exit statuses remain reserved for actual failures.
 
 As of 2026-08-25, authored mostly by OpenAI GPT 5.6 Sol and DeepSeek V4 Flash.
 

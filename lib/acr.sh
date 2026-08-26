@@ -19,8 +19,9 @@ function acr_registry_suffix {
 }
 
 # Query one documented ACR artifact-metadata endpoint without credentials.
-# Return 0 with the response body, 1 for not found, 2 for an unusable response,
-# 3 for access denial, and 4 for rate limiting.
+# Return LOOKUP_SUCCEEDED with the response body, LOOKUP_NOT_FOUND when absent,
+# LOOKUP_UNAVAILABLE for an unusable response, LOOKUP_DENIED for access denial,
+# and LOOKUP_STOPPED for rate limiting.
 function acr_metadata_anonymously {
     local registry="$1"
     local repository="$2"
@@ -31,7 +32,7 @@ function acr_metadata_anonymously {
     case "$reference_kind" in
     manifest) endpoint="_manifests/$reference" ;;
     tag) endpoint="_tags/$reference" ;;
-    *) return 2 ;;
+    *) return "$LOOKUP_UNAVAILABLE" ;;
     esac
 
     response_tmp=$(mktemp)
@@ -41,7 +42,7 @@ function acr_metadata_anonymously {
             "https://$registry/acr/v1/$repository/$endpoint?api-version=2021-07-01"
     ); then
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     error_message=$(
         "$JQ" -r '
@@ -57,21 +58,21 @@ function acr_metadata_anonymously {
     401 | 403)
         debug "Anonymous ACR metadata lookup was denied for $registry/$repository (HTTP $http_code)${error_message:+: $error_message}"
         rm -f "$response_tmp"
-        return 3
+        return "$LOOKUP_DENIED"
         ;;
     404)
         rm -f "$response_tmp"
-        return 1
+        return "$LOOKUP_NOT_FOUND"
         ;;
     429)
         warn "ACR rate limit reached for $registry/$repository (HTTP 429)${error_message:+: $error_message}"
         rm -f "$response_tmp"
-        return 4
+        return "$LOOKUP_STOPPED"
         ;;
     *)
         debug "ACR metadata lookup failed for $registry/$repository (HTTP $http_code)${error_message:+: $error_message}"
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 }
@@ -87,13 +88,13 @@ function acr_metadata_with_azure_cli {
     local registry_name registry_suffix image_reference response error_tmp
     local -a azure_args
 
-    command -v "${AZ:=az}" &>/dev/null || return 2
+    command -v "${AZ:=az}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
     registry_name=$(acr_registry_name "$registry")
     registry_suffix=$(acr_registry_suffix "$registry" || true)
     case "$reference_kind" in
     manifest) image_reference="$repository@$reference" ;;
     tag) image_reference="$repository:$reference" ;;
-    *) return 2 ;;
+    *) return "$LOOKUP_UNAVAILABLE" ;;
     esac
     azure_args=(acr manifest show-metadata --registry "$registry_name"
         --name "$image_reference" --output json --only-show-errors)
@@ -106,11 +107,11 @@ function acr_metadata_with_azure_cli {
     else
         if grep -Eqi 'not found|manifest unknown|tag.*unknown' "$error_tmp"; then
             rm -f "$error_tmp"
-            return 1
+            return "$LOOKUP_NOT_FOUND"
         fi
         debug "Azure CLI metadata lookup failed for $registry/$image_reference: $(tr '\n' ' ' <"$error_tmp")"
         rm -f "$error_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     printf '%s\n' "$response"
 }
@@ -125,12 +126,14 @@ function acr_metadata {
     if response=$(acr_metadata_anonymously \
             "$registry" "$repository" "$reference_kind" "$reference"); then
         printf '%s\n' "$response"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
     case "$lookup_status" in
-    1 | 2 | 4) return "$lookup_status" ;;
+    "$LOOKUP_NOT_FOUND" | "$LOOKUP_UNAVAILABLE" | "$LOOKUP_STOPPED")
+        return "$lookup_status"
+        ;;
     esac
     acr_metadata_with_azure_cli \
         "$registry" "$repository" "$reference_kind" "$reference"
@@ -180,17 +183,18 @@ function acr_digest_for_tag {
                 end
             ' <<<"$metadata"
         )
-        [[ -n "$digest" && "$digest" != *$'\n'* ]] || return 2
+        [[ -n "$digest" && "$digest" != *$'\n'* ]] ||
+            return "$LOOKUP_UNAVAILABLE"
         printf '%s\n' "$digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
-    (( lookup_status == 1 )) && return 1
-    (( lookup_status == 4 )) && return 4
+    (( lookup_status == LOOKUP_NOT_FOUND )) && return "$LOOKUP_NOT_FOUND"
+    (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
     info "ACR metadata lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
 
-    skopeo_is_available || return 2
+    skopeo_is_available || return "$LOOKUP_UNAVAILABLE"
     skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" acr_authenticate
 }
 
@@ -206,7 +210,7 @@ function acr_tags_by_digest_api {
     )
     if [[ "$returned_digest" != "$digest" ]]; then
         debug "ACR returned digest '$returned_digest' for $registry/$repository@$digest"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     "$JQ" -r \
         --arg tag_scan "$registry_tag_scan" \

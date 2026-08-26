@@ -35,18 +35,19 @@ function ecr_aws_credentials_may_be_available {
 
 # Query the signed ECR service API for one private-registry image identifier.
 # Unlike the OCI registry API, DescribeImages returns every current tag for a
-# digest in the same response. Return 0 with validated JSON, 1 when the image
-# is absent, and 2 when the API is unavailable so callers can use Skopeo.
+# digest in the same response. Use the shared LOOKUP_* status contract so an
+# unavailable API can fall back to Skopeo while absence and terminal rate
+# limiting remain distinct.
 function ecr_private_image_details {
     local registry="$1"
     local repository="$2"
     local image_id="$3"
     local account region response error_tmp error_message
 
-    [[ "$registry" != public.ecr.aws ]] || return 2
-    command -v "${AWS:=aws}" &>/dev/null || return 2
-    account=$(ecr_account_from_registry "$registry") || return 2
-    region=$(ecr_region_from_registry "$registry") || return 2
+    [[ "$registry" != public.ecr.aws ]] || return "$LOOKUP_UNAVAILABLE"
+    command -v "${AWS:=aws}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
+    account=$(ecr_account_from_registry "$registry") || return "$LOOKUP_UNAVAILABLE"
+    region=$(ecr_region_from_registry "$registry") || return "$LOOKUP_UNAVAILABLE"
 
     error_tmp=$(mktemp)
     if response=$(
@@ -62,22 +63,22 @@ function ecr_private_image_details {
     else
         if grep -q 'ImageNotFoundException' "$error_tmp"; then
             rm -f "$error_tmp"
-            return 1
+            return "$LOOKUP_NOT_FOUND"
         fi
         if grep -Eqi 'ThrottlingException|TooManyRequestsException|rate exceeded' "$error_tmp"; then
             warn "ECR API rate limit reached for $registry/$repository"
             rm -f "$error_tmp"
-            return 4
+            return "$LOOKUP_STOPPED"
         fi
         error_message=$(tr '\n' ' ' <"$error_tmp")
         debug "ECR DescribeImages failed for $registry/$repository: $error_message"
         rm -f "$error_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
 
     if ! "$JQ" -e '.imageDetails | type == "array"' <<<"$response" >/dev/null; then
         debug "ECR DescribeImages returned an invalid response for $registry/$repository"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     printf '%s\n' "$response"
 }
@@ -89,8 +90,8 @@ function ecr_public_registry_id_for_alias {
     local alias="$1"
     local response error_tmp error_message registry_ids
 
-    command -v "${AWS:=aws}" &>/dev/null || return 2
-    ecr_aws_credentials_may_be_available || return 2
+    command -v "${AWS:=aws}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
+    ecr_aws_credentials_may_be_available || return "$LOOKUP_UNAVAILABLE"
     error_tmp=$(mktemp)
     if response=$(
         "$AWS" ecr-public describe-registries \
@@ -105,11 +106,11 @@ function ecr_public_registry_id_for_alias {
         error_message=$(tr '\n' ' ' <"$error_tmp")
         debug "ECR Public registry-alias lookup failed for $alias: $error_message"
         rm -f "$error_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     if ! "$JQ" -e '.registries | type == "array"' <<<"$response" >/dev/null; then
         debug "ECR Public DescribeRegistries returned an invalid response"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     registry_ids=$(
         "$JQ" -r --arg alias "$alias" '
@@ -121,8 +122,9 @@ function ecr_public_registry_id_for_alias {
             | unique[]
         ' <<<"$response"
     )
-    [[ -n "$registry_ids" && "$registry_ids" != *$'\n'* ]] || return 2
-    [[ "$registry_ids" =~ ^[0-9]{12}$ ]] || return 2
+    [[ -n "$registry_ids" && "$registry_ids" != *$'\n'* ]] ||
+        return "$LOOKUP_UNAVAILABLE"
+    [[ "$registry_ids" =~ ^[0-9]{12}$ ]] || return "$LOOKUP_UNAVAILABLE"
     printf '%s\n' "$registry_ids"
 }
 
@@ -133,7 +135,8 @@ function ecr_public_image_details {
     local repository="${repository_path#*/}"
     local registry_id response error_tmp error_message
 
-    [[ "$alias" != "$repository_path" && -n "$repository" ]] || return 2
+    [[ "$alias" != "$repository_path" && -n "$repository" ]] ||
+        return "$LOOKUP_UNAVAILABLE"
     registry_id=$(ecr_public_registry_id_for_alias "$alias") || return $?
 
     error_tmp=$(mktemp)
@@ -150,21 +153,21 @@ function ecr_public_image_details {
     else
         if grep -q 'ImageNotFoundException' "$error_tmp"; then
             rm -f "$error_tmp"
-            return 1
+            return "$LOOKUP_NOT_FOUND"
         fi
         if grep -Eqi 'ThrottlingException|TooManyRequestsException|rate exceeded' "$error_tmp"; then
             warn "ECR Public API rate limit reached for public.ecr.aws/$repository_path"
             rm -f "$error_tmp"
-            return 4
+            return "$LOOKUP_STOPPED"
         fi
         error_message=$(tr '\n' ' ' <"$error_tmp")
         debug "ECR Public DescribeImages failed for $repository_path: $error_message"
         rm -f "$error_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     if ! "$JQ" -e '.imageDetails | type == "array"' <<<"$response" >/dev/null; then
         debug "ECR Public DescribeImages returned an invalid response for $repository_path"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     printf '%s\n' "$response"
 }
@@ -184,10 +187,10 @@ function ecr_digest_for_tag_api {
             | .imageDigest
         ' <<<"$response"
     )
-    [[ -n "$digests" ]] || return 1
+    [[ -n "$digests" ]] || return "$LOOKUP_NOT_FOUND"
     if [[ "$digests" == *$'\n'* ]]; then
         debug "ECR returned multiple current digests for $registry/$repository:$tag"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     printf '%s\n' "$digests"
 }
@@ -206,11 +209,11 @@ function ecr_tags_by_digest_api {
         ' <<<"$response"
     )
     case "$matching_images" in
-    0) return 1 ;;
+    0) return "$LOOKUP_NOT_FOUND" ;;
     1) ;;
     *)
         debug "ECR returned multiple image records for $registry/$repository@$digest"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 
@@ -242,11 +245,11 @@ function ecr_public_tags_by_digest_api {
         ' <<<"$response"
     )
     case "$matching_images" in
-    0) return 1 ;;
+    0) return "$LOOKUP_NOT_FOUND" ;;
     1) ;;
     *)
         debug "ECR Public returned multiple image records for $repository_path@$digest"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 
@@ -308,16 +311,16 @@ function ecr_digest_for_tag {
     if [[ "$registry" != public.ecr.aws ]]; then
         if digest=$(ecr_digest_for_tag_api "$registry" "$repository" "$tag"); then
             printf '%s\n' "$digest"
-            return 0
+            return "$LOOKUP_SUCCEEDED"
         else
             lookup_status=$?
         fi
-        (( lookup_status == 1 )) && return 1
-        (( lookup_status == 4 )) && return 4
+        (( lookup_status == LOOKUP_NOT_FOUND )) && return "$LOOKUP_NOT_FOUND"
+        (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
         info "ECR API lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
     fi
 
-    skopeo_is_available || return 2
+    skopeo_is_available || return "$LOOKUP_UNAVAILABLE"
     skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" ecr_authenticate
 }
 

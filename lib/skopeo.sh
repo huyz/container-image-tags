@@ -128,7 +128,7 @@ function registry_expensive_scan_preflight {
             notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because --allow-expensive-scan was specified."
         else
             notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Rerun with --allow-expensive-scan to permit this non-interactive scan."
-            return 4
+            return "$LOOKUP_STOPPED"
         fi
     fi
 }
@@ -159,7 +159,7 @@ function skopeo_tags_by_digest {
     else
         skopeo_status=$?
         if grep -Eqi 'unauthorized|authentication required|access denied|denied:|status( code)?:? (401|403)' "$error_tmp"; then
-            skopeo_status=3
+            skopeo_status=$LOOKUP_DENIED
         fi
         debug "Skopeo tag listing failed for $repository: $(tr '\n' ' ' <"$error_tmp")"
         rm -f "$error_tmp"
@@ -188,9 +188,8 @@ function skopeo_tags_by_digest {
 }
 
 # Resolve one tag while distinguishing a missing manifest from an access
-# denial. Return 0 for success, 1 for not found, 2 for other failures, and 3
-# for a denial that may require authentication or may hide an unavailable
-# repository.
+# denial. Use the shared LOOKUP_* status contract; command-not-found remains
+# the conventional shell status 127.
 function skopeo_digest_for_tag_with_status {
     local image_reference="$1"
     local authfile="${2-}"
@@ -207,17 +206,17 @@ function skopeo_digest_for_tag_with_status {
     ); then
         rm -f "$error_tmp"
         printf '%s\n' "$manifest_digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         skopeo_status=$?
     fi
 
     if grep -Eqi 'unauthorized|authentication required|access denied|denied:|status( code)?:? (401|403)' "$error_tmp"; then
-        skopeo_status=3
+        skopeo_status=$LOOKUP_DENIED
     elif grep -Eqi 'manifest unknown|name unknown|not found|status( code)?:? 404' "$error_tmp"; then
-        skopeo_status=1
+        skopeo_status=$LOOKUP_NOT_FOUND
     else
-        skopeo_status=2
+        skopeo_status=$LOOKUP_UNAVAILABLE
     fi
     debug "Skopeo tag lookup failed for $image_reference: $(tr '\n' ' ' <"$error_tmp")"
     rm -f "$error_tmp"
@@ -248,24 +247,24 @@ function skopeo_digest_for_tag_with_lazy_auth {
     if manifest_digest=$(skopeo_digest_for_tag_with_status \
             "$image_reference" "$skopeo_anonymous_authfile"); then
         printf '%s\n' "$manifest_digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
-    (( lookup_status == 3 )) || return "$lookup_status"
+    (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
 
     if skopeo_has_registry_credentials "$registry"; then
         notice "Using configured registry credentials for '$registry'."
         if manifest_digest=$(skopeo_digest_for_tag_with_status "$image_reference"); then
             printf '%s\n' "$manifest_digest"
-            return 0
+            return "$LOOKUP_SUCCEEDED"
         else
             lookup_status=$?
         fi
-        (( lookup_status == 3 )) || return "$lookup_status"
+        (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
     fi
 
-    "$authenticate_function" "$registry" || return 2
+    "$authenticate_function" "$registry" || return "$LOOKUP_UNAVAILABLE"
     skopeo_digest_for_tag_with_status "$image_reference" "$skopeo_session_authfile"
 }
 
@@ -284,23 +283,23 @@ function skopeo_tags_by_digest_with_lazy_auth {
     if tags=$(skopeo_tags_by_digest \
             "$repository" "$digest" "$skopeo_anonymous_authfile"); then
         printf '%s' "$tags"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
-    (( lookup_status == 3 )) || return "$lookup_status"
+    (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
 
     if skopeo_has_registry_credentials "$registry"; then
         notice "Using configured registry credentials for '$registry'."
         if tags=$(skopeo_tags_by_digest "$repository" "$digest"); then
             printf '%s' "$tags"
-            return 0
+            return "$LOOKUP_SUCCEEDED"
         else
             lookup_status=$?
         fi
-        (( lookup_status == 3 )) || return "$lookup_status"
+        (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
     fi
 
-    "$authenticate_function" "$registry" || return 2
+    "$authenticate_function" "$registry" || return "$LOOKUP_UNAVAILABLE"
     skopeo_tags_by_digest "$repository" "$digest" "$skopeo_session_authfile"
 }

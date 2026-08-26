@@ -2,6 +2,15 @@
 
 # Shared output and prompting helpers for container-image-tags.
 
+# Lookup functions print successful values to stdout and use these statuses for
+# out-of-band outcomes. LOOKUP_STOPPED is terminal: callers must not retry with
+# a more request-intensive fallback.
+readonly LOOKUP_SUCCEEDED=0
+readonly LOOKUP_NOT_FOUND=1
+readonly LOOKUP_UNAVAILABLE=2
+readonly LOOKUP_DENIED=3
+readonly LOOKUP_STOPPED=4
+
 # shellcheck disable=SC2329
 function debug { [[ -z ${opt_debug-} ]] || printf "%s: 🔧 DEBUG: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
@@ -41,7 +50,7 @@ function tags_by_digest_with_rolling_pool {
     local worker_tmp result_tmp status_tmp done_tmp lookup_status worker_pid
     local checked=0
     local failed=0
-    local terminal_status=0
+    local terminal_status=$LOOKUP_SUCCEEDED
     local match_found=
     local stop_scheduling=
     local matches=
@@ -67,7 +76,7 @@ function tags_by_digest_with_rolling_pool {
             info "$worker_label: $tag"
             (
                 if "$lookup_function" "$repository" "$tag" "$@" >"$result_tmp"; then
-                    printf '0\n' >"$status_tmp"
+                    printf '%d\n' "$LOOKUP_SUCCEEDED" >"$status_tmp"
                 else
                     printf '%d\n' "$?" >"$status_tmp"
                 fi
@@ -92,12 +101,13 @@ function tags_by_digest_with_rolling_pool {
             wait "$worker_pid" 2>/dev/null || true
             lookup_status=$(<"$status_tmp")
             manifest_digest=
-            if (( lookup_status == 0 )); then
+            if (( lookup_status == LOOKUP_SUCCEEDED )); then
                 manifest_digest=$(<"$result_tmp")
             else
                 ((++failed))
-                if [[ -n "$require_complete" && "$lookup_status" == 4 ]]; then
-                    terminal_status=4
+                if [[ -n "$require_complete" &&
+                        "$lookup_status" == "$LOOKUP_STOPPED" ]]; then
+                    terminal_status=$LOOKUP_STOPPED
                     stop_scheduling=1
                 fi
             fi
@@ -129,24 +139,24 @@ function tags_by_digest_with_rolling_pool {
     fi
 
     printf '%s' "$matches"
-    if (( terminal_status == 4 )) &&
+    if (( terminal_status == LOOKUP_STOPPED )) &&
             [[ "$registry_tag_scan" != any || -z "$matches" ]]; then
-        return 4
+        return "$LOOKUP_STOPPED"
     fi
     if [[ -n "$require_complete" && "$failed" -gt 0 ]] &&
             [[ "$registry_tag_scan" != any || -z "$matches" ]]; then
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
 }
 
 # Ask which reverse lookup to perform after the known local tag has been
-# checked. Return 0 for any match, 1 for all matches, 2 for no scan, and 3
-# when prompting is unavailable.
+# checked. Print "any", "all", or "none"; return nonzero only when prompting
+# is unavailable.
 function choose_remote_tag_scan {
     local choice choice_lower
 
     if ! is_interactive_session; then
-        return 3
+        return 1
     fi
     echo "Scan remote tags?" >&2
     echo "  [1] Stop after any matching tag" >&2
@@ -154,12 +164,12 @@ function choose_remote_tag_scan {
     echo "  [n] Do not scan" >&2
     while true; do
         printf 'Choose [1/a/n]: ' >&2
-        IFS= read -r choice </dev/tty || return 3
+        IFS= read -r choice </dev/tty || return 1
         choice_lower=$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]')
         case "$choice_lower" in
-        1 | any) return 0 ;;
-        a | all) return 1 ;;
-        '' | n | no) return 2 ;;
+        1 | any) printf 'any\n'; return ;;
+        a | all) printf 'all\n'; return ;;
+        '' | n | no) printf 'none\n'; return ;;
         esac
     done
 }

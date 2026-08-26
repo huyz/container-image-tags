@@ -147,9 +147,9 @@ function resolve_remote_tag_baseline {
     registry_classify "$repository"
     registry_resolve_tag_digest "$repository" "$tag"
     case "$remote_tag_status" in
-    0) ;;
-    1) abort "Cannot resolve remote tag '$remote_reference': the tag was not found" ;;
-    3)
+    "$LOOKUP_SUCCEEDED") ;;
+    "$LOOKUP_NOT_FOUND") abort "Cannot resolve remote tag '$remote_reference': the tag was not found" ;;
+    "$LOOKUP_DENIED")
         if [[ -n "$remote_tag_error" ]]; then
             abort "Google registry denied access to '$remote_reference': $remote_tag_error"
         fi
@@ -622,7 +622,7 @@ for input in "$@"; do
         remote_check_reference="$remote_tag_reference"
 
         case "$remote_tag_status" in
-        0)
+        "$LOOKUP_SUCCEEDED")
             remote_check_digest="$remote_tag_digest"
             if [[ "${remote_tag_digest#sha256:}" == "$repo_sha" ]]; then
                 remote_check_status=match
@@ -632,11 +632,11 @@ for input in "$@"; do
                 [[ -n "$opt_json" ]] || echo "Remote tag check: ❗️ MISMATCH — $remote_tag_reference now points to $remote_tag_digest"
             fi
             ;;
-        1)
+        "$LOOKUP_NOT_FOUND")
             remote_check_status=not_found
             [[ -n "$opt_json" ]] || echo "Remote tag check: ❌ NOT FOUND — $remote_tag_reference no longer exists at the registry"
             ;;
-        3)
+        "$LOOKUP_DENIED")
             if [[ -n "$remote_tag_error" ]]; then
                 abort "Google registry denied access to '$remote_tag_reference': $remote_tag_error"
             fi
@@ -655,20 +655,13 @@ for input in "$@"; do
         continue
     fi
     if [[ "$tag_scan_mode" == ask ]]; then
-        if choose_remote_tag_scan; then
-            scan_choice_status=0
-        else
-            scan_choice_status=$?
+        if ! tag_scan_mode=$(choose_remote_tag_scan); then
+            abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all"
         fi
-        case "$scan_choice_status" in
-        0) tag_scan_mode=any ;;
-        1) tag_scan_mode=all ;;
-        2)
+        if [[ "$tag_scan_mode" == none ]]; then
             [[ -z "$opt_json" ]] || append_json_result ask declined '' '' ''
             continue
-            ;;
-        *) abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all" ;;
-        esac
+        fi
     fi
 
     registry_find_tags_by_digest \

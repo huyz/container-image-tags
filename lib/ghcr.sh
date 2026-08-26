@@ -7,9 +7,9 @@
 # same object, so no tag-by-tag manifest lookup is needed.
 #
 # Return values:
-#   0: version found (the version object is printed as compact JSON)
-#   1: API queried successfully, but no active version matched
-#   2: API could not be queried (usually authentication or rate limiting)
+#   LOOKUP_SUCCEEDED: version found (printed as compact JSON)
+#   LOOKUP_NOT_FOUND: API queried successfully, but no active version matched
+#   LOOKUP_UNAVAILABLE: API could not be queried
 function ghcr_package_version {
     local ghcr_repository="$1"
     local selector="$2"
@@ -22,7 +22,7 @@ function ghcr_package_version {
     package_name="${ghcr_repository#*/}"
     if [[ "$ghcr_repository" != */* || -z "$owner" || -z "$package_name" ]]; then
         debug "GHCR Packages API rejected repository components: repository=$ghcr_repository owner=$owner package=$package_name"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
 
     # shellcheck disable=SC2016  # jq expression, not a shell expansion
@@ -30,7 +30,7 @@ function ghcr_package_version {
 
     if ! command -v "${GH:=gh}" &>/dev/null; then
         debug "GitHub Packages API command is unavailable: $GH"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     response_tmp=$(mktemp)
     error_tmp=$(mktemp)
@@ -77,13 +77,13 @@ function ghcr_package_version {
         if [[ -n "$match" ]]; then
             rm -f "$response_tmp" "$error_tmp"
             printf '%s\n' "$match"
-            return 0
+            return "$LOOKUP_SUCCEEDED"
         fi
     done
 
     rm -f "$response_tmp" "$error_tmp"
-    [[ -n "$queried_api" ]] && return 1
-    return 2
+    [[ -n "$queried_api" ]] && return "$LOOKUP_NOT_FOUND"
+    return "$LOOKUP_UNAVAILABLE"
 }
 
 function ghcr_package_version_by_digest {
@@ -123,14 +123,15 @@ function ghcr_anonymous_pull_token {
 }
 
 # Return the current remote digest for one public GHCR tag without enumerating
-# any other tags. A missing tag returns 1; authentication or transport failures
-# return 2.
+# any other tags. Use LOOKUP_NOT_FOUND for a missing tag and LOOKUP_UNAVAILABLE
+# for authentication or transport failures.
 function ghcr_digest_for_tag_anonymously {
     local ghcr_repository="$1"
     local tag="$2"
     local tag_encoded token header_tmp http_code manifest_digest
 
-    token=$(ghcr_anonymous_pull_token "$ghcr_repository") || return 2
+    token=$(ghcr_anonymous_pull_token "$ghcr_repository") ||
+        return "$LOOKUP_UNAVAILABLE"
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
     header_tmp=$(mktemp)
     if ! http_code=$(
@@ -140,23 +141,23 @@ function ghcr_digest_for_tag_anonymously {
             "https://ghcr.io/v2/$ghcr_repository/manifests/$tag_encoded"
     ); then
         rm -f "$header_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     if [[ "$http_code" == 404 ]]; then
         rm -f "$header_tmp"
-        return 1
+        return "$LOOKUP_NOT_FOUND"
     fi
     if [[ "$http_code" != 200 ]]; then
         debug "Anonymous GHCR tag lookup returned HTTP $http_code for $ghcr_repository:$tag"
         rm -f "$header_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
 
     manifest_digest=$(
         perl -ne 'if (/^docker-content-digest:\s*(\S+)/i) { print "$1\n"; exit }' "$header_tmp"
     )
     rm -f "$header_tmp"
-    [[ -n "$manifest_digest" ]] || return 2
+    [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
     printf '%s\n' "$manifest_digest"
 }
 
@@ -171,29 +172,31 @@ function ghcr_digest_for_tag {
     if [[ "$opt_ghcr_method" != packages ]]; then
         if manifest_digest=$(ghcr_digest_for_tag_anonymously "$ghcr_repository" "$tag"); then
             printf '%s\n' "$manifest_digest"
-            return 0
+            return "$LOOKUP_SUCCEEDED"
         else
             lookup_status=$?
         fi
-        if [[ "$lookup_status" == 1 || "$opt_ghcr_method" == anonymous ]]; then
+        if [[ "$lookup_status" == "$LOOKUP_NOT_FOUND" ||
+                "$opt_ghcr_method" == anonymous ]]; then
             return "$lookup_status"
         fi
     fi
 
     if package_version=$(ghcr_package_version_by_tag "$ghcr_repository" "$tag"); then
         manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
-        [[ -n "$manifest_digest" ]] || return 2
+        [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
         printf '%s\n' "$manifest_digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
 
-    if [[ "$lookup_status" == 2 && "$opt_ghcr_method" == auto ]] &&
+    if [[ "$lookup_status" == "$LOOKUP_UNAVAILABLE" &&
+            "$opt_ghcr_method" == auto ]] &&
             manifest_digest=$(skopeo_digest_for_tag "ghcr.io/$ghcr_repository:$tag"); then
         info "Resolved private GHCR tag with configured registry credentials"
         printf '%s\n' "$manifest_digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     fi
     return "$lookup_status"
 }
@@ -355,7 +358,7 @@ function ghcr_tags_by_digest {
             package_lookup_status=$?
         fi
         case "$package_lookup_status" in
-        1)
+        "$LOOKUP_NOT_FOUND")
             debug "GHCR Packages API was reachable, but no active version matched $ghcr_repository@$digest"
             registry_lookup_result=not_found
             registry_lookup_backend=github-packages-api

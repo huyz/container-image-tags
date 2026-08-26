@@ -6,8 +6,9 @@
 # anonymous; the existing Google/Skopeo path handles configured credentials and
 # on-demand gcloud authentication after an access denial.
 
-# Print one GCR tags/list response. Return 0 for success, 1 when the repository
-# is unavailable, 2 for transport/response failures, and 3 for access denial.
+# Print one GCR tags/list response. Use the shared LOOKUP_* status contract to
+# distinguish success, an unavailable repository, transport/response failures,
+# and access denial.
 function gcr_metadata_anonymously {
     local registry="$1"
     local repository="$2"
@@ -19,7 +20,7 @@ function gcr_metadata_anonymously {
             "https://$registry/v2/$repository/tags/list"
     ); then
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
 
     error_message=$(
@@ -33,7 +34,7 @@ function gcr_metadata_anonymously {
         if ! "$JQ" -e '.manifest | type == "object"' "$response_tmp" >/dev/null; then
             debug "GCR tag listing for $registry/$repository did not include a manifest map"
             rm -f "$response_tmp"
-            return 2
+            return "$LOOKUP_UNAVAILABLE"
         fi
         cat "$response_tmp"
         rm -f "$response_tmp"
@@ -41,16 +42,16 @@ function gcr_metadata_anonymously {
     401 | 403)
         debug "Anonymous GCR tag listing was denied for $registry/$repository (HTTP $http_code)${error_message:+: $error_message}"
         rm -f "$response_tmp"
-        return 3
+        return "$LOOKUP_DENIED"
         ;;
     404)
         rm -f "$response_tmp"
-        return 1
+        return "$LOOKUP_NOT_FOUND"
         ;;
     *)
         debug "GCR tag listing failed for $registry/$repository (HTTP $http_code)${error_message:+: $error_message}"
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 }
@@ -71,10 +72,10 @@ function gcr_digest_for_tag_anonymously {
             | .key
         ' <<<"$metadata"
     )
-    [[ -n "$digests" ]] || return 1
+    [[ -n "$digests" ]] || return "$LOOKUP_NOT_FOUND"
     if [[ "$digests" == *$'\n'* ]]; then
         debug "GCR returned multiple current digests for $registry/$repository:$tag"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     printf '%s\n' "$digests"
 }

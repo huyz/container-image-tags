@@ -73,11 +73,12 @@ function oci_token_from_bearer_challenge {
     local realm service scope response_tmp http_code token
     local -a token_args
 
-    [[ "$auth_header" =~ ^[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]] ]] || return 2
+    [[ "$auth_header" =~ ^[Bb][Ee][Aa][Rr][Ee][Rr][[:space:]] ]] ||
+        return "$LOOKUP_UNAVAILABLE"
     realm=$(perl -ne 'if (/\brealm="([^"]+)"/i) { print "$1\n"; exit }' <<<"$auth_header")
     service=$(perl -ne 'if (/\bservice="([^"]*)"/i) { print "$1\n"; exit }' <<<"$auth_header")
     scope=$(perl -ne 'if (/\bscope="([^"]*)"/i) { print "$1\n"; exit }' <<<"$auth_header")
-    [[ "$realm" == https://* ]] || return 2
+    [[ "$realm" == https://* ]] || return "$LOOKUP_UNAVAILABLE"
     if [[ -z "$scope" || "$scope" == '*' ]]; then
         scope="repository:$repository:pull"
     fi
@@ -88,26 +89,26 @@ function oci_token_from_bearer_challenge {
     token_args+=(--data-urlencode "scope=$scope")
     if ! http_code=$("$CURL" "${token_args[@]}" "$realm"); then
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     case "$http_code" in
     200)
         token=$("$JQ" -r '.token // .access_token // empty' "$response_tmp" 2>/dev/null || true)
         rm -f "$response_tmp"
-        [[ -n "$token" ]] || return 2
+        [[ -n "$token" ]] || return "$LOOKUP_UNAVAILABLE"
         printf '%s\n' "$token"
         ;;
     401 | 403)
         rm -f "$response_tmp"
-        return 3
+        return "$LOOKUP_DENIED"
         ;;
     429)
         rm -f "$response_tmp"
-        return 4
+        return "$LOOKUP_STOPPED"
         ;;
     *)
         rm -f "$response_tmp"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 }
@@ -124,15 +125,16 @@ function oci_request_tag_page {
         -o "$response_body" -w '%{http_code}' "$url"
 }
 
-# Populate oci_listed_tags and oci_bearer_token. Return 0 for a complete list,
-# 1 for an unavailable repository, 2 for an unsupported/failed fast path,
-# 3 for access denial, and 4 for rate limiting.
+# Populate oci_listed_tags and oci_bearer_token. Return LOOKUP_SUCCEEDED for a
+# complete list, LOOKUP_NOT_FOUND for an unavailable repository,
+# LOOKUP_UNAVAILABLE for an unsupported/failed fast path, LOOKUP_DENIED for
+# access denial, and LOOKUP_STOPPED for rate limiting.
 function oci_list_tags_anonymously {
     local registry="$1"
     local repository="$2"
     local request_headers response_headers response_body
     local next_url next_link page_tags auth_header http_code token_status
-    local lookup_status=0
+    local lookup_status=$LOOKUP_SUCCEEDED
 
     oci_bearer_token=
     oci_listed_tags=
@@ -146,7 +148,7 @@ function oci_list_tags_anonymously {
         info "Listing OCI registry tags from: $next_url"
         if ! http_code=$(oci_request_tag_page \
                 "$next_url" "$request_headers" "$response_headers" "$response_body"); then
-            lookup_status=2
+            lookup_status=$LOOKUP_UNAVAILABLE
             break
         fi
 
@@ -166,7 +168,7 @@ function oci_list_tags_anonymously {
         case "$http_code" in
         200)
             if ! "$JQ" -e '.tags | type == "array"' "$response_body" >/dev/null 2>&1; then
-                lookup_status=2
+                lookup_status=$LOOKUP_UNAVAILABLE
                 break
             fi
             page_tags=$("$JQ" -r '.tags[]?' "$response_body")
@@ -180,19 +182,19 @@ function oci_list_tags_anonymously {
             https://"$registry"/*) next_url="$next_link" ;;
             *)
                 debug "OCI registry returned an unsafe or unsupported pagination link: $next_link"
-                lookup_status=2
+                lookup_status=$LOOKUP_UNAVAILABLE
                 break
                 ;;
             esac
             ;;
-        401 | 403) lookup_status=3; break ;;
-        404) lookup_status=1; break ;;
+        401 | 403) lookup_status=$LOOKUP_DENIED; break ;;
+        404) lookup_status=$LOOKUP_NOT_FOUND; break ;;
         429)
             notice "OCI registry rate limited tag listing for $registry/$repository; not falling back to the more request-intensive Skopeo scan."
-            lookup_status=4
+            lookup_status=$LOOKUP_STOPPED
             break
             ;;
-        *) lookup_status=2; break ;;
+        *) lookup_status=$LOOKUP_UNAVAILABLE; break ;;
         esac
     done
 
@@ -215,17 +217,17 @@ function oci_digest_for_tag_with_headers {
             "https://$registry/v2/$repository/manifests/$tag_encoded" 2>/dev/null
     ); then
         rm -f "$response_headers"
-        return 2
+        return "$LOOKUP_UNAVAILABLE"
     fi
     case "$http_code" in
-    200) lookup_status=0 ;;
-    429) lookup_status=4 ;;
-    *) lookup_status=2 ;;
+    200) lookup_status=$LOOKUP_SUCCEEDED ;;
+    429) lookup_status=$LOOKUP_STOPPED ;;
+    *) lookup_status=$LOOKUP_UNAVAILABLE ;;
     esac
     manifest_digest=$(oci_header_value "$response_headers" Docker-Content-Digest)
     rm -f "$response_headers"
-    (( lookup_status == 0 )) || return "$lookup_status"
-    [[ -n "$manifest_digest" ]] || return 2
+    (( lookup_status == LOOKUP_SUCCEEDED )) || return "$lookup_status"
+    [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
     printf '%s\n' "$manifest_digest"
 }
 
@@ -343,9 +345,9 @@ function oci_tags_by_digest_with_curl_parallel {
     printf '%s' "$matches"
     if [[ -n "$rate_limited" ]]; then
         notice "OCI registry rate limited manifest HEAD requests for $registry/$repository; not falling back to the more request-intensive Skopeo scan."
-        return 4
+        return "$LOOKUP_STOPPED"
     fi
-    (( failed == 0 )) || return 2
+    (( failed == 0 )) || return "$LOOKUP_UNAVAILABLE"
 }
 
 # Resolve one public tag with HEAD without enumerating the repository.
@@ -354,7 +356,7 @@ function oci_digest_for_tag_anonymously {
     local repository="$2"
     local tag="$3"
     local request_headers response_headers tag_encoded http_code auth_header token
-    local lookup_status=0
+    local lookup_status=$LOOKUP_SUCCEEDED
 
     request_headers=$(mktemp)
     response_headers=$(mktemp)
@@ -367,7 +369,7 @@ function oci_digest_for_tag_anonymously {
                 -o /dev/null -w '%{http_code}' \
                 "https://$registry/v2/$repository/manifests/$tag_encoded"
         ); then
-            lookup_status=2
+            lookup_status=$LOOKUP_UNAVAILABLE
             break
         fi
         if [[ "$http_code" == 401 && -z "${token-}" ]]; then
@@ -386,18 +388,18 @@ function oci_digest_for_tag_anonymously {
                     [[ -n "$token" ]]; then
                 printf '%s\n' "$token"
             else
-                lookup_status=2
+                lookup_status=$LOOKUP_UNAVAILABLE
             fi
             break
             ;;
-        404) lookup_status=1; break ;;
-        401 | 403) lookup_status=3; break ;;
+        404) lookup_status=$LOOKUP_NOT_FOUND; break ;;
+        401 | 403) lookup_status=$LOOKUP_DENIED; break ;;
         429)
             notice "OCI registry rate limited manifest HEAD for $registry/$repository:$tag; not falling back to a more request-intensive Skopeo lookup."
-            lookup_status=4
+            lookup_status=$LOOKUP_STOPPED
             break
             ;;
-        *) lookup_status=2; break ;;
+        *) lookup_status=$LOOKUP_UNAVAILABLE; break ;;
         esac
     done
     rm -f "$request_headers" "$response_headers"
@@ -440,7 +442,7 @@ function oci_tags_by_digest_anonymously {
         if tags=$(oci_tags_by_digest_with_curl_parallel \
                 "$registry" "$repository" "$digest" candidate_tags \
                 "$parallel_jobs" "$request_headers"); then
-            lookup_status=0
+            lookup_status=$LOOKUP_SUCCEEDED
         else
             lookup_status=$?
         fi
@@ -449,11 +451,11 @@ function oci_tags_by_digest_anonymously {
             'Searching OCI registry tags with HEAD' \
             'Resolving OCI registry tag with HEAD' \
             oci_digest_for_tag_with_headers 1 "$repository" "$request_headers"); then
-        lookup_status=0
+        lookup_status=$LOOKUP_SUCCEEDED
     else
         lookup_status=$?
     fi
     rm -f "$request_headers"
-    (( lookup_status == 0 )) || return "$lookup_status"
+    (( lookup_status == LOOKUP_SUCCEEDED )) || return "$lookup_status"
     printf '%s' "$tags"
 }

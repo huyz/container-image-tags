@@ -60,12 +60,12 @@ function gar_digest_for_tag {
     if digest=$(skopeo_digest_for_tag_with_lazy_auth \
             "$registry" "$image_reference" gar_authenticate); then
         printf '%s\n' "$digest"
-        return 0
+        return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
 
-    if (( lookup_status == 3 )); then
+    if (( lookup_status == LOOKUP_DENIED )); then
         gar_debug_denial_detail "$image_reference" || true
     fi
     return "$lookup_status"
