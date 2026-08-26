@@ -64,8 +64,8 @@ function skopeo_digest_for_tag {
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
     "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
-        "${auth_args[@]}" --no-tags --format '{{.Digest}}' \
-        "docker://$image_reference" 2>/dev/null
+        "${auth_args[@]}" --raw "docker://$image_reference" 2>/dev/null |
+        "$SKOPEO" manifest-digest /dev/stdin 2>/dev/null
 }
 
 function skopeo_format_estimated_duration {
@@ -201,8 +201,8 @@ function skopeo_digest_for_tag_with_status {
     error_tmp=$(mktemp)
     if manifest_digest=$(
         "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
-            "${auth_args[@]}" --no-tags --format '{{.Digest}}' \
-            "docker://$image_reference" 2>"$error_tmp"
+            "${auth_args[@]}" --raw "docker://$image_reference" 2>"$error_tmp" |
+            "$SKOPEO" manifest-digest /dev/stdin 2>>"$error_tmp"
     ); then
         rm -f "$error_tmp"
         printf '%s\n' "$manifest_digest"
