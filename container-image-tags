@@ -299,9 +299,10 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
         --tag-scan: control the reverse lookup after resolving the baseline digest:
             ask: prompt to scan for any or all matching remote tags
             never: do not perform a reverse tag lookup
-            any: stop after finding the first matching tag other than the baseline tag
+            any: stop after finding one matching tag heuristically assumed durable;
+                a directly confirmed durable baseline tag satisfies this without a scan
             all: scan for every matching remote tag
-            The default is 'ask' with an interactive terminal; 'all' otherwise or with --json
+            The default is 'ask' with an interactive terminal; 'any' otherwise or with --json
         --ghcr-method: select the GHCR tag-check and exhaustive-scan method
                     (default: $opt_ghcr_method):
             auto: check public tags anonymously; use the Packages API for exhaustive scans and
@@ -310,8 +311,8 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
             anonymous: use only the anonymous OCI scan; never prompt
 
 For a local baseline, its known tag is checked first. Interactive runs then ask
-whether to scan for any matching tag or  all matching tags;
-non-interactive runs scan all tags unless '--tag-scan any' is specified.
+whether to find any heuristically durable matching tag or all matching tags;
+non-interactive runs stop after a durable match unless '--tag-scan all' is specified.
 Expensive interactive per-tag registry scans print an advisory and continue.
 Expensive non-interactive scans fail fast unless '--allow-expensive-scan' is
 specified. Public generic OCI registries use parallel manifest HEAD requests;
@@ -379,11 +380,11 @@ fi
 
 if [[ -z "$opt_tag_scan" ]]; then
     if [[ -n "$opt_json" ]]; then
-        opt_tag_scan=all
+        opt_tag_scan=any
     elif is_interactive_session; then
         opt_tag_scan=ask
     else
-        opt_tag_scan=all
+        opt_tag_scan=any
     fi
 fi
 
@@ -662,6 +663,10 @@ for input in "$@"; do
         fi
     fi
 
+    registry_direct_tag_confirmed=
+    case "$remote_check_status" in
+    match | resolved) registry_direct_tag_confirmed=1 ;;
+    esac
     registry_find_tags_by_digest \
         "$repo" "sha256:$repo_sha" "$tag_scan_mode" "$local_tag"
 
@@ -678,7 +683,7 @@ for input in "$@"; do
             "${registry_lookup_backend-}" "${registry_metadata-}"
     else
         if [[ "$tag_scan_mode" == any ]]; then
-            echo "Other remote tag (any):"
+            echo "Remote tags through first durable match (any):"
         else
             echo "Other remote tags:"
         fi

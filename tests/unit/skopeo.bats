@@ -100,12 +100,12 @@ EOF
     [[ $(grep -ao 'list-tags' "$CALLS_DIR/skopeo.args" | wc -l) -eq 1 ]]
 }
 
-@test "SKOPEO-007 any mode excludes the direct tag before scheduling" {
+@test "SKOPEO-007 any mode schedules floating tags until a durable match" {
     load_skopeo
     registry_tag_scan=any
-    registry_direct_tag=stable
+    registry_direct_tag=latest
     write_stub skopeo <<'EOF'
-printf '%s\n' '{"Tags":["stable","other"]}'
+printf '%s\n' '{"Tags":["latest","1.2","1.2.3","1.3.0"]}'
 EOF
     function skopeo_expensive_scan_preflight { return 0; }
     function tags_by_digest_with_rolling_pool {
@@ -115,7 +115,7 @@ EOF
 
     run skopeo_tags_by_digest registry.example/app sha256:value
     assert_status 0
-    assert_output_exact other
+    assert_output_exact 'latest 1.2 1.2.3 1.3.0'
 }
 
 @test "SKOPEO-008 lazy authfiles are isolated mode 0600 files" {

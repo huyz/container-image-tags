@@ -50,13 +50,150 @@ function remote_tag_scan_choice {
     esac
 }
 
+# Return the numeric precision of a semantic-version-like tag. An optional v
+# prefix and prerelease/build suffix do not change the precision: v1.2.3-rc.1
+# has precision 3. Other tags return nonzero without output.
+function tag_semver_precision {
+    local tag="$1"
+    local core component
+    local precision=0
+
+    tag="${tag#v}"
+    tag="${tag#V}"
+    core="${tag%%[-+]*}"
+    [[ "$core" =~ ^[0-9]+(\.[0-9]+)*$ ]] || return 1
+    while [[ -n "$core" ]]; do
+        component="${core%%.*}"
+        [[ -n "$component" ]] || return 1
+        ((++precision))
+        [[ "$core" == *.* ]] || break
+        core="${core#*.}"
+    done
+    printf '%d\n' "$precision"
+}
+
+# Infer the most precise recurring semantic-version shape in a newline-delimited
+# tag sample. Prefer the greatest precision seen at least twice so one unusual
+# tag does not redefine a repository's release convention; otherwise use the
+# greatest precision present.
+function durable_semver_precision_from_tags {
+    local tags="$1"
+    local tag precision greatest= recurring=
+    local -A precision_counts=()
+
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        if precision=$(tag_semver_precision "$tag"); then
+            precision_counts[$precision]=$(( ${precision_counts[$precision]:-0} + 1 ))
+            if [[ -z "$greatest" || "$precision" -gt "$greatest" ]]; then
+                greatest=$precision
+            fi
+        fi
+    done <<<"$tags"
+    for precision in "${!precision_counts[@]}"; do
+        if (( precision_counts[$precision] >= 2 )) &&
+                [[ -z "$recurring" || "$precision" -gt "$recurring" ]]; then
+            recurring=$precision
+        fi
+    done
+    printf '%s\n' "${recurring:-$greatest}"
+}
+
+# Heuristically classify one tag as durable. Known channel names always float.
+# With an observed precision, only the repository's most precise semver shape
+# is durable. Without a sample, require a strong standalone signal so a direct
+# tag can safely satisfy "any" without starting a bulk scan.
+function tag_is_assumed_durable {
+    local tag="$1"
+    local observed_precision="${2-}"
+    local lower precision
+
+    lower=$(printf '%s' "$tag" | tr '[:upper:]' '[:lower:]')
+    case "$lower" in
+    latest | main | master | dev | devel | development | stable | edge | nightly | canary)
+        return 1
+        ;;
+    esac
+    if [[ "$lower" =~ ^[0-9a-f]{12,64}$ && "$lower" =~ [a-f] ]] ||
+            [[ "$lower" =~ ^[0-9]{4}-?[0-9]{2}-?[0-9]{2}([._-].*)?$ ]]; then
+        return 0
+    fi
+    precision=$(tag_semver_precision "$tag") || return 1
+    if [[ -n "$observed_precision" ]]; then
+        [[ "$precision" -eq "$observed_precision" ]]
+    else
+        (( precision >= 3 ))
+    fi
+}
+
+# Filter a newline-delimited tag set to tags assumed durable under the inferred
+# repository convention, preserving order and exact tag values.
+function assumed_durable_tags {
+    local tags="$1"
+    local precision tag result=
+
+    precision=$(durable_semver_precision_from_tags "$tags")
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        if tag_is_assumed_durable "$tag" "$precision"; then
+            result+="${result:+$'\n'}$tag"
+        fi
+    done <<<"$tags"
+    printf '%s' "$result"
+}
+
+function first_assumed_durable_tag {
+    local candidates="$1"
+    local observed_tags="${2-$candidates}"
+    local precision tag
+
+    precision=$(durable_semver_precision_from_tags "$observed_tags")
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        if tag_is_assumed_durable "$tag" "$precision"; then
+            printf '%s\n' "$tag"
+            return
+        fi
+    done <<<"$candidates"
+}
+
+# Print matching tags in order through the first tag assumed durable. Return
+# success only when a durable tag was present; callers can continue searching
+# after receiving floating matches when the return status is nonzero.
+function matching_tags_through_first_durable {
+    local matching_tags="$1"
+    local observed_tags="${2-$matching_tags}"
+    local seed_tag="${3-}"
+    local precision tag result=
+
+    precision=$(durable_semver_precision_from_tags "$observed_tags")
+    if [[ -n "$seed_tag" ]]; then
+        result="$seed_tag"
+        if tag_is_assumed_durable "$seed_tag" "$precision"; then
+            printf '%s' "$result"
+            return 0
+        fi
+    fi
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        [[ -z "$seed_tag" || "$tag" != "$seed_tag" ]] || continue
+        result+="${result:+$'\n'}$tag"
+        if tag_is_assumed_durable "$tag" "$precision"; then
+            printf '%s' "$result"
+            return 0
+        fi
+    done <<<"$matching_tags"
+    printf '%s' "$result"
+    return 1
+}
+
 # Run one digest lookup per candidate tag while keeping a bounded number of
 # workers in flight. Bash 4.4 has wait -n but cannot report which PID finished,
 # so workers publish completion markers. Results are emitted in candidate order
 # even when lookups finish out of order. The lookup function receives the
 # repository, tag, and any remaining arguments and prints one complete digest.
 # When require_complete is nonempty, failed workers make an exhaustive lookup
-# fail; an "any" lookup may still succeed once it has a definite match.
+# fail; an "any" lookup may still succeed once it has a durable match.
 function tags_by_digest_with_rolling_pool {
     local repository="$1"
     local digest="$2"
@@ -73,7 +210,7 @@ function tags_by_digest_with_rolling_pool {
     local checked=0
     local failed=0
     local terminal_status=$LOOKUP_SUCCEEDED
-    local match_found=
+    local durable_match_found=
     local stop_scheduling=
     local matches=
     local -a active_pids=()
@@ -87,7 +224,7 @@ function tags_by_digest_with_rolling_pool {
     next_tag_index=0
     active_jobs=0
     while (( next_tag_index < ${#pool_candidate_tags[@]} || active_jobs > 0 )); do
-        while [[ -z "$match_found" && -z "$stop_scheduling" ]] &&
+        while [[ -z "$durable_match_found" && -z "$stop_scheduling" ]] &&
                 (( active_jobs < parallel_jobs &&
                     next_tag_index < ${#pool_candidate_tags[@]} )); do
             tag_index=$next_tag_index
@@ -115,6 +252,7 @@ function tags_by_digest_with_rolling_pool {
         for tag_index in "${!active_pids[@]}"; do
             done_tmp="$worker_tmp/$tag_index.done"
             [[ -e "$done_tmp" ]] || continue
+            tag=${pool_candidate_tags[$tag_index]}
             result_tmp="$worker_tmp/$tag_index.result"
             status_tmp="$worker_tmp/$tag_index.status"
             worker_pid=${active_pids[$tag_index]}
@@ -139,7 +277,11 @@ function tags_by_digest_with_rolling_pool {
 
             if [[ "$manifest_digest" == "$digest" ]]; then
                 matching_indices[$tag_index]=1
-                [[ "$registry_tag_scan" == any ]] && match_found=1
+                if [[ "$registry_tag_scan" == any ]] &&
+                        tag_is_assumed_durable "$tag" \
+                            "${registry_durable_semver_precision-}"; then
+                    durable_match_found=1
+                fi
             fi
             ((++checked))
             if is_interactive_session; then
@@ -150,11 +292,16 @@ function tags_by_digest_with_rolling_pool {
     done
     rmdir "$worker_tmp"
 
+    matches="${registry_seed_matching_tags-}"
     for (( tag_index = 0; tag_index < next_tag_index; ++tag_index )); do
         [[ -n ${matching_indices[$tag_index]-} ]] || continue
         tag=${pool_candidate_tags[$tag_index]}
         matches+="${matches:+$'\n'}$tag"
-        [[ "$registry_tag_scan" == any ]] && break
+        if [[ "$registry_tag_scan" == any ]] &&
+                tag_is_assumed_durable "$tag" \
+                    "${registry_durable_semver_precision-}"; then
+            break
+        fi
     done
     if is_interactive_session; then
         printf '\r%s... done (%d checked)\n' "$progress_label" "$checked" >&2
@@ -181,7 +328,7 @@ function choose_remote_tag_scan {
         return 1
     fi
     echo "Scan remote tags?" >&2
-    echo "  [1] Stop after any matching tag" >&2
+    echo "  [1] Stop after any matching durable tag" >&2
     echo "  [a] Find all matching tags" >&2
     echo "  [n] Do not scan" >&2
     while true; do

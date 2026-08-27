@@ -143,7 +143,7 @@ function skopeo_tags_by_digest {
     local digest="$2"
     local authfile="${3-}"
     local tags tag error_tmp skopeo_status
-    local candidate_count parallel_jobs
+    local candidate_count parallel_jobs durable_precision
     local -a auth_args=()
     local -a candidate_tags=()
 
@@ -166,9 +166,21 @@ function skopeo_tags_by_digest {
         return "$skopeo_status"
     fi
 
+    durable_precision=$(durable_semver_precision_from_tags "$tags")
+    registry_durable_semver_precision="$durable_precision"
+    if [[ "$registry_tag_scan" == any &&
+            -n "${registry_direct_tag_confirmed-}" &&
+            -n "$registry_direct_tag" ]] &&
+            tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
+        printf '%s\n' "$registry_direct_tag"
+        return
+    fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
-        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
+        if [[ "$registry_tag_scan" == any &&
+                -n "${registry_direct_tag_confirmed-}" &&
+                "$tag" == "$registry_direct_tag" ]]; then
+            registry_seed_matching_tags="$tag"
             continue
         fi
         candidate_tags+=("$tag")

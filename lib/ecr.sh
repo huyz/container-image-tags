@@ -199,7 +199,7 @@ function ecr_tags_by_digest_api {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local response matching_images
+    local response matching_images matching_tags seed_tag=
 
     response=$(ecr_private_image_details \
         "$registry" "$repository" "imageDigest=$digest") || return $?
@@ -217,25 +217,32 @@ function ecr_tags_by_digest_api {
         ;;
     esac
 
-    "$JQ" -r \
-        --arg digest "$digest" \
-        --arg tag_scan "$registry_tag_scan" \
-        --arg direct_tag "$registry_direct_tag" '
+    matching_tags=$("$JQ" -r \
+        --arg digest "$digest" '
             [
                 .imageDetails[]
                 | select(.imageDigest == $digest)
                 | .imageTags[]?
-                | select($tag_scan != "any" or . != $direct_tag)
             ]
             | unique
-            | if $tag_scan == "any" then .[0] // empty else .[] end
-        ' <<<"$response"
+            | .[]
+        ' <<<"$response")
+    if [[ "$registry_tag_scan" == any ]]; then
+        if [[ -n "${registry_direct_tag_confirmed-}" &&
+                -n "${registry_direct_tag-}" ]]; then
+            seed_tag="$registry_direct_tag"
+        fi
+        matching_tags_through_first_durable \
+            "$matching_tags" "$matching_tags" "$seed_tag" || true
+    else
+        printf '%s\n' "$matching_tags"
+    fi
 }
 
 function ecr_public_tags_by_digest_api {
     local repository_path="$1"
     local digest="$2"
-    local response matching_images
+    local response matching_images matching_tags seed_tag=
 
     response=$(ecr_public_image_details \
         "$repository_path" "imageDigest=$digest") || return $?
@@ -253,19 +260,26 @@ function ecr_public_tags_by_digest_api {
         ;;
     esac
 
-    "$JQ" -r \
-        --arg digest "$digest" \
-        --arg tag_scan "$registry_tag_scan" \
-        --arg direct_tag "$registry_direct_tag" '
+    matching_tags=$("$JQ" -r \
+        --arg digest "$digest" '
             [
                 .imageDetails[]
                 | select(.imageDigest == $digest)
                 | .imageTags[]?
-                | select($tag_scan != "any" or . != $direct_tag)
             ]
             | unique
-            | if $tag_scan == "any" then .[0] // empty else .[] end
-        ' <<<"$response"
+            | .[]
+        ' <<<"$response")
+    if [[ "$registry_tag_scan" == any ]]; then
+        if [[ -n "${registry_direct_tag_confirmed-}" &&
+                -n "${registry_direct_tag-}" ]]; then
+            seed_tag="$registry_direct_tag"
+        fi
+        matching_tags_through_first_durable \
+            "$matching_tags" "$matching_tags" "$seed_tag" || true
+    else
+        printf '%s\n' "$matching_tags"
+    fi
 }
 
 function ecr_authenticate {

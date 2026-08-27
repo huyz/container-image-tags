@@ -169,15 +169,18 @@ function assert_classification {
     [[ "$registry_lookup_result" == completed ]]
 }
 
-@test "DISPATCH-009 any mode propagates the exact direct tag for exclusion" {
+@test "DISPATCH-009 any mode short-circuits on a confirmed durable direct tag" {
     load_registry_dispatch
     function docker_hub_tags_by_digest {
-        printf '%s\n' "$registry_tag_scan|$registry_direct_tag" >"$CALLS_DIR/mode"
+        : >"$CALLS_DIR/scanned"
     }
     registry_classify alpine
+    registry_direct_tag_confirmed=1
 
-    registry_find_tags_by_digest alpine sha256:one any latest
-    [[ $(<"$CALLS_DIR/mode") == 'any|latest' ]]
+    registry_find_tags_by_digest alpine sha256:one any 1.2.3
+    [[ "$registry_tags" == 1.2.3 ]]
+    [[ "$registry_lookup_backend" == direct-tag-check ]]
+    refute_file_exists "$CALLS_DIR/scanned"
 }
 
 @test "DISPATCH-010 absent provider metadata remains empty" {

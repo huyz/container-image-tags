@@ -140,7 +140,7 @@ EOF
     run_cli --tag-resolution=remote --tag-scan=any \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Other remote tag (any):'
+    assert_output_contains 'Remote tags through first durable match (any):'
 
     run_cli --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
@@ -156,6 +156,17 @@ EOF
     assert_status 0
     assert_output_contains 'Other remote tags:'
     assert_output_contains '<none>'
+}
+
+@test "OUTPUT-009 confirmed durable direct tag satisfies any without reverse scan" {
+    install_local_output_fixtures
+    export LOCAL_REPO_TAGS=registry.example/app:1.2.3
+
+    run_cli --tag-resolution=local --tag-scan=any registry.example/app:1.2.3
+    assert_status 0
+    assert_output_contains 'Remote tags through first durable match (any):'
+    assert_output_contains '1.2.3'
+    ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 }
 
 @test "OUTPUT-006 provider metadata prints only for supported GHCR package results" {
@@ -288,7 +299,7 @@ EOF
     run_cli --json --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_json '.[0].tag_scan.backend as $b | ["acr-api","docker-hub-api","ecr-api","github-packages-api","gcr-api","oci-registry-api","skopeo",null] | index($b) != null'
+    assert_json '.[0].tag_scan.backend as $b | ["acr-api","direct-tag-check","docker-hub-api","ecr-api","github-packages-api","gcr-api","oci-registry-api","skopeo",null] | index($b) != null'
 }
 
 @test "JSON-007 fallback reports Skopeo as the backend that produced tags" {

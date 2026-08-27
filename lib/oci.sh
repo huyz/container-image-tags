@@ -11,6 +11,7 @@ readonly OCI_MANIFEST_ACCEPT_HEADER='Accept: application/vnd.oci.image.index.v1+
 
 oci_bearer_token=
 oci_listed_tags=
+oci_direct_tag_durable=
 
 function oci_header_value {
     local header_file="$1"
@@ -132,12 +133,14 @@ function oci_request_tag_page {
 function oci_list_tags_anonymously {
     local registry="$1"
     local repository="$2"
+    local page_mode="${3-full}"
     local request_headers response_headers response_body
-    local next_url next_link page_tags auth_header http_code token_status
+    local next_url next_link page_tags auth_header http_code token_status durable_precision
     local lookup_status=$LOOKUP_SUCCEEDED
 
     oci_bearer_token=
     oci_listed_tags=
+    oci_direct_tag_durable=
     request_headers=$(mktemp)
     response_headers=$(mktemp)
     response_body=$(mktemp)
@@ -174,6 +177,19 @@ function oci_list_tags_anonymously {
             page_tags=$("$JQ" -r '.tags[]?' "$response_body")
             if [[ -n "$page_tags" ]]; then
                 oci_listed_tags+="${oci_listed_tags:+$'\n'}$page_tags"
+            fi
+            durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
+            if [[ "$registry_tag_scan" == any &&
+                    -n "${registry_direct_tag_confirmed-}" &&
+                    -n "${registry_direct_tag-}" ]] &&
+                    tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
+                oci_direct_tag_durable=1
+                next_url=
+                continue
+            fi
+            if [[ "$page_mode" == sample ]]; then
+                next_url=
+                continue
             fi
             next_link=$(oci_next_link "$response_headers")
             case "$next_link" in
@@ -414,14 +430,23 @@ function oci_tags_by_digest_anonymously {
     local repository="$2"
     local digest="$3"
     local display_repository="$registry/$repository"
-    local tag request_headers tags lookup_status
+    local tag request_headers tags lookup_status durable_precision
     local candidate_count parallel_jobs scan_engine use_parallel
     local -a candidate_tags=()
 
     oci_list_tags_anonymously "$registry" "$repository" || return $?
+    durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
+    registry_durable_semver_precision="$durable_precision"
+    if [[ -n "$oci_direct_tag_durable" ]]; then
+        printf '%s\n' "$registry_direct_tag"
+        return
+    fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
-        if [[ "$registry_tag_scan" == any && "$tag" == "$registry_direct_tag" ]]; then
+        if [[ "$registry_tag_scan" == any &&
+                -n "${registry_direct_tag_confirmed-}" &&
+                "$tag" == "$registry_direct_tag" ]]; then
+            registry_seed_matching_tags="$tag"
             continue
         fi
         candidate_tags+=("$tag")

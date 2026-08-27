@@ -248,7 +248,7 @@ function choose_docker_hub_authentication {
 }
 
 # Populate registry_tags with Docker Hub tags matching digest. In "any" mode,
-# stop after the first match other than registry_direct_tag. The shared
+# stop after the first match heuristically assumed durable. The shared
 # skip_input flag is set when the user elects to skip after anonymous
 # pagination is refused.
 function docker_hub_tags_by_digest {
@@ -256,6 +256,7 @@ function docker_hub_tags_by_digest {
     local digest="$2"
     local display_repository="$3"
     local next_url response_tmp request_headers= http_code error_message matching_tags token
+    local page_tags page_matches durable_precision durable_found
     local authentication_choice
     local has_skopeo_credentials=
     local -a request_args
@@ -345,24 +346,45 @@ function docker_hub_tags_by_digest {
             abort "Docker Hub tag listing failed with HTTP $http_code${error_message:+: $error_message}"
             ;;
         esac
-        # shellcheck disable=SC2016  # jq expression, not a shell expansion
-        matching_tags=$(
-            $JQ -r \
-                --arg digest "$digest" \
-                --arg tag_scan "$registry_tag_scan" \
-                --arg direct_tag "$registry_direct_tag" '
-                [
-                    .results[]
-                    | select(((.digest // "") | ltrimstr("sha256:")) == $digest)
-                    | .name
-                    | select($tag_scan != "any" or . != $direct_tag)
-                ]
-                | if $tag_scan == "any" then .[0] // empty else .[] end
-            ' "$response_tmp"
-        )
+        page_tags=$($JQ -r '.results[].name' "$response_tmp")
+        if [[ "$registry_tag_scan" == any ]]; then
+            durable_precision=$(durable_semver_precision_from_tags "$page_tags")
+            if [[ -n "${registry_direct_tag_confirmed-}" &&
+                    -n "$registry_direct_tag" ]] &&
+                    tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
+                registry_tags="$registry_direct_tag"
+                break
+            fi
+            if [[ -n "${registry_direct_tag_confirmed-}" &&
+                    -n "$registry_direct_tag" && -z "$registry_tags" ]]; then
+                registry_tags="$registry_direct_tag"
+            fi
+        fi
+        matching_tags=$($JQ -r --arg digest "$digest" '
+            .results[]
+            | select(((.digest // "") | ltrimstr("sha256:")) == $digest)
+            | .name
+        ' "$response_tmp")
+        if [[ "$registry_tag_scan" == any ]]; then
+            matching_tags=$(printf '%s\n' "$matching_tags" |
+                while IFS= read -r tag; do
+                    [[ -n "$tag" ]] || continue
+                    if [[ -n "${registry_direct_tag_confirmed-}" &&
+                            "$tag" == "$registry_direct_tag" ]]; then
+                        continue
+                    fi
+                    printf '%s\n' "$tag"
+                done)
+            durable_found=
+            if page_matches=$(matching_tags_through_first_durable \
+                    "$matching_tags" "$page_tags"); then
+                durable_found=1
+            fi
+            matching_tags="$page_matches"
+        fi
         if [[ -n "$matching_tags" ]]; then
             registry_tags+="${registry_tags:+$'\n'}$matching_tags"
-            [[ "$registry_tag_scan" == any ]] && break
+            [[ "$registry_tag_scan" == any && -n "$durable_found" ]] && break
         fi
         next_url=$($JQ -r '.next // empty' "$response_tmp")
     done

@@ -149,6 +149,35 @@ EOF
     "$SYSTEM_JQ" -e '.name == "'"$DIGEST"'"' >/dev/null <<<"$registry_metadata"
 }
 
+@test "GHCR-016 Packages any retains matches through the first durable tag" {
+    load_ghcr
+    registry_tag_scan=any; registry_direct_tag=latest
+    registry_direct_tag_confirmed=1
+    registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
+    function ghcr_package_version_by_digest {
+        printf '{"name":"%s","metadata":{"container":{"tags":["latest","1.796","1.796.0"]}}}\n' "$DIGEST"
+    }
+
+    ghcr_tags_by_digest owner/app "$DIGEST" ghcr.io/owner/app
+    [[ "$registry_tags" == $'latest\n1.796\n1.796.0' ]]
+}
+
+@test "GHCR-017 auto any uses an OCI tag sample before Packages pagination" {
+    load_ghcr
+    registry_tag_scan=any; registry_direct_tag=17.6; registry_direct_tag_confirmed=1
+    registry_tags=; registry_lookup_backend=; registry_lookup_result=completed
+    function oci_list_tags_anonymously {
+        [[ "$3" == sample ]]
+        oci_direct_tag_durable=1
+    }
+    function ghcr_package_version_by_digest { : >"$CALLS_DIR/packages"; }
+
+    ghcr_tags_by_digest owner/app "$DIGEST" ghcr.io/owner/app
+    [[ "$registry_tags" == 17.6 ]]
+    [[ "$registry_lookup_backend" == oci-registry-api ]]
+    refute_file_exists "$CALLS_DIR/packages"
+}
+
 @test "GHCR-011 active untagged package metadata prints the documented note" {
     load_ghcr
     registry_lookup_result=completed

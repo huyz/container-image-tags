@@ -85,7 +85,7 @@ function run_cli_with_tty_input {
     run_cli --help
     assert_status 0
     assert_output_contains '--tag-resolution'
-    assert_output_contains 'any: stop after finding the first matching tag'
+    assert_output_contains 'any: stop after finding one matching tag heuristically assumed durable'
 
     run_cli -h
     assert_status 0
@@ -175,7 +175,7 @@ EOF
     assert_stderr_contains 'DEBUG: Docker Hub tag lookup returned HTTP 500'
 }
 
-@test "CLI-008 JSON defaults to all and emits one clean array" {
+@test "CLI-008 JSON defaults to any and emits one clean array" {
     install_empty_oci_curl
     write_static_stub docker '' 1
 
@@ -183,18 +183,18 @@ EOF
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
     assert_valid_json
-    assert_json 'length == 1 and .[0].tag_scan.mode == "all"'
+    assert_json 'length == 1 and .[0].tag_scan.mode == "any"'
     assert_json '.[0].tag_scan.backend == "oci-registry-api"'
 }
 
-@test "CLI-009 non-interactive human mode defaults to all even when Bats owns a TTY" {
+@test "CLI-009 non-interactive human mode defaults to any even when Bats owns a TTY" {
     install_empty_oci_curl
     write_static_stub docker '' 1
 
     run_cli --tag-resolution=remote \
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
-    assert_output_contains 'Other remote tags:'
+    assert_output_contains 'Remote tags through first durable match (any):'
 }
 
 @test "CLI-010 terminal stdin and stderr default human mode to ask" {

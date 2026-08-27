@@ -202,7 +202,7 @@ function acr_tags_by_digest_api {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local metadata returned_digest
+    local metadata returned_digest matching_tags seed_tag=
 
     metadata=$(acr_metadata "$registry" "$repository" manifest "$digest") || return $?
     returned_digest=$(
@@ -212,14 +212,18 @@ function acr_tags_by_digest_api {
         debug "ACR returned digest '$returned_digest' for $registry/$repository@$digest"
         return "$LOOKUP_UNAVAILABLE"
     fi
-    "$JQ" -r \
-        --arg tag_scan "$registry_tag_scan" \
-        --arg direct_tag "$registry_direct_tag" '
-            [(.manifest.tags // .tags // [])[]?
-                | select($tag_scan != "any" or . != $direct_tag)]
-            | unique
-            | if $tag_scan == "any" then .[0] // empty else .[] end
-        ' <<<"$metadata"
+    matching_tags=$("$JQ" -r \
+        '[(.manifest.tags // .tags // [])[]?] | unique | .[]' <<<"$metadata")
+    if [[ "$registry_tag_scan" == any ]]; then
+        if [[ -n "${registry_direct_tag_confirmed-}" &&
+                -n "${registry_direct_tag-}" ]]; then
+            seed_tag="$registry_direct_tag"
+        fi
+        matching_tags_through_first_durable \
+            "$matching_tags" "$matching_tags" "$seed_tag" || true
+    else
+        printf '%s\n' "$matching_tags"
+    fi
 }
 
 function acr_tags_by_digest_with_skopeo {

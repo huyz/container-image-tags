@@ -21,7 +21,7 @@ function lookup_any_stress {
     local tag="$2"
     printf '%s\n' "$tag" >>"$CALLS_DIR/iteration.log"
     case "$tag" in
-    match) sleep 0.006; printf '%s\n' sha256:wanted ;;
+    1.2.3) sleep 0.006; printf '%s\n' sha256:wanted ;;
     slow) sleep 0.02; printf '%s\n' sha256:other ;;
     *) printf '%s\n' sha256:other ;;
     esac
@@ -63,13 +63,13 @@ function lookup_terminal_stress {
 @test "STRESS-002 any mode stops new scheduling over 25 varied runs" {
     load_common
     registry_tag_scan=any
-    candidates=(match slow never-one never-two)
+    candidates=(1.2.3 slow never-one never-two)
 
     for STRESS_ITERATION in $(seq 1 25); do
         : >"$CALLS_DIR/iteration.log"
         result=$(tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
             progress worker lookup_any_stress '')
-        [[ "$result" == match ]]
+        [[ "$result" == 1.2.3 ]]
         ! grep -Fq never "$CALLS_DIR/iteration.log"
     done
 }

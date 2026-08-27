@@ -124,10 +124,29 @@ Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
 
+`any` means any matching tag heuristically assumed durable, not merely any
+arbitrary alias. The heuristic infers the most precise recurring semantic
+version shape in the tags exposed by the registry: for a repository containing
+both `1.796` and `1.796.0`, the three-component tag is treated as durable and
+the shorter tag as floating. Known channels such as `latest`, `main`, `dev`,
+`stable`, and `edge` are floating; complete commit-like and date-like tags are
+durable. A directly checked three-or-more-component version can satisfy `any`
+immediately. For shorter version schemes, the first registry tag page supplies
+the repository convention and can satisfy `any` without further pagination or
+manifest probes. These classifications express publisher convention, not a
+registry guarantee. `all` remains exhaustive and returns every matching tag.
+
+While searching, `any` retains every matching tag encountered in candidate
+order, including floating tags, and stops after the first durable match. A
+confirmed floating baseline tag is included without probing it again. Thus a
+result may contain `latest`, `1.796`, and `1.796.0`; the final tag is the durable
+match that satisfied the scan.
+
 Generic public OCI scans list tags once, reuse one anonymous repository token,
 and issue manifest `HEAD` requests with up to eight transfers in flight. Curl's
-parallel engine reuses connections for exhaustive scans; `any` mode uses the
-rolling worker pool so it can stop scheduling early. Skopeo uses the same pool
+parallel engine reuses connections for exhaustive scans; `any` mode checks
+candidate tags with the rolling worker pool so it can stop scheduling after the
+first durable match. Skopeo uses the same pool
 when the OCI fast path is unavailable. Interactive scans estimated above three
 minutes print an advisory and continue. Non-interactive scans estimated above
 ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
@@ -142,7 +161,7 @@ selection; `any` scans always use the pool so they can stop scheduling early.
 Use `--json` for automation. Standard output is a single JSON array with one
 object per resolved image; wildcard inputs may therefore add multiple objects.
 Diagnostics continue to use standard error. JSON mode defaults to
-`--tag-scan=all` even on an interactive terminal, while an explicit
+`--tag-scan=any` even on an interactive terminal, while an explicit
 `--tag-scan` value takes precedence. Each result includes the original input,
 baseline source, local image and container details, repository digest, registry
 classification, direct remote-tag check, and reverse-scan status and tags.
@@ -187,8 +206,9 @@ For example, the standard output from
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
 `skipped`. `tag_scan.backend` identifies the implementation used for a scan:
-`acr-api`, `docker-hub-api`, `ecr-api`, `github-packages-api`, `gcr-api`,
-`oci-registry-api`, or `skopeo`; it is `null` when no scan ran.
+`acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`,
+`github-packages-api`, `gcr-api`, `oci-registry-api`, or `skopeo`; it is `null`
+when no scan ran.
 `tag_scan.provider_metadata` contains
 provider-specific response data when available, currently for successful
 GitHub Packages API lookups, and is otherwise `null`.

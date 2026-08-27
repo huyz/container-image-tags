@@ -159,6 +159,30 @@ EOF
     [[ "$oci_listed_tags" == $'a\nb' ]]
 }
 
+@test "OCI-028 first page can establish a confirmed two-part direct tag as durable" {
+    load_oci
+    registry_tag_scan=any
+    registry_direct_tag=17.6
+    registry_direct_tag_confirmed=1
+    write_stub curl <<'EOF'
+printf '%s\0' "$@" >>"$CALLS_DIR/curl.args"
+headers=; body=
+for ((index = 1; index <= $#; ++index)); do
+    case "${!index}" in
+    -D) index=$((index + 1)); headers="${!index}" ;;
+    -o) index=$((index + 1)); body="${!index}" ;;
+    esac
+done
+printf 'HTTP/1.1 200 OK\r\nLink: </v2/team/app/tags/list?n=100&last=17.7>; rel="next"\r\n' >"$headers"
+printf '{"tags":["latest","17.5","17.6","17.7"]}' >"$body"
+printf '200'
+EOF
+
+    oci_list_tags_anonymously registry.example team/app
+    [[ -n "$oci_direct_tag_durable" ]]
+    [[ $(grep -ao '/tags/list' "$CALLS_DIR/curl.args" | wc -l) -eq 1 ]]
+}
+
 @test "OCI-003 unsafe cross-host pagination is unavailable" {
     load_oci
     write_stub curl <<'EOF'
@@ -276,17 +300,23 @@ EOF
     refute_file_exists "$CALLS_DIR/pool"
 }
 
-@test "OCI-017 any mode selects the rolling pool even with parallel curl" {
+@test "OCI-017 any retains a confirmed baseline and schedules until durable" {
     load_oci
-    registry_tag_scan=any; registry_direct_tag=direct
-    function oci_list_tags_anonymously { oci_listed_tags=$'direct\na\nb'; oci_bearer_token=; }
+    registry_tag_scan=any; registry_direct_tag=latest; registry_direct_tag_confirmed=1
+    function oci_list_tags_anonymously { oci_listed_tags=$'latest\n1.2\n1.2.0\n1.3\n1.3.0'; oci_bearer_token=; }
     function registry_expensive_scan_preflight { return 0; }
     function oci_curl_supports_parallel { return 0; }
     function oci_tags_by_digest_with_curl_parallel { : >"$CALLS_DIR/parallel"; }
-    function tags_by_digest_with_rolling_pool { : >"$CALLS_DIR/pool"; printf '%s\n' a; }
+    function tags_by_digest_with_rolling_pool {
+        local -n received="$3"
+        printf '%s\n' "${received[*]}" >"$CALLS_DIR/candidates"
+        : >"$CALLS_DIR/pool"
+        printf '%s\n%s\n' "$registry_seed_matching_tags" 1.2.0
+    }
     run oci_tags_by_digest_anonymously registry.example team/app "$DIGEST"
     assert_status 0
-    assert_output_exact a
+    assert_output_exact $'latest\n1.2.0'
+    [[ $(<"$CALLS_DIR/candidates") == '1.2 1.2.0 1.3 1.3.0' ]]
     assert_file_exists "$CALLS_DIR/pool"
     refute_file_exists "$CALLS_DIR/parallel"
 }

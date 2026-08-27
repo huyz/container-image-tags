@@ -88,14 +88,15 @@ EOF
     [[ -z "$registry_tags" ]]
 }
 
-@test "HUB-006 any excludes direct tag and stops at another match" {
+@test "HUB-006 any retains floating aliases and stops at a durable match" {
     load_hub
     registry_tag_scan=any; registry_direct_tag=latest; registry_tags=; skip_input=
+    registry_direct_tag_confirmed=1
     install_hub_response 200 \
-        "{\"results\":[{\"name\":\"latest\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"stable\",\"digest\":\"sha256:$DIGEST\"}],\"next\":\"https://unused.example\"}"
+        "{\"results\":[{\"name\":\"latest\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.2\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.2.3\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.3.0\",\"digest\":\"sha256:other\"}],\"next\":\"https://unused.example\"}"
 
     docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
-    [[ "$registry_tags" == stable ]]
+    [[ "$registry_tags" == $'latest\n1.2\n1.2.3' ]]
 }
 
 @test "HUB-007 all mode retains matches across pages in response order" {

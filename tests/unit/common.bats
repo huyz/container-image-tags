@@ -5,7 +5,7 @@ load ../test-helper.bash
 function lookup_from_tag {
     local tag="$2"
     case "$tag" in
-    match | match-slow)
+    match | match-slow | 1.2 | 1.2.3)
         [[ "$tag" != match-slow ]] || sleep 0.08
         printf '%s\n' 'sha256:wanted'
         ;;
@@ -114,6 +114,37 @@ function lookup_and_log {
     assert_output_exact ''
 }
 
+@test "COMMON-008 durable heuristic infers the most precise recurring semver shape" {
+    load_common
+    tags=$'latest\n1.796\n1.796.0\n1.795\n1.795.0\ndev'
+
+    run durable_semver_precision_from_tags "$tags"
+    assert_status 0
+    assert_output_exact 3
+    tag_is_assumed_durable 1.796.0 3
+    ! tag_is_assumed_durable 1.796 3
+    ! tag_is_assumed_durable latest 3
+}
+
+@test "COMMON-009 durable heuristic supports repositories with two-part releases" {
+    load_common
+    tags=$'stable\n17.5\n17.6\n17.7'
+
+    run assumed_durable_tags "$tags"
+    assert_status 0
+    assert_output_exact $'17.5\n17.6\n17.7'
+}
+
+@test "COMMON-010 standalone direct-tag classification is deliberately conservative" {
+    load_common
+
+    tag_is_assumed_durable v1.2.3
+    tag_is_assumed_durable 2026-08-27
+    tag_is_assumed_durable a1b2c3d4e5f6
+    ! tag_is_assumed_durable 1.2
+    ! tag_is_assumed_durable main
+}
+
 @test "POOL-001 rolling pool never exceeds its configured worker cap" {
     load_common
     registry_tag_scan=all
@@ -154,20 +185,20 @@ function lookup_and_log {
     assert_output_exact $'match-slow\nmatch'
 }
 
-@test "POOL-003 any mode stops scheduling after the first observed match" {
+@test "POOL-003 any mode stops scheduling after the first durable match" {
     load_common
     registry_tag_scan=any
-    candidates=(match slow never-one never-two)
+    candidates=(1.2.3 slow never-one never-two)
 
     run lookup_pool_any
     assert_status 0
-    assert_output_exact 'match'
-    grep -Fxq match "$CALLS_DIR/lookups"
+    assert_output_exact '1.2.3'
+    grep -Fxq 1.2.3 "$CALLS_DIR/lookups"
     grep -Fxq slow "$CALLS_DIR/lookups"
     ! grep -Fq never "$CALLS_DIR/lookups"
 }
 
-@test "POOL-004 caller-side direct-tag exclusion is preserved before scheduling" {
+@test "POOL-004 caller-supplied candidate filtering is preserved before scheduling" {
     load_common
     registry_tag_scan=all
     registry_direct_tag=latest
@@ -217,12 +248,12 @@ function lookup_pool_terminal {
 @test "POOL-007 any mode can succeed after an unrelated worker failure" {
     load_common
     registry_tag_scan=any
-    candidates=(failed match)
+    candidates=(failed 1.2.3)
 
     run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
         progress worker lookup_from_tag ''
     assert_status 0
-    assert_output_exact 'match'
+    assert_output_exact '1.2.3'
 }
 
 @test "POOL-008 empty candidate set starts no workers" {
@@ -282,4 +313,18 @@ function lookup_pool_terminal {
     assert_status 0
     after=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'tmp.*' 2>/dev/null | sort)
     [[ "$before" == "$after" ]]
+}
+
+@test "POOL-013 any retains floating matches through the first durable match" {
+    load_common
+    registry_tag_scan=any
+    registry_durable_semver_precision=3
+    registry_seed_matching_tags=latest
+    candidates=(1.2 1.2.3 never)
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 1 \
+        progress worker lookup_and_log ''
+    assert_status 0
+    assert_output_exact $'latest\n1.2\n1.2.3'
+    ! grep -Fxq never "$CALLS_DIR/lookups"
 }

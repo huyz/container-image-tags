@@ -85,23 +85,27 @@ function gcr_digest_for_tag_anonymously {
     printf '%s\n' "$digests"
 }
 
-# Print current tags for one complete digest. In "any" mode, omit the direct
-# tag already checked by the caller and return at most one other match.
+# Print current tags for one complete digest. In "any" mode, retain matching
+# tags through the first tag heuristically assumed durable under the
+# repository's observed convention.
 function gcr_tags_by_digest_anonymously {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local metadata
+    local metadata matching_tags observed_tags seed_tag=
 
     metadata=$(gcr_metadata_anonymously "$registry" "$repository") || return $?
-    "$JQ" -r \
-        --arg digest "$digest" \
-        --arg tag_scan "$registry_tag_scan" \
-        --arg direct_tag "$registry_direct_tag" '
-            [
-                .manifest[$digest].tag[]?
-                | select($tag_scan != "any" or . != $direct_tag)
-            ]
-            | if $tag_scan == "any" then .[0] // empty else .[] end
-        ' <<<"$metadata"
+    matching_tags=$("$JQ" -r --arg digest "$digest" \
+        '.manifest[$digest].tag[]?' <<<"$metadata")
+    if [[ "$registry_tag_scan" == any ]]; then
+        observed_tags=$("$JQ" -r '.manifest[].tag[]?' <<<"$metadata")
+        if [[ -n "${registry_direct_tag_confirmed-}" &&
+                -n "${registry_direct_tag-}" ]]; then
+            seed_tag="$registry_direct_tag"
+        fi
+        matching_tags_through_first_durable \
+            "$matching_tags" "$observed_tags" "$seed_tag" || true
+    else
+        printf '%s\n' "$matching_tags"
+    fi
 }

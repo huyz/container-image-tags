@@ -3,7 +3,7 @@
 # GitHub Container Registry fast paths. Anonymous access uses the shared OCI
 # implementation; this module contains only the GitHub Packages API behavior.
 
-# Look up an active GHCR package version by immutable digest or current tag.
+# Look up an active GHCR package version by content digest or current tag.
 # GitHub's Packages API exposes the digest, timestamps, and current tags in the
 # same object, so no tag-by-tag manifest lookup is needed.
 #
@@ -177,9 +177,20 @@ function ghcr_tags_by_digest {
     local ghcr_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local can_refresh ghcr_choice package_lookup_status
+    local can_refresh ghcr_choice package_lookup_status package_tags seed_tag=
 
     debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository method=$opt_ghcr_method scan=$registry_tag_scan"
+
+    if [[ "$registry_tag_scan" == any &&
+            "$opt_ghcr_method" != packages &&
+            -n "${registry_direct_tag_confirmed-}" &&
+            -n "$registry_direct_tag" ]] &&
+            oci_list_tags_anonymously ghcr.io "$ghcr_repository" sample &&
+            [[ -n "$oci_direct_tag_durable" ]]; then
+        registry_tags="$registry_direct_tag"
+        registry_lookup_backend=oci-registry-api
+        return
+    fi
 
     if [[ "$opt_ghcr_method" == anonymous ]]; then
         if ! registry_tags=$(oci_tags_by_digest_anonymously \
@@ -194,14 +205,13 @@ function ghcr_tags_by_digest {
         if registry_metadata=$(ghcr_package_version_by_digest "$ghcr_repository" "$digest"); then
             registry_lookup_backend=github-packages-api
             if [[ "$registry_tag_scan" == any ]]; then
-                registry_tags=$(
-                    $JQ -r --arg direct_tag "$registry_direct_tag" '
-                        [
-                            .metadata.container.tags[]?
-                            | select(. != $direct_tag)
-                        ][0] // empty
-                    ' <<<"$registry_metadata"
-                )
+                package_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
+                if [[ -n "${registry_direct_tag_confirmed-}" &&
+                        -n "${registry_direct_tag-}" ]]; then
+                    seed_tag="$registry_direct_tag"
+                fi
+                registry_tags=$(matching_tags_through_first_durable \
+                    "$package_tags" "$package_tags" "$seed_tag" || true)
             else
                 registry_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
             fi

@@ -110,16 +110,17 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "ECR-009 any mode excludes the direct tag and deduplicates" {
+@test "ECR-009 any returns matches through a durable tag and deduplicates" {
     load_ecr
-    install_aws_response "{\"imageDetails\":[{\"imageDigest\":\"$DIGEST\",\"imageTags\":[\"stable\",\"z\",\"a\",\"z\"]}]}"
+    install_aws_response "{\"imageDetails\":[{\"imageDigest\":\"$DIGEST\",\"imageTags\":[\"stable\",\"1.2\",\"1.2.3\",\"1.2.3\"]}]}"
     registry_tag_scan=any
     registry_direct_tag=stable
+    registry_direct_tag_confirmed=1
 
     run ecr_tags_by_digest_api \
         123456789012.dkr.ecr.us-west-2.amazonaws.com team/app "$DIGEST"
     assert_status 0
-    assert_output_exact a
+    assert_output_exact $'stable\n1.2\n1.2.3'
 }
 
 @test "ECR-011 AWS login password travels through stdin not argv" {

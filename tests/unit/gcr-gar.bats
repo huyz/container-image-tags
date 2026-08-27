@@ -55,17 +55,18 @@ EOF
     assert_output_exact sha256:one
 }
 
-@test "GCR-004 reverse lookup matches the full digest and any excludes direct tag" {
+@test "GCR-004 reverse lookup matches the full digest and any returns a durable tag" {
     load_gcr
     function gcr_metadata_anonymously {
-        printf '{"manifest":{"%s":{"tag":["stable","v1"]},"sha256:prefix":{"tag":["wrong"]}}}\n' "$DIGEST"
+        printf '{"manifest":{"%s":{"tag":["stable","1.2.3"]},"sha256:prefix":{"tag":["1.2","wrong"]}}}\n' "$DIGEST"
     }
     registry_tag_scan=any
     registry_direct_tag=stable
+    registry_direct_tag_confirmed=1
 
     run gcr_tags_by_digest_anonymously gcr.io project/app "$DIGEST"
     assert_status 0
-    assert_output_exact v1
+    assert_output_exact $'stable\n1.2.3'
 }
 
 @test "GCR-005 HTTP outcomes map not-found denied stopped and unavailable" {

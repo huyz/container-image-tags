@@ -294,18 +294,22 @@ Implement these cases in `tests/unit/common.bats`:
 | COMMON-005 | P0 | Interactive choice `1`, `a`, and default/`n` | Prints `any`, `all`, and `none` respectively |
 | COMMON-006 | P0 | Choice requested without a terminal | Nonzero status and no string action |
 | COMMON-007 | P1 | Uppercase and long-form accepted choices | Documented equivalent action |
+| COMMON-008 | P0 | Mixed floating aliases and two-/three-component semver tags | Greatest recurring precision is inferred as durable |
+| COMMON-009 | P0 | Repository whose releases use two components | Two-component release tags are treated as durable |
+| COMMON-010 | P0 | Durable direct-tag classification without a repository sample | Full semver, date, and commit-like tags pass; channels and short semver do not |
 | POOL-001 | P0 | More candidates than workers | Active workers never exceed the supplied cap |
 | POOL-002 | P0 | Workers complete out of order | Matching tags are emitted in candidate order |
-| POOL-003 | P0 | `any` finds a match | No new work is scheduled afterward; in-flight work drains |
-| POOL-004 | P0 | Direct tag appears among candidates | Direct tag is excluded where the caller requires it |
+| POOL-003 | P0 | `any` finds a durable match | No new work is scheduled afterward; in-flight work drains |
+| POOL-004 | P0 | Caller filters a candidate before scheduling | Only the supplied candidate set is scheduled |
 | POOL-005 | P0 | One exhaustive worker fails | Complete lookup returns `LOOKUP_UNAVAILABLE`, not partial success |
 | POOL-006 | P0 | Worker returns `LOOKUP_STOPPED` | Scheduling stops and terminal status propagates |
-| POOL-007 | P0 | `any` has a definite match plus an unrelated failure | Match succeeds according to the documented any-mode contract |
+| POOL-007 | P0 | `any` has a durable match plus an unrelated failure | Match succeeds according to the documented any-mode contract |
 | POOL-008 | P1 | Empty candidate list | Empty result, no workers, no division or strict-mode failure |
 | POOL-009 | P1 | Quiet non-interactive run | No spinner or carriage-return progress |
 | POOL-010 | P1 | Interactive run | Bounded progress appears and finishes with a newline |
 | POOL-011 | P0 | Worker count returns to zero under `set -e` | No arithmetic-status abort |
 | POOL-012 | P0 | Normal and terminal completion | Worker temporary directory is removed and no child remains |
+| POOL-013 | P0 | `any` sees floating matches before a durable match | All matches through the first durable tag are returned; later candidates are not scheduled |
 
 The stress tier must repeat `POOL-002`, `POOL-003`, `POOL-005`, and `POOL-006`
 at least 25 times with varied deterministic delays.
@@ -323,8 +327,8 @@ Implement these end-to-end cases in `tests/integration/cli-options.bats`:
 | CLI-005 | P0 | Invalid `--tag-scan` | Explicit accepted-value error |
 | CLI-006 | P0 | Invalid `--ghcr-method` | Explicit accepted-value error |
 | CLI-007 | P1 | Short and long verbose/debug flags | Correct diagnostics enabled independently |
-| CLI-008 | P0 | JSON with no explicit scan mode | Defaults to `all` even interactively |
-| CLI-009 | P0 | Non-interactive human mode without explicit scan mode | Defaults to `all` |
+| CLI-008 | P0 | JSON with no explicit scan mode | Defaults to `any` even interactively |
+| CLI-009 | P0 | Non-interactive human mode without explicit scan mode | Defaults to `any` |
 | CLI-010 | P0 | Interactive human mode without explicit scan mode | Defaults to `ask` |
 | CLI-011 | P0 | Explicit scan mode in any environment | Explicit value wins |
 | CLI-012 | P0 | Non-remote resolution with Docker missing | Dependency diagnostic before processing input |
@@ -402,7 +406,7 @@ Classification inputs must include:
 | DISPATCH-006 | P0 | `LOOKUP_DENIED` | Intended auth path only |
 | DISPATCH-007 | P0 | `LOOKUP_STOPPED` | Immediate abort; no fallback |
 | DISPATCH-008 | P0 | New lookup begins after a prior result | Shared result, metadata, and error fields reset |
-| DISPATCH-009 | P0 | `any` with a direct tag | Direct tag propagated for exclusion |
+| DISPATCH-009 | P0 | `any` with a confirmed durable direct tag | Direct tag satisfies the lookup without invoking a reverse backend |
 | DISPATCH-010 | P1 | Provider metadata unsupported | Metadata remains empty/null |
 
 ## Docker Hub
@@ -414,7 +418,7 @@ Implement in `tests/unit/docker-hub.bats`:
 - `HUB-003` P0: direct lookup distinguishes 404 from unavailable responses.
 - `HUB-004` P0: reverse lookup paginates until `next` is empty.
 - `HUB-005` P0: full digest equality rejects a prefix collision.
-- `HUB-006` P0: `any` excludes the direct tag and stops after another match.
+- `HUB-006` P0: `any` retains floating matches and stops after a durable match.
 - `HUB-007` P0: `all` retains matching tags across pages in response order.
 - `HUB-008` P0: anonymous access is attempted before credentials.
 - `HUB-009` P0: environment username/PAT retries the exact refused page.
@@ -452,6 +456,10 @@ Implement in `tests/unit/ghcr.bats`:
 - `GHCR-012` P0: anonymous and skip string choices dispatch correctly.
 - `GHCR-013` P0: skip affects only the current input.
 - `GHCR-014` P0: a stopped anonymous lookup never invokes Packages or Skopeo.
+- `GHCR-016` P0: Packages `any` returns matching tags through the first durable
+  tag.
+- `GHCR-017` P0: auto `any` lets a one-page OCI sample satisfy a confirmed
+  two-component direct tag before Packages pagination.
 
 ## ACR
 
@@ -475,7 +483,8 @@ Implement in `tests/unit/acr.bats`:
 - `ACR-011` P0: direct metadata accepts documented response shapes and exactly
   one digest.
 - `ACR-012` P0: manifest metadata must return the requested complete digest.
-- `ACR-013` P0: `any` excludes direct tag; `all` deduplicates deterministically.
+- `ACR-013` P0: `any` returns matches through one durable tag; `all`
+  deduplicates deterministically.
 - `ACR-014` P0: unavailable API falls back to lazy-auth Skopeo and changes
   backend to `skopeo`.
 - `ACR-015` P0: anonymous Skopeo attempt precedes configured credentials and
@@ -524,7 +533,8 @@ Private ECR:
   `LOOKUP_UNAVAILABLE`.
 - `ECR-008` P0: multiple current digests or image records are rejected as
   unavailable rather than guessed.
-- `ECR-009` P0: tags are deduplicated; `any` excludes the direct tag.
+- `ECR-009` P0: tags are deduplicated; `any` returns matches through one
+  durable tag.
 - `ECR-010` P0: unavailable metadata falls back to Skopeo and updates backend.
 - `ECR-011` P0: AWS login password travels over stdin and never argv.
 - `ECR-012` P0: configured registry credentials precede AWS CLI login.
@@ -606,7 +616,8 @@ Implement in `tests/unit/skopeo.bats`:
 - `SKOPEO-005` P0: inspect errors map denial, not-found, and unavailable text to
   named statuses.
 - `SKOPEO-006` P0: list-tags runs once, then candidates use the shared pool.
-- `SKOPEO-007` P0: `any` excludes direct tag; `all` requires complete workers.
+- `SKOPEO-007` P0: `any` retains matches through the first durable candidate;
+  `all` requires complete worker results.
 - `SKOPEO-008` P0: empty and mode-0600 anonymous/session authfiles are created.
 - `SKOPEO-009` P0: lazy order is session credentials, isolated anonymous,
   configured credentials, then provider short-lived auth.
@@ -648,9 +659,9 @@ JSON tests must parse stdout with jq and assert fields semantically:
   not-found, and unavailable.
 - `JSON-005` P0: scan statuses cover completed, not-found, not-requested,
   declined, and skipped.
-- `JSON-006` P0: backend is one of `acr-api`, `docker-hub-api`, `ecr-api`,
-  `github-packages-api`, `gcr-api`, `oci-registry-api`, `skopeo`, or null where
-  no scan ran.
+- `JSON-006` P0: backend is one of `acr-api`, `direct-tag-check`,
+  `docker-hub-api`, `ecr-api`, `github-packages-api`, `gcr-api`,
+  `oci-registry-api`, `skopeo`, or null where no scan ran.
 - `JSON-007` P0: backend changes to the actual fallback backend.
 - `JSON-008` P0: tags are an array with exact values and order.
 - `JSON-009` P0: GHCR provider metadata is parsed JSON; other providers use
