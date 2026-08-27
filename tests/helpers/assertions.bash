@@ -60,14 +60,34 @@ function refute_file_exists {
     [[ ! -e "$1" ]] || fail_test "expected file not to exist: $1"
 }
 
+function file_mode {
+    local path="$1"
+
+    if stat -c '%a' "$path" >/dev/null 2>&1; then
+        stat -c '%a' "$path"
+    else
+        stat -f '%Lp' "$path"
+    fi
+}
+
 function assert_file_mode {
     local path="$1"
     local expected="$2"
     local actual
 
-    actual=$(stat -f '%Lp' "$path" 2>/dev/null || stat -c '%a' "$path")
+    actual=$(file_mode "$path")
     [[ "$actual" == "$expected" ]] ||
         fail_test "expected $path mode $expected, got $actual"
+}
+
+function file_sha256 {
+    local path="$1"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$path" | awk '{print $1}'
+    else
+        shasum -a 256 "$path" | awk '{print $1}'
+    fi
 }
 
 function assert_valid_json {
