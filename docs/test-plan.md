@@ -605,9 +605,6 @@ Implement in `tests/unit/oci.bats`:
 - `OCI-023` P0: Bearer token never appears in argv or diagnostics.
 - `OCI-024` P0: request, response, and header temporary files are removed on all
   handled exits.
-- `OCI-025` P0: `CIT_OCI_SCAN_ENGINE=pool` forces the rolling pool for `all`.
-- `OCI-026` P0: forced parallel mode fails fast when curl lacks support.
-- `OCI-027` P0: invalid provisional engine values are rejected.
 
 ## Skopeo and lazy authentication
 
