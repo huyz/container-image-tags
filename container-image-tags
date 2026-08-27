@@ -80,9 +80,6 @@ command -v "${JQ:=jq}" &>/dev/null || \
     { echo "$0: ERROR: \`$_install_cmd jq\` to install $JQ." >&2; exit 1; }
 DOCKER=${DOCKER:-docker}
 
-SCRIPT=$("$REALPATH" --no-symlinks "${BASH_SOURCE[0]}")
-# shellcheck disable=SC2034
-SCRIPT_DIR=$(dirname -- "$SCRIPT")
 SOURCE_SCRIPT=$("$REALPATH" "${BASH_SOURCE[0]}")
 MODULE_DIR=$(dirname -- "$SOURCE_SCRIPT")/lib
 
@@ -164,6 +161,33 @@ function resolve_remote_tag_baseline {
     repo_digest="$repository@$remote_tag_digest"
     local_tag="$remote_reference"
     baseline_source=remote
+}
+
+# Resolve an untagged repository using the shared :latest-before-:* policy.
+# Bare names reach this helper only after the container-name probe has failed.
+function resolve_untagged_repository_baseline {
+    local input_reference="$1"
+    local repository="$2"
+    local wildcard_count=0 wildcard_image_id
+
+    if [[ "$opt_tag_resolution" == remote ]]; then
+        resolve_remote_tag_baseline "$repository" latest \
+            "Resolving '$repository:latest' through the registry and ignoring local Docker state."
+    elif inspect_local_image "$input_reference" "$repository" "$repository:latest"; then
+        notice "Resolved '$input_reference' as an image using its implicit ':latest' tag; not scanning other local tags."
+    elif wildcard_image_ids=$(image_ids_for_repository "$repository"); then
+        wildcard_reference="$repository:*"
+        wildcard_repository="$repository"
+        while IFS= read -r wildcard_image_id; do
+            [[ -n "$wildcard_image_id" ]] && ((++wildcard_count))
+        done <<<"$wildcard_image_ids"
+        notice "No local '$repository:latest' image was found; interpreting '$input_reference' as '$repository:*' and checking $wildcard_count distinct local image(s)."
+    elif [[ "$opt_tag_resolution" == auto ]]; then
+        resolve_remote_tag_baseline "$repository" latest \
+            "No local image in repository '$repository' was found; falling back to remote tag resolution for '$repository:latest'."
+    else
+        abort "Cannot resolve '$input_reference' to a local image"
+    fi
 }
 
 #### Options
@@ -465,54 +489,23 @@ for input in "$@"; do
             else
                 abort "Cannot inspect local image '$input'"
             fi
-        elif [[ "$opt_tag_resolution" == remote ]]; then
-            resolve_remote_tag_baseline "$preferred_repository" latest \
-                "Resolving '$preferred_repository:latest' through the registry and ignoring local Docker state."
-        elif inspect_local_image "$input" "$preferred_repository" "$preferred_repository:latest"; then
-            notice "Resolved '$input' using its implicit ':latest' tag; not scanning other local tags."
-        elif wildcard_image_ids=$(image_ids_for_repository "$preferred_repository"); then
-            wildcard_reference="$preferred_repository:*"
-            wildcard_repository="$preferred_repository"
-            wildcard_count=0
-            while IFS= read -r wildcard_image_id; do
-                [[ -n "$wildcard_image_id" ]] && ((++wildcard_count))
-            done <<<"$wildcard_image_ids"
-            notice "No local '$input:latest' image was found; interpreting '$input' as '$input:*' and checking $wildcard_count distinct local image(s)."
-        elif [[ "$opt_tag_resolution" == auto ]]; then
-            resolve_remote_tag_baseline "$preferred_repository" latest \
-                "No local image in repository '$preferred_repository' was found; falling back to remote tag resolution for '$preferred_repository:latest'."
         else
-            abort "Cannot find any local image in repository '$preferred_repository'"
+            resolve_untagged_repository_baseline \
+                "$input" "$preferred_repository"
         fi
 
     # Otherwise prefer a container name, then permit an image name without an
     # explicit tag.  The image lookup follows the same :latest-before-:* rule.
     else
-        if [[ "$opt_tag_resolution" == remote ]]; then
-            resolve_remote_tag_baseline "$input" latest \
-                "Resolving '$input:latest' through the registry and ignoring local Docker state."
-        elif resolved_image_id=$(
+        if [[ "$opt_tag_resolution" != remote ]] && resolved_image_id=$(
             $DOCKER container inspect "$input" --format '{{.Image}}' 2>/dev/null
         ); then
             container="$input"
             inspect_local_image "$resolved_image_id" ||
                 abort "Container '$container' refers to image '$resolved_image_id', but that image cannot be inspected"
             notice "Resolved '$input' as a local container name (image $image_id)."
-        elif inspect_local_image "$input" "$input" "$input:latest"; then
-            notice "No container named '$input' was found; resolved the image using its implicit ':latest' tag and will not scan other local tags."
-        elif wildcard_image_ids=$(image_ids_for_repository "$input"); then
-            wildcard_reference="$input:*"
-            wildcard_repository="$input"
-            wildcard_count=0
-            while IFS= read -r wildcard_image_id; do
-                [[ -n "$wildcard_image_id" ]] && ((++wildcard_count))
-            done <<<"$wildcard_image_ids"
-            notice "No container or local '$input:latest' image was found; interpreting '$input' as '$input:*' and checking $wildcard_count distinct local image(s)."
-        elif [[ "$opt_tag_resolution" == auto ]]; then
-            resolve_remote_tag_baseline "$input" latest \
-                "No local container or image repository '$input' was found; falling back to remote tag resolution for '$input:latest'."
         else
-            abort "Cannot resolve '$input' as a local container name or local image repository"
+            resolve_untagged_repository_baseline "$input" "$input"
         fi
     fi
 

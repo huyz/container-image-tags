@@ -132,6 +132,11 @@ when the OCI fast path is unavailable. Interactive scans estimated above three
 minutes print an advisory and continue. Non-interactive scans estimated above
 ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
 
+For provisional benchmarking, `CIT_OCI_SCAN_ENGINE=parallel` forces curl's
+parallel engine for an exhaustive OCI scan, while `CIT_OCI_SCAN_ENGINE=pool`
+forces the rolling worker pool. The default, `auto`, retains the normal engine
+selection; `any` scans always use the pool so they can stop scheduling early.
+
 ### JSON Output
 
 Use `--json` for automation. Standard output is a single JSON array with one

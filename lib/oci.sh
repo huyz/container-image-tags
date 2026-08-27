@@ -415,7 +415,7 @@ function oci_tags_by_digest_anonymously {
     local digest="$3"
     local display_repository="$registry/$repository"
     local tag request_headers tags lookup_status
-    local candidate_count parallel_jobs
+    local candidate_count parallel_jobs scan_engine use_parallel
     local -a candidate_tags=()
 
     oci_list_tags_anonymously "$registry" "$repository" || return $?
@@ -435,10 +435,31 @@ function oci_tags_by_digest_anonymously {
         'OCI HEAD' "$display_repository" "$candidate_count" "$parallel_jobs" \
         "$OCI_ESTIMATED_SECONDS_PER_BATCH" || return $?
 
+    scan_engine=${CIT_OCI_SCAN_ENGINE:-auto}
+    use_parallel=
+    case "$scan_engine" in
+    auto)
+        if [[ "$registry_tag_scan" == all ]] &&
+                (( candidate_count > 1 )) && oci_curl_supports_parallel; then
+            use_parallel=1
+        fi
+        ;;
+    parallel)
+        if [[ "$registry_tag_scan" == all ]] && (( candidate_count > 1 )); then
+            oci_curl_supports_parallel ||
+                abort "CIT_OCI_SCAN_ENGINE=parallel requires curl --parallel-max support"
+            use_parallel=1
+        fi
+        ;;
+    pool) ;;
+    *)
+        abort "CIT_OCI_SCAN_ENGINE must be 'auto', 'parallel', or 'pool'"
+        ;;
+    esac
+
     request_headers=$(mktemp)
     oci_write_request_headers "$request_headers" "$oci_bearer_token"
-    if [[ "$registry_tag_scan" == all ]] &&
-            (( candidate_count > 1 )) && oci_curl_supports_parallel; then
+    if [[ -n "$use_parallel" ]]; then
         if tags=$(oci_tags_by_digest_with_curl_parallel \
                 "$registry" "$repository" "$digest" candidate_tags \
                 "$parallel_jobs" "$request_headers"); then

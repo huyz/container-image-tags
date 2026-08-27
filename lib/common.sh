@@ -20,8 +20,6 @@ function verbose { [[ -z ${opt_verbose-} ]] || printf "%s\n" "$*" >&2; }
 # shellcheck disable=SC2329
 function warn { printf "%s: ⚠️ WARNING: %s\n" "$SCRIPT_NAME" "$*" >&2; }
 # shellcheck disable=SC2329
-function err { printf "%s: ❗ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; }
-# shellcheck disable=SC2329
 function abort { printf "%s: ❌ ERROR: %s\n" "$SCRIPT_NAME" "$*" >&2; exit 1; }
 
 # Print one-time events that change input meaning, credentials, backend,

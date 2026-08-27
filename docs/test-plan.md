@@ -102,7 +102,7 @@ Use these priorities:
 - **P2:** optional compatibility, stress, or live validation.
 
 Use IDs of the form `<AREA>-NNN`, for example `CLI-001`, `OCI-014`, or
-`SEC-006`. Include the ID at the start of each Bats test description. The test
+`SEC-007`. Include the ID at the start of each Bats test description. The test
 name should state the condition and expected outcome rather than an internal
 function name alone.
 
@@ -290,7 +290,7 @@ Implement these cases in `tests/unit/common.bats`:
 | COMMON-001 | P0 | Source `common.sh` | Named statuses equal 0 through 4 as documented |
 | COMMON-002 | P0 | Successful helper call | Result is on stdout and status is `LOOKUP_SUCCEEDED` |
 | COMMON-003 | P0 | Terminal helper result | Caller propagates `LOOKUP_STOPPED`; no fallback call |
-| COMMON-004 | P1 | `debug`, `verbose`, `notice`, `warn`, and `err` | Correct gating, prefix, stream, and newline |
+| COMMON-004 | P1 | `debug`, `verbose`, `notice`, and `warn` | Correct gating, prefix, stream, and newline |
 | COMMON-005 | P0 | Interactive choice `1`, `a`, and default/`n` | Prints `any`, `all`, and `none` respectively |
 | COMMON-006 | P0 | Choice requested without a terminal | Nonzero status and no string action |
 | COMMON-007 | P1 | Uppercase and long-form accepted choices | Documented equivalent action |
@@ -443,19 +443,15 @@ Implement in `tests/unit/ghcr.bats`:
 - `GHCR-005` P0: reachable API with no match returns `LOOKUP_NOT_FOUND`.
 - `GHCR-006` P0: unavailable `gh` or failed endpoints return
   `LOOKUP_UNAVAILABLE`.
-- `GHCR-007` P0: anonymous token challenge uses the advertised service/scope.
-- `GHCR-008` P0: anonymous direct lookup distinguishes success, 404, malformed
-  digest, and transport failure.
-- `GHCR-009` P0: forced `anonymous` never calls Packages API.
-- `GHCR-010` P0: forced `packages` fails fast without silently switching modes.
-- `GHCR-011` P0: `auto` follows anonymous, Packages, configured-Skopeo order.
-- `GHCR-012` P0: anonymous pagination handles relative and absolute links.
-- `GHCR-013` P0: anonymous `any` excludes direct tag and stops after one match.
-- `GHCR-014` P0: Packages result populates provider metadata and tags.
-- `GHCR-015` P1: no-tag active package metadata prints the documented note.
-- `GHCR-016` P0: refresh, anonymous, and skip string choices dispatch correctly.
-- `GHCR-017` P0: skip affects only the current input.
-- `GHCR-018` P1: interactive progress appears only in interactive sessions.
+- `GHCR-007` P0: forced `anonymous` delegates to generic OCI and never calls
+  the Packages API.
+- `GHCR-008` P0: forced `packages` never calls generic OCI.
+- `GHCR-009` P0: `auto` follows OCI, Packages, configured-Skopeo order.
+- `GHCR-010` P0: Packages result populates provider metadata and tags.
+- `GHCR-011` P1: no-tag active package metadata prints the documented note.
+- `GHCR-012` P0: anonymous and skip string choices dispatch correctly.
+- `GHCR-013` P0: skip affects only the current input.
+- `GHCR-014` P0: a stopped anonymous lookup never invokes Packages or Skopeo.
 
 ## ACR
 
@@ -594,6 +590,9 @@ Implement in `tests/unit/oci.bats`:
 - `OCI-023` P0: Bearer token never appears in argv or diagnostics.
 - `OCI-024` P0: request, response, and header temporary files are removed on all
   handled exits.
+- `OCI-025` P0: `CIT_OCI_SCAN_ENGINE=pool` forces the rolling pool for `all`.
+- `OCI-026` P0: forced parallel mode fails fast when curl lacks support.
+- `OCI-027` P0: invalid provisional engine values are rejected.
 
 ## Skopeo and lazy authentication
 
@@ -672,7 +671,6 @@ values for every credential type and fail if any appears unexpectedly.
 | SEC-003 | P0 | Azure access token | Passed via stdin to Skopeo, never argv/output |
 | SEC-004 | P0 | Google access token | Passed via stdin/authfile, never argv/output |
 | SEC-005 | P0 | AWS login password | Passed via stdin, never argv/output |
-| SEC-006 | P0 | GHCR token | Not printed in normal, verbose, or debug output |
 | SEC-007 | P0 | Lazy Skopeo authfiles | Mode 0600 and contain only isolated session data |
 | SEC-008 | P0 | Normal success and handled failures | Temporary credential/header files removed |
 | SEC-009 | P0 | SIGINT during active workers | Status 130, children terminate, authfiles removed |
@@ -682,6 +680,8 @@ values for every credential type and fail if any appears unexpectedly.
 
 Inspect both command logs and the temporary tree before teardown. A clean
 stdout assertion alone is insufficient.
+GHCR anonymous access uses the shared OCI token path and is covered by
+`SEC-002` and `OCI-023`.
 
 ## Offline end-to-end scenarios
 

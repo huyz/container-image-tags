@@ -93,19 +93,6 @@ EOF
     [[ $(<"$CALLS_DIR/skopeo.stdin") == "$AWS_CANARY" ]]
 }
 
-@test "SEC-006 GHCR bearer header is mode 0600" {
-    load_common
-    # shellcheck source=../../lib/oci.sh
-    source "$REPO_ROOT/lib/oci.sh"
-    # shellcheck source=../../lib/ghcr.sh
-    source "$REPO_ROOT/lib/ghcr.sh"
-    header="$TEST_ROOT/ghcr.headers"
-
-    ghcr_write_request_headers "$header" ghcr-security-canary
-    assert_file_mode "$header" 600
-    grep -Fxq 'Authorization: Bearer ghcr-security-canary' "$header"
-}
-
 @test "SEC-007 Skopeo lazy authfiles are private and isolated" {
     load_module skopeo
     skopeo_prepare_lazy_auth

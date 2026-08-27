@@ -291,6 +291,56 @@ EOF
     refute_file_exists "$CALLS_DIR/parallel"
 }
 
+@test "OCI-025 pool feature flag forces the rolling pool for exhaustive scans" {
+    load_oci
+    export CIT_OCI_SCAN_ENGINE=pool
+    registry_tag_scan=all; registry_direct_tag=
+    function oci_list_tags_anonymously { oci_listed_tags=$'a\nb'; oci_bearer_token=; }
+    function registry_expensive_scan_preflight { return 0; }
+    function oci_curl_supports_parallel { return 0; }
+    function oci_tags_by_digest_with_curl_parallel { : >"$CALLS_DIR/parallel"; }
+    function tags_by_digest_with_rolling_pool { : >"$CALLS_DIR/pool"; printf '%s\n' a; }
+
+    run oci_tags_by_digest_anonymously registry.example team/app "$DIGEST"
+    assert_status 0
+    assert_output_exact a
+    assert_file_exists "$CALLS_DIR/pool"
+    refute_file_exists "$CALLS_DIR/parallel"
+}
+
+@test "OCI-026 forced parallel engine fails fast when curl lacks support" {
+    load_oci
+    export CIT_OCI_SCAN_ENGINE=parallel
+    export TMPDIR="$TEST_ROOT/engine-tmp"
+    mkdir -p "$TMPDIR"
+    registry_tag_scan=all; registry_direct_tag=
+    function oci_list_tags_anonymously { oci_listed_tags=$'a\nb'; oci_bearer_token=; }
+    function registry_expensive_scan_preflight { return 0; }
+    function oci_curl_supports_parallel { return 1; }
+
+    run --separate-stderr oci_tags_by_digest_anonymously \
+        registry.example team/app "$DIGEST"
+    assert_status 1
+    assert_stderr_contains 'requires curl --parallel-max support'
+    [[ -z $(find "$TMPDIR" -mindepth 1 -print -quit) ]]
+}
+
+@test "OCI-027 invalid scan engine is rejected" {
+    load_oci
+    export CIT_OCI_SCAN_ENGINE=invalid
+    export TMPDIR="$TEST_ROOT/engine-tmp"
+    mkdir -p "$TMPDIR"
+    registry_tag_scan=all; registry_direct_tag=
+    function oci_list_tags_anonymously { oci_listed_tags=a; oci_bearer_token=; }
+    function registry_expensive_scan_preflight { return 0; }
+
+    run --separate-stderr oci_tags_by_digest_anonymously \
+        registry.example team/app "$DIGEST"
+    assert_status 1
+    assert_stderr_contains "must be 'auto', 'parallel', or 'pool'"
+    [[ -z $(find "$TMPDIR" -mindepth 1 -print -quit) ]]
+}
+
 @test "OCI-018 exhaustive OCI lookup caps curl parallelism at eight" {
     load_oci
     registry_tag_scan=all; registry_direct_tag=

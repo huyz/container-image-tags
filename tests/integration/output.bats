@@ -183,8 +183,6 @@ EOF
     assert_stderr_exact 'NOTICE: changed'
     run --separate-stderr warn caution
     assert_stderr_contains '⚠️ WARNING: caution'
-    run --separate-stderr err failed
-    assert_stderr_contains '❗ ERROR: failed'
     run --separate-stderr verbose hidden
     assert_stderr_exact ''
     opt_verbose=1
