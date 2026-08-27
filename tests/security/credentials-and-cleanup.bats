@@ -118,7 +118,7 @@ EOF
     refute_file_exists "$session"
 }
 
-@test "SEC-009 SIGINT returns 130 terminates workers and removes authfiles" {
+@test "SEC-009 Linux signal cleanup returns 130 terminates workers and removes authfiles" {
     [[ "$OSTYPE" != darwin* ]] || skip 'process-group SIGINT coverage runs in Linux CI'
     command -v setsid >/dev/null 2>&1 || skip 'setsid unavailable on this platform'
     export INTERRUPT_REPO_ROOT="$REPO_ROOT"
@@ -127,7 +127,7 @@ SCRIPT_NAME=interrupt-harness
 source "$INTERRUPT_REPO_ROOT/lib/common.sh"
 source "$INTERRUPT_REPO_ROOT/lib/runtime.sh"
 source "$INTERRUPT_REPO_ROOT/lib/skopeo.sh"
-trap 'exit 130' INT
+trap 'exit 130' INT TERM
 skopeo_prepare_lazy_auth
 printf '%s\n' "$skopeo_anonymous_authfile" >"$CALLS_DIR/anonymous.path"
 printf '%s\n' "$skopeo_session_authfile" >"$CALLS_DIR/session.path"
@@ -150,7 +150,9 @@ EOF
         sleep 0.02
     done
     [[ -s "$CALLS_DIR/workers" && -s "$CALLS_DIR/session.path" ]]
-    kill -INT -- "-$harness_pid"
+    # Linux background shells launched through setsid ignore SIGINT, so use
+    # SIGTERM to exercise prompt signal-driven cleanup in CI.
+    kill -TERM -- "-$harness_pid"
     for _ in {1..100}; do
         kill -0 "$harness_pid" 2>/dev/null || break
         sleep 0.02
@@ -196,11 +198,11 @@ EOF
 @test "SEC-011 isolated user configuration remains untouched" {
     config="$DOCKER_CONFIG/config.json"
     printf '%s\n' '{"auths":{"do-not-touch":{}}}' >"$config"
-    before=$(shasum -a 256 "$config")
+    before=$(file_sha256 "$config")
     load_module skopeo
     skopeo_prepare_lazy_auth
     skopeo_cleanup_lazy_auth
-    after=$(shasum -a 256 "$config")
+    after=$(file_sha256 "$config")
 
     [[ "$before" == "$after" ]]
 }

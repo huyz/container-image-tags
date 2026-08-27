@@ -9,7 +9,7 @@ load ../test-helper.bash
     second=$(runtime_temp_file second)
 
     [[ "${first%/*}" == "${second%/*}" ]]
-    [[ $(stat -f '%Lp' "$runtime_tmp_dir" 2>/dev/null || stat -c '%a' "$runtime_tmp_dir") == 700 ]]
+    assert_file_mode "$runtime_tmp_dir" 700
 }
 
 @test "RUNTIME-002 cleanup removes every registered runtime resource" {
