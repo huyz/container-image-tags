@@ -70,38 +70,65 @@ function docker_hub_digest_for_tag {
         rm -f "$response_tmp"
         return "$LOOKUP_NOT_FOUND"
         ;;
-    *)
+    401 | 403)
         rm -f "$response_tmp"
-        # An explicitly supplied Hub PAT takes precedence over the slower
-        # registry-credential Skopeo fallback used by the dispatcher.
-        if [[ -z "$docker_hub_token" ]] && token=$(docker_hub_token_from_environment); then
+        if [[ -z "$docker_hub_token" ]] &&
+                credential_policy_allows_auth_after "$LOOKUP_DENIED" &&
+                token=$(docker_hub_token_from_environment); then
             docker_hub_token=$token
             notice "Docker Hub anonymous tag lookup failed; retrying with the configured username and PAT."
             docker_hub_digest_for_tag "$hub_repository" "$tag"
             return $?
         fi
         debug "Docker Hub tag lookup returned HTTP $http_code for $hub_repository:$tag"
+        return "$LOOKUP_DENIED"
+        ;;
+    429)
+        rm -f "$response_tmp"
+        return "$LOOKUP_STOPPED"
+        ;;
+    *)
+        rm -f "$response_tmp"
+        debug "Docker Hub tag lookup returned HTTP $http_code for $hub_repository:$tag"
         return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
 }
 
-# Complete Docker Hub direct-lookup policy: fast Hub API first, then configured
-# registry credentials through Skopeo only when the API is unavailable.
+# Complete Docker Hub direct-lookup policy: fast Hub API first, then the shared
+# Skopeo access sequence when the API does not produce a terminal result.
 function docker_hub_resolve_tag {
     local hub_repository="$1"
     local tag="$2"
     local display_reference="$3"
 
-    if remote_tag_digest=$(docker_hub_digest_for_tag "$hub_repository" "$tag"); then
+    local lookup_status token
+
+    if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
+        if token=$(docker_hub_token_from_environment); then
+            docker_hub_token=$token
+        else
+            lookup_status=$LOOKUP_DENIED
+        fi
+    fi
+    if [[ "${opt_credential_policy:-if-faster}" != require || -n "$docker_hub_token" ]] &&
+            remote_tag_digest=$(docker_hub_digest_for_tag "$hub_repository" "$tag"); then
         remote_tag_status=$LOOKUP_SUCCEEDED
     else
-        remote_tag_status=$?
+        lookup_status=${lookup_status:-$?}
+        remote_tag_status=$lookup_status
     fi
-    if [[ "$remote_tag_status" == "$LOOKUP_UNAVAILABLE" ]] &&
-            remote_tag_digest=$(skopeo_digest_for_tag "$display_reference"); then
-        notice "Resolved Docker Hub tag with configured registry credentials"
-        remote_tag_status=$LOOKUP_SUCCEEDED
+    case "$remote_tag_status" in
+    "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return ;;
+    esac
+    if skopeo_is_available; then
+        if remote_tag_digest=$(skopeo_digest_for_tag_with_access_policy \
+                docker.io "$display_reference" '' "$remote_tag_status"); then
+            notice "Resolved Docker Hub tag with the Skopeo fallback"
+            remote_tag_status=$LOOKUP_SUCCEEDED
+        else
+            remote_tag_status=$?
+        fi
     fi
 }
 
@@ -280,6 +307,21 @@ function docker_hub_tags_by_digest {
     local -a request_args
 
     digest="${digest#sha256:}"
+    if [[ "${opt_credential_policy:-if-faster}" == require && -z "$docker_hub_token" ]]; then
+        if token=$(docker_hub_token_from_environment); then
+            docker_hub_token=$token
+        elif skopeo_has_registry_credentials docker.io; then
+            notice "Using configured registry credentials with the Skopeo fallback."
+            registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+                docker.io "$display_repository" "sha256:$digest" '' \
+                "$LOOKUP_DENIED") ||
+                abort "Authenticated Skopeo lookup failed for $display_repository"
+            registry_lookup_backend=skopeo
+            return
+        else
+            abort "Credentialed Docker Hub access requires DOCKER_HUB_USERNAME and DOCKER_HUB_PAT or configured registry credentials"
+        fi
+    fi
     next_url="https://hub.docker.com/v2/repositories/$hub_repository/tags/?page_size=100"
     response_tmp=$(runtime_temp_file docker-hub-response)
     while [[ -n "$next_url" ]]; do
@@ -305,6 +347,10 @@ function docker_hub_tags_by_digest {
             if [[ -n "$docker_hub_token" ]]; then
                 rm -f "$response_tmp"
                 abort "Authenticated Docker Hub request failed with HTTP $http_code${error_message:+: $error_message}"
+            fi
+            if [[ "${opt_credential_policy:-if-faster}" == never ]]; then
+                rm -f "$response_tmp"
+                abort "Docker Hub denied public access for $display_repository"
             fi
             if token=$(docker_hub_token_from_environment); then
                 docker_hub_token=$token
@@ -343,8 +389,9 @@ function docker_hub_tags_by_digest {
                 abort "Docker Hub authentication returned an invalid choice"
                 ;;
             esac
-            if ! registry_tags=$(skopeo_tags_by_digest \
-                    "$display_repository" "sha256:$digest"); then
+            if ! registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+                    docker.io "$display_repository" "sha256:$digest" '' \
+                    "$LOOKUP_DENIED"); then
                 rm -f "$response_tmp"
                 abort "Authenticated Skopeo lookup failed for $display_repository"
             fi

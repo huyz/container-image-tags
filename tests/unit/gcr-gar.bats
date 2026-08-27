@@ -97,15 +97,16 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "GAR-001 public success through lazy auth does not invoke gcloud" {
+@test "GAR-001 public success uses OCI and does not invoke gcloud" {
     load_module gar
-    function skopeo_digest_for_tag_with_lazy_auth { printf '%s\n' sha256:public; }
+    function oci_digest_for_tag_anonymously { printf '%s\n' sha256:public; }
     write_stub gcloud <<'EOF'
 : >"$CALLS_DIR/gcloud"
 exit 99
 EOF
 
-    run gar_digest_for_tag us-docker.pkg.dev us-docker.pkg.dev/project/repo/app:stable
+    run gar_digest_for_tag us-docker.pkg.dev project/repo/app stable \
+        us-docker.pkg.dev/project/repo/app:stable
     assert_status 0
     assert_output_exact sha256:public
     refute_file_exists "$CALLS_DIR/gcloud"
@@ -199,10 +200,34 @@ EOF
 
 @test "GAR-006 non-denial statuses propagate without debug fallback" {
     load_module gar
-    function skopeo_digest_for_tag_with_lazy_auth { return "$LOOKUP_STOPPED"; }
+    function oci_digest_for_tag_anonymously { return "$LOOKUP_STOPPED"; }
     function gar_debug_denial_detail { : >"$CALLS_DIR/debug"; }
 
-    run gar_digest_for_tag gcr.io gcr.io/project/app:stable
+    run gar_digest_for_tag gcr.io project/app stable gcr.io/project/app:stable
     assert_status "$LOOKUP_STOPPED"
     refute_file_exists "$CALLS_DIR/debug"
+}
+
+@test "GAR-007 denial reuses a Google token with the OCI fast path" {
+    load_module gar
+    function oci_digest_for_tag_anonymously {
+        printf '%s\n' public >>"$CALLS_DIR/order"
+        return "$LOOKUP_DENIED"
+    }
+    function gar_access_token {
+        printf '%s\n' token >>"$CALLS_DIR/order"
+        printf '%s\n' short-lived-token
+    }
+    function oci_digest_for_tag_with_bearer_token {
+        printf 'authenticated:%s\n' "$4" >>"$CALLS_DIR/order"
+        printf '%s\n' sha256:authenticated
+    }
+    function skopeo_is_available { : >"$CALLS_DIR/unexpected-skopeo"; return 0; }
+
+    run gar_digest_for_tag us-docker.pkg.dev project/repo/app stable \
+        us-docker.pkg.dev/project/repo/app:stable
+    assert_status 0
+    assert_output_exact sha256:authenticated
+    [[ $(<"$CALLS_DIR/order") == $'public\ntoken\nauthenticated:short-lived-token' ]]
+    refute_file_exists "$CALLS_DIR/unexpected-skopeo"
 }

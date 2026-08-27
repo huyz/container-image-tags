@@ -92,6 +92,9 @@ source "$MODULE_DIR/common.sh"
 # shellcheck source=lib/runtime.sh
 source "$MODULE_DIR/runtime.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/access-policy.sh
+source "$MODULE_DIR/access-policy.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/skopeo.sh
 source "$MODULE_DIR/skopeo.sh"
 # shellcheck source-path=SCRIPTDIR
@@ -135,7 +138,7 @@ opt_verbose=
 opt_debug=
 opt_json=
 opt_allow_expensive_scan=
-opt_ghcr_method=auto
+opt_credential_policy=if-faster
 opt_tag_scan=
 opt_tag_resolution=auto
 docker_hub_token=
@@ -144,7 +147,7 @@ json_results=
 function usage {
     cat <<END
 Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-expensive-scan]
-                    [--tag-resolution mode] [--tag-scan mode] [--ghcr-method method]
+                    [--tag-resolution mode] [--tag-scan mode] [--credential-policy policy]
                     <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
@@ -163,12 +166,13 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
                 a directly confirmed durable baseline tag satisfies this without a scan
             all: scan for every matching remote tag
             The default is 'ask' with an interactive terminal; 'any' otherwise or with --json
-        --ghcr-method: select the GHCR tag-check and exhaustive-scan method
-                    (default: $opt_ghcr_method):
-            auto: check public tags anonymously; use the Packages API for exhaustive scans and
-                private-tag fallback
-            packages: use only the GitHub Packages API; never prompt or fall back
-            anonymous: use only the anonymous OCI scan; never prompt
+        --credential-policy: control when registry credentials may be used
+                    (default: $opt_credential_policy):
+            never: use only public/anonymous access
+            if-required: start public; use credentials only after an explicit access denial
+            if-faster: use credentials proactively only for a materially faster or more complete
+                native path; otherwise authenticate only after an explicit access denial
+            require: use only credentialed access; do not make public/anonymous requests
 
 For a local baseline, its known tag is checked first. Interactive runs then ask
 whether to find any heuristically durable matching tag or all matching tags;
@@ -183,10 +187,10 @@ prompting; these credentials keep the fast Hub API ahead of any Skopeo fallback.
 If deeper pagination requires sign-in, an interactive run offers that fast retry
 and any available slower Skopeo fallback together.
 Private registry access reuses credentials configured by docker login, skopeo
-login, or podman login. ACR, GAR/GCR, and ECR are first tried anonymously, then
-reuse configured credentials or request a short-lived token from az, gcloud, or
-aws only after the registry denies anonymous access. Credential values are
-never passed on this command line.
+login, or podman login. Conditional modes request short-lived tokens from az,
+gcloud, or aws only after access denial, except when 'if-faster' selects a
+materially faster credentialed provider API. Credential values are never passed
+on this command line.
 
 Arguments are interpreted as follows:
     - repository@sha256:... → use this registry digest exactly
@@ -200,7 +204,7 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvd --long help,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,ghcr-method: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvd --long help,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
@@ -212,15 +216,15 @@ while true; do
         --allow-expensive-scan) opt_allow_expensive_scan=opt_allow_expensive_scan; shift ;;
         --tag-resolution) opt_tag_resolution="$2"; shift 2 ;;
         --tag-scan) opt_tag_scan="$2"; shift 2 ;;
-        --ghcr-method) opt_ghcr_method="$2"; shift 2 ;;
+        --credential-policy) opt_credential_policy="$2"; shift 2 ;;
         --) shift; break ;;
         *) abort "🐛 INTERNAL: unrecognized option '$1'" ;;
     esac
 done
 
-case "$opt_ghcr_method" in
-auto | packages | anonymous) ;;
-*) abort "--ghcr-method must be 'auto', 'packages', or 'anonymous'" ;;
+case "$opt_credential_policy" in
+never | if-required | if-faster | require) ;;
+*) abort "--credential-policy must be 'never', 'if-required', 'if-faster', or 'require'" ;;
 esac
 
 case "$opt_tag_scan" in

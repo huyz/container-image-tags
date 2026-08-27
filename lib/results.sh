@@ -107,7 +107,7 @@ function render_scan_human {
     not_requested | declined | skipped) return ;;
     esac
     if [[ "${result_ref[scan_mode]}" == any ]]; then
-        echo "Remote tags through first durable match (any):"
+        echo "Remote tags (partial scan):"
     else
         echo "Other remote tags:"
     fi

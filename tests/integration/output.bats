@@ -140,7 +140,7 @@ EOF
     run_cli --tag-resolution=remote --tag-scan=any \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Remote tags through first durable match (any):'
+    assert_output_contains 'Remote tags (partial scan):'
 
     run_cli --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
@@ -164,7 +164,7 @@ EOF
 
     run_cli --tag-resolution=local --tag-scan=any registry.example/app:1.2.3
     assert_status 0
-    assert_output_contains 'Remote tags through first durable match (any):'
+    assert_output_contains 'Remote tags (partial scan):'
     assert_output_contains '1.2.3'
     ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 }
@@ -175,7 +175,7 @@ EOF
 printf '%s\n' '[{"name":"sha256:1111111111111111111111111111111111111111111111111111111111111111","created_at":"2026-01-01","updated_at":"2026-01-02","metadata":{"container":{"tags":["stable"]}}}]'
 EOF
 
-    run_cli --ghcr-method=packages --tag-resolution=remote --tag-scan=all \
+    run_cli --credential-policy=require --tag-resolution=remote --tag-scan=all \
         "ghcr.io/owner/app@sha256:$DIGEST_A"
     assert_status 0
     assert_output_contains 'GHCR package info:'
@@ -210,9 +210,9 @@ EOF
     source "$REPO_ROOT/lib/oci.sh"
     # shellcheck source=../../lib/ghcr.sh
     source "$REPO_ROOT/lib/ghcr.sh"
-    opt_ghcr_method=auto; registry_tag_scan=all; registry_direct_tag=
+    registry_tag_scan=all; registry_direct_tag=
     function ghcr_package_version_by_digest { return "$LOOKUP_UNAVAILABLE"; }
-    function skopeo_has_registry_credentials { return 1; }
+    function skopeo_is_available { return 1; }
     function choose_ghcr_fallback { printf '%s\n' skip; }
     skip_input=; registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
     ghcr_tags_by_digest owner/first "sha256:$DIGEST_A" ghcr.io/owner/first
@@ -340,7 +340,7 @@ EOF
 printf '%s\n' '[{"name":"sha256:1111111111111111111111111111111111111111111111111111111111111111","created_at":"2026-01-01","metadata":{"container":{"tags":["stable"]}}}]'
 EOF
 
-    run_cli --json --ghcr-method=packages --tag-resolution=remote --tag-scan=all \
+    run_cli --json --credential-policy=require --tag-resolution=remote --tag-scan=all \
         "ghcr.io/owner/app@sha256:$DIGEST_A"
     assert_status 0
     assert_json '.[0].tag_scan.provider_metadata.name == "sha256:'"$DIGEST_A"'"'

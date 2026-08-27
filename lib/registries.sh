@@ -57,6 +57,10 @@ function registry_classify {
         fi
         ;;
     esac
+
+    case "$registry_kind" in
+    docker-hub | ghcr | other) skopeo_prepare_lazy_auth ;;
+    esac
 }
 
 # Resolve the current digest for a known tag. Results are returned through the
@@ -84,7 +88,8 @@ function registry_resolve_tag_digest {
             "$tag" "$remote_tag_reference"
         ;;
     gar)
-        gar_resolve_tag "$registry_host" "$remote_tag_reference"
+        gar_resolve_tag "$registry_host" "${registry_repository#*/}" \
+            "$tag" "$remote_tag_reference"
         ;;
     gcr)
         gcr_resolve_tag "$registry_host" "$registry_repository" \

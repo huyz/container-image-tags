@@ -328,7 +328,7 @@ Implement these end-to-end cases in `tests/integration/cli-options.bats`:
 | CLI-003 | P0 | Unknown option or getopt failure | Usage and status 2 |
 | CLI-004 | P0 | Invalid `--tag-resolution` | Explicit accepted-value error |
 | CLI-005 | P0 | Invalid `--tag-scan` | Explicit accepted-value error |
-| CLI-006 | P0 | Invalid `--ghcr-method` | Explicit accepted-value error |
+| CLI-006 | P0 | Valid and invalid `--credential-policy` values | Four documented values accepted; ambiguous legacy names rejected |
 | CLI-007 | P1 | Short and long verbose/debug flags | Correct diagnostics enabled independently |
 | CLI-008 | P0 | JSON with no explicit scan mode | Defaults to `any` even interactively |
 | CLI-009 | P0 | Non-interactive human mode without explicit scan mode | Defaults to `any` |
@@ -452,10 +452,11 @@ Implement in `tests/unit/ghcr.bats`:
 - `GHCR-005` P0: reachable API with no match returns `LOOKUP_NOT_FOUND`.
 - `GHCR-006` P0: unavailable `gh` or failed endpoints return
   `LOOKUP_UNAVAILABLE`.
-- `GHCR-007` P0: forced `anonymous` delegates to generic OCI and never calls
-  the Packages API.
-- `GHCR-008` P0: forced `packages` never calls generic OCI.
-- `GHCR-009` P0: `auto` follows OCI, Packages, configured-Skopeo order.
+- `GHCR-007` P0: `never` delegates to public OCI and never calls the Packages
+  API.
+- `GHCR-008` P0: `require` skips public OCI and starts with Packages.
+- `GHCR-009` P0: unavailable public OCI changes backend without authorizing
+  credentials.
 - `GHCR-010` P0: Packages result populates provider metadata and tags.
 - `GHCR-011` P1: no-tag active package metadata prints the documented note.
 - `GHCR-012` P0: anonymous and skip string choices dispatch correctly.
@@ -463,8 +464,8 @@ Implement in `tests/unit/ghcr.bats`:
 - `GHCR-014` P0: a stopped anonymous lookup never invokes Packages or Skopeo.
 - `GHCR-016` P0: Packages `any` returns matching tags through the first durable
   tag.
-- `GHCR-017` P0: auto `any` lets a one-page OCI sample satisfy a confirmed
-  two-component direct tag before Packages pagination.
+- `GHCR-017` P0: `if-faster` `any` lets a one-page OCI sample satisfy a
+  confirmed two-component direct tag before Packages pagination.
 
 ## ACR
 
@@ -519,6 +520,8 @@ Implement in `tests/unit/gcr-gar.bats`:
 - `GAR-005` P1: debug denial detail is requested only in debug mode.
 - `GAR-006` P0: terminal and not-found outcomes do not trigger inappropriate
   fallback.
+- `GAR-007` P0: access denial obtains one Google token and reuses it with the
+  OCI fast path before Skopeo.
 
 ## Private ECR and ECR Public
 
@@ -563,9 +566,10 @@ ECR Public:
 - `ECRP-009` P0: not found and throttled outcomes remain authoritative/terminal.
 - `ECRP-010` P0: successful reverse lookup reports `ecr-api`; unavailable lookup
   reports `skopeo` after fallback.
-- `ECRP-011` P0: direct public-tag resolution retains the registry/Skopeo path;
-  it does not unexpectedly call the metadata API.
+- `ECRP-011` P0: direct public-tag resolution uses OCI before Skopeo and does
+  not unexpectedly call the metadata API.
 - `ECRP-012` P0: public login password uses stdin and fixed `us-east-1`.
+- `ECRP-013` P0: unavailable signed metadata uses public OCI before Skopeo.
 
 ## Generic OCI registry path
 
@@ -606,7 +610,7 @@ Implement in `tests/unit/oci.bats`:
 - `OCI-024` P0: request, response, and header temporary files are removed on all
   handled exits.
 
-## Skopeo and lazy authentication
+## Skopeo and credential policy
 
 Implement in `tests/unit/skopeo.bats`:
 
@@ -632,6 +636,11 @@ Implement in `tests/unit/skopeo.bats`:
 - `SKOPEO-015` P0: `--allow-expensive-scan` permits only that guard and emits a
   notice.
 - `SKOPEO-016` P1: below-threshold scans do not emit an advisory.
+- `SKOPEO-017` P0: `never` uses only the isolated public Skopeo context.
+- `SKOPEO-018` P0: `require` skips public Skopeo and uses configured
+  credentials.
+- `SKOPEO-019` P0: `LOOKUP_UNAVAILABLE` may change backend but never authorizes
+  credentials under `if-required`.
 
 ## Human and JSON output
 
@@ -708,7 +717,7 @@ all external tools stubbed:
 5. Public ACR metadata success with backend `acr-api`.
 6. Private ACR denial, Azure metadata attempt, then successful result.
 7. Private ECR signed metadata success with backend `ecr-api`.
-8. ECR Public alias resolution success and unavailable-to-Skopeo fallback.
+8. ECR Public alias resolution success, then public OCI and Skopeo fallbacks.
 9. Generic OCI success with Skopeo set to an executable that fails if called.
 10. Generic OCI incompatibility followed by one Skopeo fallback.
 11. Terminal 429 proving no provider or Skopeo fallback runs.
@@ -814,7 +823,7 @@ Exit criteria:
 
 Implement provider files in this order to maximize helper reuse:
 
-1. Skopeo and lazy authentication.
+1. Skopeo and credential policy.
 2. Generic OCI.
 3. Docker Hub.
 4. GHCR.

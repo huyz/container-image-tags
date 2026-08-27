@@ -116,20 +116,28 @@ function acr_metadata {
     local reference="$4"
     local response lookup_status
 
-    if response=$(acr_metadata_anonymously \
-            "$registry" "$repository" "$reference_kind" "$reference"); then
-        printf '%s\n' "$response"
-        return "$LOOKUP_SUCCEEDED"
+    if credential_policy_allows_public; then
+        if response=$(acr_metadata_anonymously \
+                "$registry" "$repository" "$reference_kind" "$reference"); then
+            printf '%s\n' "$response"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
     else
-        lookup_status=$?
+        lookup_status=$LOOKUP_DENIED
     fi
     case "$lookup_status" in
     "$LOOKUP_NOT_FOUND" | "$LOOKUP_UNAVAILABLE" | "$LOOKUP_STOPPED")
         return "$lookup_status"
         ;;
     esac
-    acr_metadata_with_azure_cli \
-        "$registry" "$repository" "$reference_kind" "$reference"
+    if credential_policy_allows_auth_after "$lookup_status"; then
+        acr_metadata_with_azure_cli \
+            "$registry" "$repository" "$reference_kind" "$reference"
+    else
+        return "$lookup_status"
+    fi
 }
 
 function acr_authenticate {
@@ -188,7 +196,8 @@ function acr_digest_for_tag {
     notice "ACR metadata lookup is unavailable for $registry/$repository:$tag; falling back to Skopeo"
 
     skopeo_is_available || return "$LOOKUP_UNAVAILABLE"
-    skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" acr_authenticate
+    skopeo_digest_for_tag_with_access_policy \
+        "$registry" "$image_reference" acr_authenticate "$lookup_status"
 }
 
 function acr_resolve_tag {
@@ -228,9 +237,10 @@ function acr_tags_by_digest_with_skopeo {
     local registry="$1"
     local repository="$2"
     local digest="$3"
+    local prior_status="${4-}"
 
-    skopeo_tags_by_digest_with_lazy_auth \
-        "$registry" "$repository" "$digest" acr_authenticate
+    skopeo_tags_by_digest_with_access_policy \
+        "$registry" "$repository" "$digest" acr_authenticate "$prior_status"
 }
 
 function acr_find_tags {
@@ -254,7 +264,7 @@ function acr_find_tags {
         registry_lookup_backend=skopeo
         skopeo_is_available || abort "Install skopeo to query registry '$registry'"
         registry_tags=$(acr_tags_by_digest_with_skopeo \
-            "$registry" "$display_repository" "$digest") ||
+            "$registry" "$display_repository" "$digest" "$lookup_status") ||
             abort "ACR lookup failed for $display_repository"
         ;;
     esac

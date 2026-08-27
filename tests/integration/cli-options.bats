@@ -135,12 +135,17 @@ function run_cli_with_tty_input {
     assert_stderr_contains "--tag-scan must be 'ask', 'never', 'any', or 'all'"
 }
 
-@test "CLI-006 invalid GHCR method reports accepted values" {
+@test "CLI-006 credential policy accepts four modes and rejects ambiguous legacy names" {
     install_noop_required_tools
 
-    run_cli --tag-resolution=remote --ghcr-method=invalid example
+    for policy in never if-required if-faster require; do
+        run_cli --help --credential-policy="$policy"
+        assert_status 0
+    done
+
+    run_cli --tag-resolution=remote --credential-policy=auto example
     assert_status 1
-    assert_stderr_contains "--ghcr-method must be 'auto', 'packages', or 'anonymous'"
+    assert_stderr_contains "--credential-policy must be 'never', 'if-required', 'if-faster', or 'require'"
 }
 
 @test "CLI-007 short and long verbose and debug flags enable independent diagnostics" {
@@ -194,7 +199,7 @@ EOF
     run_cli --tag-resolution=remote \
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
-    assert_output_contains 'Remote tags through first durable match (any):'
+    assert_output_contains 'Remote tags (partial scan):'
 }
 
 @test "CLI-010 terminal stdin and stderr default human mode to ask" {

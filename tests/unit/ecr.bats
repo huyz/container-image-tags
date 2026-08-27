@@ -289,16 +289,17 @@ EOF
     assert_stderr_contains 'ECR Public API rate limit reached'
 }
 
-@test "ECRP-011 direct public tags retain the registry fallback path" {
+@test "ECRP-011 direct public tags use the OCI fast path before Skopeo" {
     load_ecr
     function ecr_digest_for_tag_api { : >"$CALLS_DIR/unexpected-api"; }
-    function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_lazy_auth { printf '%s\n' sha256:registry; }
+    function oci_digest_for_tag_anonymously { printf '%s\n' sha256:registry; }
+    function skopeo_digest_for_tag_with_access_policy { : >"$CALLS_DIR/unexpected-skopeo"; }
 
     run ecr_digest_for_tag public.ecr.aws alias/app stable public.ecr.aws/alias/app:stable
     assert_status 0
     assert_output_exact sha256:registry
     refute_file_exists "$CALLS_DIR/unexpected-api"
+    refute_file_exists "$CALLS_DIR/unexpected-skopeo"
 }
 
 @test "ECRP-012 public login password uses stdin and fixed us-east-1" {

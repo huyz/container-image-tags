@@ -1,10 +1,25 @@
 # shellcheck shell=bash
 
-# Google registry Skopeo support, used directly for Artifact Registry and as
-# the authenticated fallback for Container Registry. Public access stays
-# anonymous; after the registry denies anonymous access, retry with a
-# short-lived Google Cloud CLI token. A denial can also mean that the repository
-# is unavailable, so do not claim that authentication is required.
+# Google registry access. GAR uses the shared OCI HEAD engine for public and
+# short-lived-token access; Skopeo remains the compatibility fallback. GCR also
+# reuses the token helper for its digest-keyed metadata endpoint.
+
+function gar_access_token {
+    local registry="$1"
+    local token
+
+    command -v "${GCLOUD:=gcloud}" &>/dev/null || {
+        warn "Install Google Cloud CLI and run 'gcloud auth login' to access private Google registry '$registry'"
+        return "$LOOKUP_UNAVAILABLE"
+    }
+    notice "Requesting a short-lived token from Google Cloud CLI for '$registry'."
+    token=$("$GCLOUD" auth print-access-token --quiet) || {
+        warn "Google Cloud CLI authentication failed for registry '$registry'"
+        return "$LOOKUP_UNAVAILABLE"
+    }
+    [[ -n "$token" ]] || return "$LOOKUP_UNAVAILABLE"
+    printf '%s\n' "$token"
+}
 
 function gar_authenticate {
     local registry="$1"
@@ -54,17 +69,47 @@ function gar_debug_denial_detail {
 
 function gar_digest_for_tag {
     local registry="$1"
-    local image_reference="$2"
-    local digest lookup_status
+    local repository="$2"
+    local tag="$3"
+    local image_reference="$4"
+    local digest lookup_status token
 
-    if digest=$(skopeo_digest_for_tag_with_lazy_auth \
-            "$registry" "$image_reference" gar_authenticate); then
+    if credential_policy_allows_public; then
+        if digest=$(oci_digest_for_tag_anonymously "$registry" "$repository" "$tag"); then
+            printf '%s\n' "$digest"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
+        esac
+    else
+        lookup_status=$LOOKUP_DENIED
+    fi
+
+    if credential_policy_allows_auth_after "$lookup_status"; then
+        if token=$(gar_access_token "$registry") &&
+                digest=$(oci_digest_for_tag_with_bearer_token \
+                    "$registry" "$repository" "$tag" "$token"); then
+            printf '%s\n' "$digest"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
+        esac
+    fi
+
+    skopeo_is_available || return "$lookup_status"
+    if digest=$(skopeo_digest_for_tag_with_access_policy \
+            "$registry" "$image_reference" gar_authenticate "$lookup_status"); then
         printf '%s\n' "$digest"
         return "$LOOKUP_SUCCEEDED"
     else
         lookup_status=$?
     fi
-
     if (( lookup_status == LOOKUP_DENIED )); then
         gar_debug_denial_detail "$image_reference" || true
     fi
@@ -73,11 +118,13 @@ function gar_digest_for_tag {
 
 function gar_resolve_tag {
     local registry="$1"
-    local display_reference="$2"
+    local repository="$2"
+    local tag="$3"
+    local display_reference="$4"
     local lookup_output
 
-    skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
-    if lookup_output=$(gar_digest_for_tag "$registry" "$display_reference"); then
+    if lookup_output=$(gar_digest_for_tag \
+            "$registry" "$repository" "$tag" "$display_reference"); then
         remote_tag_digest="$lookup_output"
         remote_tag_status=$LOOKUP_SUCCEEDED
     else
@@ -91,8 +138,40 @@ function gar_tags_by_digest {
     local repository="$2"
     local digest="$3"
 
-    skopeo_tags_by_digest_with_lazy_auth \
-        "$registry" "$repository" "$digest" gar_authenticate
+    local oci_repository="${repository#*/}"
+    local tags lookup_status token
+
+    if credential_policy_allows_public; then
+        if tags=$(oci_tags_by_digest_anonymously \
+                "$registry" "$oci_repository" "$digest"); then
+            printf '%s' "$tags"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
+        esac
+    else
+        lookup_status=$LOOKUP_DENIED
+    fi
+
+    if credential_policy_allows_auth_after "$lookup_status"; then
+        if token=$(gar_access_token "$registry") &&
+                tags=$(oci_tags_by_digest_with_bearer_token \
+                    "$registry" "$oci_repository" "$digest" "$token"); then
+            printf '%s' "$tags"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
+        esac
+    fi
+
+    skopeo_tags_by_digest_with_access_policy \
+        "$registry" "$repository" "$digest" gar_authenticate "$lookup_status"
 }
 
 function gar_find_tags {
@@ -100,8 +179,43 @@ function gar_find_tags {
     local display_repository="$2"
     local digest="$3"
 
+    local oci_repository="${display_repository#*/}"
+    local lookup_status token
+
+    if credential_policy_allows_public; then
+        registry_lookup_backend=oci-registry-api
+        if registry_tags=$(oci_tags_by_digest_anonymously \
+                "$registry" "$oci_repository" "$digest"); then
+            return
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; return ;;
+        "$LOOKUP_STOPPED") abort "Google registry OCI lookup stopped for $display_repository" ;;
+        esac
+    else
+        lookup_status=$LOOKUP_DENIED
+    fi
+
+    if credential_policy_allows_auth_after "$lookup_status"; then
+        if token=$(gar_access_token "$registry") &&
+                registry_tags=$(oci_tags_by_digest_with_bearer_token \
+                    "$registry" "$oci_repository" "$digest" "$token"); then
+            registry_lookup_backend=oci-registry-api
+            return
+        else
+            lookup_status=$?
+        fi
+        case "$lookup_status" in
+        "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; return ;;
+        "$LOOKUP_STOPPED") abort "Google registry OCI lookup stopped for $display_repository" ;;
+        esac
+    fi
+
     registry_lookup_backend=skopeo
     skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-    registry_tags=$(gar_tags_by_digest "$registry" "$display_repository" "$digest") ||
-        abort "Google registry lookup failed for $display_repository"
+    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+        "$registry" "$display_repository" "$digest" gar_authenticate \
+        "$lookup_status") || abort "Google registry lookup failed for $display_repository"
 }

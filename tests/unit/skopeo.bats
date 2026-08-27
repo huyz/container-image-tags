@@ -67,7 +67,7 @@ EOF
 
 @test "SKOPEO-005 inspect errors map denial not-found and unavailable" {
     load_skopeo
-    for pair in 'unauthorized 3' 'manifest_unknown 1' 'network_failure 2'; do
+    for pair in 'unauthorized 3' 'manifest_unknown 1' 'too_many_requests 4' 'network_failure 2'; do
         set -- $pair
         export SKOPEO_ERROR="${1//_/ }"
         write_stub skopeo <<'EOF'
@@ -161,6 +161,65 @@ EOF
 
     run skopeo_digest_for_tag_with_lazy_auth registry.example registry.example/app:absent provider_auth
     assert_status "$LOOKUP_NOT_FOUND"
+    refute_file_exists "$CALLS_DIR/configured"
+    refute_file_exists "$CALLS_DIR/provider"
+}
+
+@test "SKOPEO-017 never uses only isolated public Skopeo" {
+    load_skopeo
+    opt_credential_policy=never
+    skopeo_anonymous_authfile=anonymous
+    skopeo_session_authfile=session
+    function skopeo_session_has_registry { : >"$CALLS_DIR/session"; return 0; }
+    function skopeo_digest_for_tag_with_status {
+        printf '%s\n' "${2:-configured}" >"$CALLS_DIR/access"
+        return "$LOOKUP_DENIED"
+    }
+    function skopeo_has_registry_credentials { : >"$CALLS_DIR/configured"; return 0; }
+    function provider_auth { : >"$CALLS_DIR/provider"; }
+
+    run --separate-stderr skopeo_digest_for_tag_with_access_policy \
+        registry.example registry.example/app:stable provider_auth
+    assert_status "$LOOKUP_DENIED"
+    [[ $(<"$CALLS_DIR/access") == anonymous ]]
+    refute_file_exists "$CALLS_DIR/session"
+    refute_file_exists "$CALLS_DIR/configured"
+    refute_file_exists "$CALLS_DIR/provider"
+}
+
+@test "SKOPEO-018 require skips public Skopeo and uses configured credentials" {
+    load_skopeo
+    opt_credential_policy=require
+    skopeo_anonymous_authfile=anonymous
+    skopeo_session_authfile=session
+    function skopeo_session_has_registry { return 1; }
+    function skopeo_has_registry_credentials { return 0; }
+    function skopeo_digest_for_tag_with_status {
+        printf '%s\n' "${2:-configured}" >"$CALLS_DIR/access"
+        printf '%s\n' sha256:configured
+    }
+
+    run --separate-stderr skopeo_digest_for_tag_with_access_policy \
+        registry.example registry.example/app:stable provider_auth
+    assert_status 0
+    assert_output_exact sha256:configured
+    [[ $(<"$CALLS_DIR/access") == configured ]]
+}
+
+@test "SKOPEO-019 unavailable public backend does not authorize credentials" {
+    load_skopeo
+    opt_credential_policy=if-required
+    skopeo_anonymous_authfile=anonymous
+    skopeo_session_authfile=session
+    function skopeo_session_has_registry { return 1; }
+    function skopeo_digest_for_tag_with_status { return "$LOOKUP_UNAVAILABLE"; }
+    function skopeo_has_registry_credentials { : >"$CALLS_DIR/configured"; return 0; }
+    function provider_auth { : >"$CALLS_DIR/provider"; }
+
+    run skopeo_digest_for_tag_with_access_policy \
+        registry.example registry.example/app:stable provider_auth \
+        "$LOOKUP_UNAVAILABLE"
+    assert_status "$LOOKUP_UNAVAILABLE"
     refute_file_exists "$CALLS_DIR/configured"
     refute_file_exists "$CALLS_DIR/provider"
 }

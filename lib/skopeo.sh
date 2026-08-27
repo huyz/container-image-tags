@@ -4,6 +4,14 @@
 # skopeo/podman login and, as a fallback, Docker's config.json (including
 # credential helpers). Keep all Skopeo calls behind these helpers so private
 # registry behavior is consistent for direct checks and reverse lookups.
+#
+# `skopeo_with_access_policy` gives Skopeo one unambiguous meaning in the
+# fallback matrix. Subject to --credential-policy, it reuses an in-session
+# token, tries isolated public access, tries configured registry credentials
+# after an explicit denial, and finally obtains a provider token after another
+# denial. LOOKUP_UNAVAILABLE may select Skopeo as another backend, but never
+# authorizes credentials by itself. The public and session authfiles are
+# temporary, separate, and mode 0600.
 
 skopeo_anonymous_authfile=
 skopeo_session_authfile=
@@ -159,6 +167,12 @@ function skopeo_tags_by_digest {
         skopeo_status=$?
         if grep -Eqi 'unauthorized|authentication required|access denied|denied:|status( code)?:? (401|403)' "$error_tmp"; then
             skopeo_status=$LOOKUP_DENIED
+        elif grep -Eqi 'manifest unknown|name unknown|not found|status( code)?:? 404' "$error_tmp"; then
+            skopeo_status=$LOOKUP_NOT_FOUND
+        elif grep -Eqi 'too many requests|rate.?limit|status( code)?:? 429' "$error_tmp"; then
+            skopeo_status=$LOOKUP_STOPPED
+        else
+            skopeo_status=$LOOKUP_UNAVAILABLE
         fi
         debug "Skopeo tag listing failed for $repository: $(command_error_single_line "$error_tmp")"
         rm -f "$error_tmp"
@@ -226,6 +240,8 @@ function skopeo_digest_for_tag_with_status {
         skopeo_status=$LOOKUP_DENIED
     elif grep -Eqi 'manifest unknown|name unknown|not found|status( code)?:? 404' "$error_tmp"; then
         skopeo_status=$LOOKUP_NOT_FOUND
+    elif grep -Eqi 'too many requests|rate.?limit|status( code)?:? 429' "$error_tmp"; then
+        skopeo_status=$LOOKUP_STOPPED
     else
         skopeo_status=$LOOKUP_UNAVAILABLE
     fi
@@ -242,32 +258,46 @@ function skopeo_session_has_registry {
         "$registry" >/dev/null 2>&1
 }
 
-# Try an isolated anonymous request, configured registry credentials, and then
-# a registry-specific short-lived-login function, in that order.
-function skopeo_digest_for_tag_with_lazy_auth {
-    local registry="$1"
-    local image_reference="$2"
+# Run one Skopeo operation through explicit credential classes. `prior_status`
+# describes a public native attempt already made by the caller. A denial may
+# advance to credentials; an unavailable native backend may try anonymous
+# Skopeo compatibility, but cannot itself authorize credentials.
+function skopeo_with_access_policy {
+    local operation="$1"
+    local registry="$2"
     local authenticate_function="$3"
-    local manifest_digest lookup_status
+    local prior_status="$4"
+    shift 4
+    local output lookup_status="$prior_status"
+    local -a operation_args=("$@")
 
-    if skopeo_session_has_registry "$registry"; then
-        skopeo_digest_for_tag_with_status "$image_reference" "$skopeo_session_authfile"
+    if credential_policy_allows_credentials &&
+            skopeo_session_has_registry "$registry"; then
+        "$operation" "${operation_args[@]}" "$skopeo_session_authfile"
         return $?
     fi
 
-    if manifest_digest=$(skopeo_digest_for_tag_with_status \
-            "$image_reference" "$skopeo_anonymous_authfile"); then
-        printf '%s\n' "$manifest_digest"
-        return "$LOOKUP_SUCCEEDED"
+    if credential_policy_allows_public; then
+        if [[ "$lookup_status" != "$LOOKUP_DENIED" ]]; then
+            if output=$("$operation" \
+                    "${operation_args[@]}" "$skopeo_anonymous_authfile"); then
+                printf '%s' "$output"
+                return "$LOOKUP_SUCCEEDED"
+            else
+                lookup_status=$?
+            fi
+        fi
+        credential_policy_allows_auth_after "$lookup_status" ||
+            return "$lookup_status"
     else
-        lookup_status=$?
+        lookup_status=$LOOKUP_DENIED
     fi
-    (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
 
+    credential_policy_allows_credentials || return "$lookup_status"
     if skopeo_has_registry_credentials "$registry"; then
         notice "Using configured registry credentials for '$registry'."
-        if manifest_digest=$(skopeo_digest_for_tag_with_status "$image_reference"); then
-            printf '%s\n' "$manifest_digest"
+        if output=$("$operation" "${operation_args[@]}"); then
+            printf '%s' "$output"
             return "$LOOKUP_SUCCEEDED"
         else
             lookup_status=$?
@@ -275,42 +305,37 @@ function skopeo_digest_for_tag_with_lazy_auth {
         (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
     fi
 
+    [[ -n "$authenticate_function" ]] || return "$lookup_status"
     "$authenticate_function" "$registry" || return "$LOOKUP_UNAVAILABLE"
-    skopeo_digest_for_tag_with_status "$image_reference" "$skopeo_session_authfile"
+    "$operation" "${operation_args[@]}" "$skopeo_session_authfile"
 }
 
-function skopeo_tags_by_digest_with_lazy_auth {
+function skopeo_digest_for_tag_with_access_policy {
+    local registry="$1"
+    local image_reference="$2"
+    local authenticate_function="${3-}"
+    local prior_status="${4-}"
+
+    skopeo_with_access_policy skopeo_digest_for_tag_with_status \
+        "$registry" "$authenticate_function" "$prior_status" "$image_reference"
+}
+
+function skopeo_tags_by_digest_with_access_policy {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local authenticate_function="$4"
-    local tags lookup_status
+    local authenticate_function="${4-}"
+    local prior_status="${5-}"
 
-    if skopeo_session_has_registry "$registry"; then
-        skopeo_tags_by_digest "$repository" "$digest" "$skopeo_session_authfile"
-        return $?
-    fi
+    skopeo_with_access_policy skopeo_tags_by_digest \
+        "$registry" "$authenticate_function" "$prior_status" "$repository" "$digest"
+}
 
-    if tags=$(skopeo_tags_by_digest \
-            "$repository" "$digest" "$skopeo_anonymous_authfile"); then
-        printf '%s' "$tags"
-        return "$LOOKUP_SUCCEEDED"
-    else
-        lookup_status=$?
-    fi
-    (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
+# Compatibility names for provider adapters while they migrate independently.
+function skopeo_digest_for_tag_with_lazy_auth {
+    skopeo_digest_for_tag_with_access_policy "$@"
+}
 
-    if skopeo_has_registry_credentials "$registry"; then
-        notice "Using configured registry credentials for '$registry'."
-        if tags=$(skopeo_tags_by_digest "$repository" "$digest"); then
-            printf '%s' "$tags"
-            return "$LOOKUP_SUCCEEDED"
-        else
-            lookup_status=$?
-        fi
-        (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
-    fi
-
-    "$authenticate_function" "$registry" || return "$LOOKUP_UNAVAILABLE"
-    skopeo_tags_by_digest "$repository" "$digest" "$skopeo_session_authfile"
+function skopeo_tags_by_digest_with_lazy_auth {
+    skopeo_tags_by_digest_with_access_policy "$@"
 }

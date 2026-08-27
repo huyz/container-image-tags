@@ -31,7 +31,7 @@ function setup_test_environment {
     opt_debug=
     opt_json=
     opt_allow_expensive_scan=
-    opt_ghcr_method=auto
+    opt_credential_policy=if-faster
     opt_tag_scan=
     opt_tag_resolution=auto
 }
@@ -80,12 +80,26 @@ function load_common {
     CIT_RUNTIME_NO_EXIT_TRAP=1
     source "$REPO_ROOT/lib/runtime.sh"
     unset CIT_RUNTIME_NO_EXIT_TRAP
+    # shellcheck source=../../lib/access-policy.sh
+    source "$REPO_ROOT/lib/access-policy.sh"
 }
 
 function load_module {
     local module="$1"
 
     load_common
+    case "$module" in
+    acr | docker-hub)
+        source "$REPO_ROOT/lib/skopeo.sh"
+        ;;
+    gar | ecr)
+        source "$REPO_ROOT/lib/skopeo.sh"
+        source "$REPO_ROOT/lib/oci.sh"
+        ;;
+    gcr)
+        source "$REPO_ROOT/lib/oci.sh"
+        ;;
+    esac
     # shellcheck disable=SC1090
     source "$REPO_ROOT/lib/$module.sh"
 }

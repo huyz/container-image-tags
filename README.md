@@ -1,34 +1,35 @@
 # container-image-tags
 
 `container-image-tags` resolves a local image or remote tag to a baseline
-registry digest. For local images, it checks whether the known tag still points
-to that digest. It can then find other current registry tags that point to the
-baseline digest.
+registry digest. For local images, it checks the registry whether the known tag
+still points to that digest. It can then find other current registry tags
+that point to the baseline digest.
 
-Arguments can be Docker container names or IDs, local image names or IDs, or
-fully qualified `repository@sha256:...` digests. The script explains how it
-interprets ambiguous input before starting registry work.
+Arguments can be local Docker container names or IDs, local image names or IDs,
+or fully qualified `repository@sha256:...` digests.
 
 ## Registry support
 
-- Docker Hub: direct tag checks and digest-to-tag lookup through the tags API
-- GitHub Container Registry: anonymous OCI lookup and an optional faster
+- **Docker Hub**: direct tag checks and digest-to-tag lookup through the tags API
+- **GitHub Container Registry**: anonymous OCI lookup and an optional faster
   GitHub Packages API path
-- Google Container Registry: direct digest/tag metadata lookup, with configured
+- **Google Container Registry**: direct digest/tag metadata lookup, with configured
   credentials or an on-demand Google Cloud CLI token as fallbacks
-- Google Artifact Registry: anonymous access, configured credentials, or an
-  on-demand Google Cloud CLI token
-  - WARNING: less tested than the other registries; please report any issues
-- Azure Container Registry: digest/tag metadata API, with configured
+- **Google Artifact Registry**: public and token-authenticated OCI fast paths,
+  with Skopeo as a compatibility fallback
+- **Azure Container Registry**: digest/tag metadata API, with configured
   credentials or an on-demand Azure CLI token as fallbacks
-  - WARNING: less tested than the other registries; please report any issues
-- Amazon ECR: signed digest/tag metadata API, with configured registry
+- **Amazon ECR**: signed digest/tag metadata API, with configured registry
   credentials or an on-demand AWS CLI token as fallbacks
-- ECR Public: opportunistic digest metadata API when a configured AWS profile
-  can resolve the registry alias cheaply, otherwise anonymous registry access
-  - WARNING: less tested than the other registries; please report any issues
-- Other OCI registries (e.g. Codeberg, LinuxServer.io): anonymous parallel manifest `HEAD` lookup,
-  with Skopeo as the private/incompatible-registry fallback
+- **Amazon ECR Public**: opportunistic digest metadata API when a configured
+    AWS profile can resolve the registry alias cheaply, otherwise anonymous
+    registry access
+- Other **OCI-compatible registries** (e.g. **Codeberg**, **LinuxServer.io**):
+    anonymous parallel manifest `HEAD` lookup, with Skopeo as the private/
+    incompatible-registry fallback
+
+NOTE: only the Docker Hub and GitHub Container Registry paths are fully tested.
+Please report any issues.
 
 ## Requirements
 
@@ -45,8 +46,8 @@ Recommended:
   only want to query a specific image digest or use `--tag-resolution remote`.
 
 Optional:
-- Skopeo is required only for private registries and registries incompatible
-  with the anonymous OCI fast path.
+- Skopeo is required only when a native provider path cannot answer a private
+  lookup, or when a registry is incompatible with the OCI fast path.
 - Depending on the registry, `gh` (GitHub Container Registry),
   `gcloud` (Google Container Registry), `az` (Azure Container Registry), or
   `aws` (Elastic Container Registry) can provide optional authenticated fast
@@ -121,10 +122,12 @@ remote` to ignore Docker's local state. Remote registry queries used to compare
 or find tags are still available with a local baseline.
 
 Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
-`--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
+`--credential-policy never|if-required|if-faster|require` to control when user
+credentials may be used; the default is `if-faster`. Run
 `container-image-tags --help` for the full option and input-resolution guide.
 See [Architecture](docs/architecture.md) for the processing pipeline, result
-record, provider boundaries, fallback ownership, and runtime-resource model.
+record, provider boundaries, current registry-access matrix, credential-policy
+design direction, fallback ownership, and runtime-resource model.
 
 `any` means any matching tag heuristically assumed durable, not merely any
 arbitrary alias. The heuristic infers the most precise recurring semantic

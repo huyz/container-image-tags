@@ -6,11 +6,12 @@ DIGEST=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 
 function load_ghcr {
     load_common
+    # shellcheck source=../../lib/skopeo.sh
+    source "$REPO_ROOT/lib/skopeo.sh"
     # shellcheck source=../../lib/oci.sh
     source "$REPO_ROOT/lib/oci.sh"
     # shellcheck source=../../lib/ghcr.sh
     source "$REPO_ROOT/lib/ghcr.sh"
-    opt_ghcr_method=auto
 }
 
 @test "GHCR-001 package names are URL encoded in the Packages API endpoint" {
@@ -81,9 +82,9 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "GHCR-007 forced anonymous direct lookup delegates to generic OCI" {
+@test "GHCR-007 never policy delegates direct lookup to public OCI" {
     load_ghcr
-    opt_ghcr_method=anonymous
+    opt_credential_policy=never
     function oci_digest_for_tag_anonymously {
         printf '%s\0' "$@" >"$CALLS_DIR/oci"
         printf '%s\n' "$DIGEST"
@@ -97,9 +98,9 @@ EOF
     refute_file_exists "$CALLS_DIR/packages"
 }
 
-@test "GHCR-008 forced packages mode does not call generic OCI" {
+@test "GHCR-008 require policy skips public OCI and uses Packages" {
     load_ghcr
-    opt_ghcr_method=packages
+    opt_credential_policy=require
     function oci_digest_for_tag_anonymously { : >"$CALLS_DIR/oci"; return 0; }
     function ghcr_package_version_by_tag {
         printf '{"name":"%s"}\n' "$DIGEST"
@@ -111,16 +112,17 @@ EOF
     refute_file_exists "$CALLS_DIR/oci"
 }
 
-@test "GHCR-009 auto direct lookup follows OCI then Packages then Skopeo" {
+@test "GHCR-009 unavailable public OCI changes backend without authorizing credentials" {
     load_ghcr
     function oci_digest_for_tag_anonymously { printf '%s\n' oci >>"$CALLS_DIR/order"; return "$LOOKUP_UNAVAILABLE"; }
     function ghcr_package_version_by_tag { printf '%s\n' packages >>"$CALLS_DIR/order"; return "$LOOKUP_UNAVAILABLE"; }
-    function skopeo_digest_for_tag { printf '%s\n' skopeo >>"$CALLS_DIR/order"; printf '%s\n' "$DIGEST"; }
+    function skopeo_is_available { return 0; }
+    function skopeo_digest_for_tag_with_access_policy { printf '%s\n' skopeo >>"$CALLS_DIR/order"; printf '%s\n' "$DIGEST"; }
 
     run --separate-stderr ghcr_digest_for_tag owner/app stable
     assert_status 0
     assert_output_exact "$DIGEST"
-    [[ $(<"$CALLS_DIR/order") == $'oci\npackages\nskopeo' ]]
+    [[ $(<"$CALLS_DIR/order") == $'oci\nskopeo' ]]
 }
 
 @test "GHCR-014 stopped anonymous lookup never invokes a fallback" {
@@ -162,7 +164,7 @@ EOF
     [[ "$registry_tags" == $'latest\n1.796\n1.796.0' ]]
 }
 
-@test "GHCR-017 auto any uses an OCI tag sample before Packages pagination" {
+@test "GHCR-017 if-faster any uses an OCI tag sample before Packages pagination" {
     load_ghcr
     registry_tag_scan=any; registry_direct_tag=17.6; registry_direct_tag_confirmed=1
     registry_tags=; registry_lookup_backend=; registry_lookup_result=completed
@@ -207,6 +209,8 @@ EOF
     assert_call_args "$CALLS_DIR/oci" ghcr.io owner/app "$DIGEST"
 
     function choose_ghcr_fallback { printf '%s\n' skip; }
+    function oci_tags_by_digest_anonymously { return "$LOOKUP_UNAVAILABLE"; }
+    function skopeo_is_available { return 1; }
     skip_input=
     registry_tags=; registry_metadata=; registry_lookup_backend=
     ghcr_tags_by_digest owner/app "$DIGEST" ghcr.io/owner/app

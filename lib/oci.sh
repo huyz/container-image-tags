@@ -130,21 +130,23 @@ function oci_request_tag_page {
 # complete list, LOOKUP_NOT_FOUND for an unavailable repository,
 # LOOKUP_UNAVAILABLE for an unsupported/failed fast path, LOOKUP_DENIED for
 # access denial, and LOOKUP_STOPPED for rate limiting.
-function oci_list_tags_anonymously {
+function oci_list_tags {
     local registry="$1"
     local repository="$2"
     local page_mode="${3-full}"
+    local initial_token="${4-}"
+    local allow_anonymous_challenge="${5-}"
     local request_headers response_headers response_body
     local next_url next_link page_tags auth_header http_code token_status durable_precision
     local lookup_status=$LOOKUP_SUCCEEDED
 
-    oci_bearer_token=
+    oci_bearer_token="$initial_token"
     oci_listed_tags=
     oci_direct_tag_durable=
     request_headers=$(runtime_temp_file oci-request-headers)
     response_headers=$(runtime_temp_file oci-response-headers)
     response_body=$(runtime_temp_file oci-response-body)
-    oci_write_request_headers "$request_headers"
+    oci_write_request_headers "$request_headers" "$oci_bearer_token"
     next_url="https://$registry/v2/$repository/tags/list?n=100"
 
     while [[ -n "$next_url" ]]; do
@@ -155,7 +157,8 @@ function oci_list_tags_anonymously {
             break
         fi
 
-        if [[ "$http_code" == 401 && -z "$oci_bearer_token" ]]; then
+        if [[ "$http_code" == 401 && -n "$allow_anonymous_challenge" &&
+                -z "$oci_bearer_token" ]]; then
             auth_header=$(oci_header_value "$response_headers" WWW-Authenticate)
             if oci_bearer_token=$(oci_token_from_bearer_challenge \
                     "$auth_header" "$repository"); then
@@ -216,6 +219,14 @@ function oci_list_tags_anonymously {
 
     rm -f "$request_headers" "$response_headers" "$response_body"
     return "$lookup_status"
+}
+
+function oci_list_tags_anonymously {
+    oci_list_tags "$1" "$2" "${3-full}" '' 1
+}
+
+function oci_list_tags_with_bearer_token {
+    oci_list_tags "$1" "$2" "${4-full}" "$3" ''
 }
 
 function oci_digest_for_tag_with_headers {
@@ -365,16 +376,19 @@ function oci_tags_by_digest_with_curl_parallel {
 }
 
 # Resolve one public tag with HEAD without enumerating the repository.
-function oci_digest_for_tag_anonymously {
+function oci_digest_for_tag {
     local registry="$1"
     local repository="$2"
     local tag="$3"
+    local initial_token="${4-}"
+    local allow_anonymous_challenge="${5-}"
     local request_headers response_headers tag_encoded http_code auth_header token
     local lookup_status=$LOOKUP_SUCCEEDED
 
     request_headers=$(runtime_temp_file oci-request-headers)
     response_headers=$(runtime_temp_file oci-response-headers)
-    oci_write_request_headers "$request_headers"
+    token="$initial_token"
+    oci_write_request_headers "$request_headers" "$token"
     tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
     while true; do
         : >"$response_headers"
@@ -384,7 +398,8 @@ function oci_digest_for_tag_anonymously {
             lookup_status=$LOOKUP_UNAVAILABLE
             break
         fi
-        if [[ "$http_code" == 401 && -z "${token-}" ]]; then
+        if [[ "$http_code" == 401 && -n "$allow_anonymous_challenge" &&
+                -z "$token" ]]; then
             auth_header=$(oci_header_value "$response_headers" WWW-Authenticate)
             if token=$(oci_token_from_bearer_challenge "$auth_header" "$repository"); then
                 oci_write_request_headers "$request_headers" "$token"
@@ -418,6 +433,14 @@ function oci_digest_for_tag_anonymously {
     return "$lookup_status"
 }
 
+function oci_digest_for_tag_anonymously {
+    oci_digest_for_tag "$1" "$2" "$3" '' 1
+}
+
+function oci_digest_for_tag_with_bearer_token {
+    oci_digest_for_tag "$1" "$2" "$3" "$4" ''
+}
+
 # Complete generic-registry direct policy: anonymous OCI first, then Skopeo
 # only for unavailable/denied fast paths. Not-found and stopped are terminal.
 function oci_resolve_tag {
@@ -427,23 +450,28 @@ function oci_resolve_tag {
     local display_reference="$4"
     local lookup_status
 
-    if remote_tag_digest=$(oci_digest_for_tag_anonymously \
-            "$registry" "$repository" "$tag"); then
-        remote_tag_status=$LOOKUP_SUCCEEDED
-        return
+    if credential_policy_allows_public; then
+        if remote_tag_digest=$(oci_digest_for_tag_anonymously \
+                "$registry" "$repository" "$tag"); then
+            remote_tag_status=$LOOKUP_SUCCEEDED
+            return
+        else
+            lookup_status=$?
+        fi
     else
-        lookup_status=$?
+        lookup_status=$LOOKUP_DENIED
     fi
     case "$lookup_status" in
     "$LOOKUP_NOT_FOUND") remote_tag_status=$LOOKUP_NOT_FOUND ;;
     "$LOOKUP_STOPPED") abort "OCI registry lookup stopped for '$display_reference'" ;;
     *)
         skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
-        if remote_tag_digest=$(skopeo_digest_for_tag "$display_reference"); then
+        if remote_tag_digest=$(skopeo_digest_for_tag_with_access_policy \
+                "$registry" "$display_reference" '' "$lookup_status"); then
             notice "Resolved registry tag with the Skopeo fallback"
             remote_tag_status=$LOOKUP_SUCCEEDED
         else
-            remote_tag_status=$LOOKUP_UNAVAILABLE
+            remote_tag_status=$?
         fi
         ;;
     esac
@@ -452,16 +480,23 @@ function oci_resolve_tag {
 # Print tags whose complete manifest digest matches digest. Individual HEAD
 # failures make an exhaustive result fail so the dispatcher can retry through
 # Skopeo rather than silently returning an incomplete tag set.
-function oci_tags_by_digest_anonymously {
+function oci_tags_by_digest {
     local registry="$1"
     local repository="$2"
     local digest="$3"
+    local supplied_token="${4-}"
+    local allow_anonymous_challenge="${5-}"
     local display_repository="$registry/$repository"
     local tag request_headers tags lookup_status durable_precision
     local candidate_count parallel_jobs use_parallel
     local -a candidate_tags=()
 
-    oci_list_tags_anonymously "$registry" "$repository" || return $?
+    if [[ -n "$allow_anonymous_challenge" ]]; then
+        oci_list_tags_anonymously "$registry" "$repository" || return $?
+    else
+        oci_list_tags_with_bearer_token \
+            "$registry" "$repository" "$supplied_token" || return $?
+    fi
     durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
     registry_durable_semver_precision="$durable_precision"
     if [[ -n "$oci_direct_tag_durable" ]]; then
@@ -520,6 +555,14 @@ function oci_tags_by_digest_anonymously {
     printf '%s' "$tags"
 }
 
+function oci_tags_by_digest_anonymously {
+    oci_tags_by_digest "$1" "$2" "$3" '' 1
+}
+
+function oci_tags_by_digest_with_bearer_token {
+    oci_tags_by_digest "$1" "$2" "$3" "$4" ''
+}
+
 function oci_find_tags {
     local registry="$1"
     local repository="$2"
@@ -527,18 +570,23 @@ function oci_find_tags {
     local display_repository="$4"
     local lookup_status
 
-    registry_lookup_backend=oci-registry-api
-    if registry_tags=$(oci_tags_by_digest_anonymously \
-            "$registry" "$repository" "$digest"); then
-        return
+    if credential_policy_allows_public; then
+        registry_lookup_backend=oci-registry-api
+        if registry_tags=$(oci_tags_by_digest_anonymously \
+                "$registry" "$repository" "$digest"); then
+            return
+        else
+            lookup_status=$?
+        fi
     else
-        lookup_status=$?
+        lookup_status=$LOOKUP_DENIED
     fi
     (( lookup_status == LOOKUP_STOPPED )) &&
         abort "OCI registry lookup stopped for $display_repository"
-    notice "Anonymous OCI HEAD lookup is unavailable for $display_repository; falling back to Skopeo"
+    notice "OCI HEAD lookup did not complete for $display_repository; falling back to Skopeo"
     registry_lookup_backend=skopeo
     skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-    registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest") ||
+    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+        "$registry" "$display_repository" "$digest" '' "$lookup_status") ||
         abort "Skopeo lookup failed for $display_repository"
 }

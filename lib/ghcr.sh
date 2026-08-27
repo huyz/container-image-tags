@@ -91,15 +91,15 @@ function ghcr_package_version_by_tag {
     ghcr_package_version "$1" tag "$2"
 }
 
-# Honor the requested GHCR method while preferring the inexpensive public
-# manifest check in auto mode. The Packages API fallback also supports private
-# packages when gh has read:packages access.
+# Prefer the inexpensive public manifest check for direct lookups. The Packages
+# API supports private packages after an explicit denial, while Skopeo remains
+# the compatibility fallback selected by the registry-wide credential policy.
 function ghcr_digest_for_tag {
     local ghcr_repository="$1"
     local tag="$2"
-    local manifest_digest package_version lookup_status
+    local manifest_digest package_version lookup_status auth_trigger_status
 
-    if [[ "$opt_ghcr_method" != packages ]]; then
+    if credential_policy_allows_public; then
         if manifest_digest=$(oci_digest_for_tag_anonymously \
                 ghcr.io "$ghcr_repository" "$tag"); then
             printf '%s\n' "$manifest_digest"
@@ -108,27 +108,36 @@ function ghcr_digest_for_tag {
             lookup_status=$?
         fi
         if [[ "$lookup_status" == "$LOOKUP_NOT_FOUND" ||
-                "$lookup_status" == "$LOOKUP_STOPPED" ||
-                "$opt_ghcr_method" == anonymous ]]; then
+                "$lookup_status" == "$LOOKUP_STOPPED" ]]; then
             return "$lookup_status"
+        fi
+    else
+        lookup_status=$LOOKUP_DENIED
+    fi
+
+    auth_trigger_status=$lookup_status
+    if [[ "${opt_credential_policy:-if-faster}" == require ]] ||
+            credential_policy_allows_auth_after "$lookup_status"; then
+        if package_version=$(ghcr_package_version_by_tag "$ghcr_repository" "$tag"); then
+            manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
+            [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
+            printf '%s\n' "$manifest_digest"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
         fi
     fi
 
-    if package_version=$(ghcr_package_version_by_tag "$ghcr_repository" "$tag"); then
-        manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
-        [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
-        printf '%s\n' "$manifest_digest"
-        return "$LOOKUP_SUCCEEDED"
-    else
-        lookup_status=$?
-    fi
-
-    if [[ "$lookup_status" == "$LOOKUP_UNAVAILABLE" &&
-            "$opt_ghcr_method" == auto ]] &&
-            manifest_digest=$(skopeo_digest_for_tag "ghcr.io/$ghcr_repository:$tag"); then
-        notice "Resolved private GHCR tag with configured registry credentials"
-        printf '%s\n' "$manifest_digest"
-        return "$LOOKUP_SUCCEEDED"
+    if skopeo_is_available; then
+        if manifest_digest=$(skopeo_digest_for_tag_with_access_policy \
+                ghcr.io "ghcr.io/$ghcr_repository:$tag" '' \
+                "$auth_trigger_status"); then
+            notice "Resolved GHCR tag with the Skopeo fallback"
+            printf '%s\n' "$manifest_digest"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            lookup_status=$?
+        fi
     fi
     return "$lookup_status"
 }
@@ -179,17 +188,17 @@ function choose_ghcr_fallback {
     esac
 }
 
-# Populate the shared registry result fields using the selected GHCR method.
+# Populate the shared registry result fields using the credential policy.
 function ghcr_tags_by_digest {
     local ghcr_repository="$1"
     local digest="$2"
     local display_repository="$3"
     local can_refresh ghcr_choice package_lookup_status package_tags
 
-    debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository method=$opt_ghcr_method scan=$registry_tag_scan"
+    debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository credential_policy=${opt_credential_policy:-if-faster} scan=$registry_tag_scan"
 
     if [[ "$registry_tag_scan" == any &&
-            "$opt_ghcr_method" != packages &&
+            credential_policy_allows_public &&
             -n "${registry_direct_tag_confirmed-}" &&
             -n "$registry_direct_tag" ]] &&
             oci_list_tags_anonymously ghcr.io "$ghcr_repository" sample &&
@@ -199,13 +208,39 @@ function ghcr_tags_by_digest {
         return
     fi
 
-    if [[ "$opt_ghcr_method" == anonymous ]]; then
+    if [[ "${opt_credential_policy:-if-faster}" == never ]]; then
         if ! registry_tags=$(oci_tags_by_digest_anonymously \
                 ghcr.io "$ghcr_repository" "$digest"); then
             abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
         fi
         registry_lookup_backend=oci-registry-api
         return
+    fi
+
+    if [[ "${opt_credential_policy:-if-faster}" == if-required ]]; then
+        if registry_tags=$(oci_tags_by_digest_anonymously \
+                ghcr.io "$ghcr_repository" "$digest"); then
+            registry_lookup_backend=oci-registry-api
+            return
+        else
+            package_lookup_status=$?
+        fi
+        case "$package_lookup_status" in
+        "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; registry_lookup_backend=oci-registry-api; return ;;
+        "$LOOKUP_STOPPED") abort "GHCR OCI lookup stopped for $display_repository" ;;
+        "$LOOKUP_UNAVAILABLE")
+            registry_lookup_backend=skopeo
+            if registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+                    ghcr.io "$display_repository" "$digest" '' \
+                    "$package_lookup_status"); then
+                return
+            else
+                package_lookup_status=$?
+            fi
+            (( package_lookup_status == LOOKUP_DENIED )) ||
+                abort "Public GHCR lookup failed for $display_repository"
+            ;;
+        esac
     fi
 
     while true; do
@@ -227,19 +262,42 @@ function ghcr_tags_by_digest {
             ;;
         esac
 
-        if [[ "$opt_ghcr_method" == auto ]]; then
-            if skopeo_has_registry_credentials ghcr.io; then
-                notice "Using configured registry credentials for private GHCR lookup."
-                if ! registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest"); then
-                    abort "Authenticated Skopeo lookup failed for $display_repository"
+        if [[ "${opt_credential_policy:-if-faster}" == if-required ]]; then
+            if skopeo_is_available &&
+                    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+                        ghcr.io "$display_repository" "$digest" '' \
+                        "$LOOKUP_DENIED"); then
+                registry_lookup_backend=skopeo
+                break
+            fi
+        else
+            if credential_policy_allows_public; then
+                if registry_tags=$(oci_tags_by_digest_anonymously \
+                        ghcr.io "$ghcr_repository" "$digest"); then
+                    registry_lookup_backend=oci-registry-api
+                    break
+                else
+                    package_lookup_status=$?
                 fi
+                case "$package_lookup_status" in
+                "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; registry_lookup_backend=oci-registry-api; break ;;
+                "$LOOKUP_STOPPED") abort "GHCR OCI lookup stopped for $display_repository" ;;
+                esac
+            else
+                package_lookup_status=$LOOKUP_DENIED
+            fi
+
+            if skopeo_is_available &&
+                    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
+                        ghcr.io "$display_repository" "$digest" '' \
+                        "$package_lookup_status"); then
                 registry_lookup_backend=skopeo
                 break
             fi
         fi
 
-        if [[ "$opt_ghcr_method" == packages ]]; then
-            abort "GitHub Packages API lookup failed; authenticate gh with read:packages scope"
+        if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
+            abort "Credentialed GHCR lookup failed; configure gh or registry credentials"
         fi
 
         if command -v "${GH:=gh}" &>/dev/null; then
