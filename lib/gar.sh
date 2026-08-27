@@ -35,7 +35,7 @@ function gar_debug_denial_detail {
     command -v "$DOCKER" &>/dev/null || return 1
 
     debug "Requesting a Docker manifest diagnostic for $image_reference after the authenticated Skopeo request was denied"
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file gar-debug-error)
     if "$DOCKER" manifest inspect "$image_reference" >/dev/null 2>"$error_tmp"; then
         rm -f "$error_tmp"
         debug "Docker manifest inspection succeeded for $image_reference but provided no denial detail"
@@ -71,6 +71,21 @@ function gar_digest_for_tag {
     return "$lookup_status"
 }
 
+function gar_resolve_tag {
+    local registry="$1"
+    local display_reference="$2"
+    local lookup_output
+
+    skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
+    if lookup_output=$(gar_digest_for_tag "$registry" "$display_reference"); then
+        remote_tag_digest="$lookup_output"
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+        remote_tag_error="$lookup_output"
+    fi
+}
+
 function gar_tags_by_digest {
     local registry="$1"
     local repository="$2"
@@ -78,4 +93,15 @@ function gar_tags_by_digest {
 
     skopeo_tags_by_digest_with_lazy_auth \
         "$registry" "$repository" "$digest" gar_authenticate
+}
+
+function gar_find_tags {
+    local registry="$1"
+    local display_repository="$2"
+    local digest="$3"
+
+    registry_lookup_backend=skopeo
+    skopeo_is_available || abort "Install skopeo to query registry '$registry'"
+    registry_tags=$(gar_tags_by_digest "$registry" "$display_repository" "$digest") ||
+        abort "Google registry lookup failed for $display_repository"
 }

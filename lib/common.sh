@@ -187,6 +187,27 @@ function matching_tags_through_first_durable {
     return 1
 }
 
+# Apply the public scan-mode contract to one complete provider tag set. In
+# "any" mode, a confirmed baseline tag is the first result (including a local
+# tag), floating matches are retained in provider order, and the first durable
+# match terminates the result. "all" returns the supplied matches unchanged.
+function select_matching_tags_for_scan {
+    local matching_tags="$1"
+    local observed_tags="${2-$matching_tags}"
+    local seed_tag=
+
+    if [[ "$registry_tag_scan" != any ]]; then
+        printf '%s' "$matching_tags"
+        return
+    fi
+    if [[ -n "${registry_direct_tag_confirmed-}" &&
+            -n "${registry_direct_tag-}" ]]; then
+        seed_tag="$registry_direct_tag"
+    fi
+    matching_tags_through_first_durable \
+        "$matching_tags" "$observed_tags" "$seed_tag"
+}
+
 # Run one digest lookup per candidate tag while keeping a bounded number of
 # workers in flight. Bash 4.4 has wait -n but cannot report which PID finished,
 # so workers publish completion markers. Results are emitted in candidate order
@@ -220,7 +241,7 @@ function tags_by_digest_with_rolling_pool {
     if is_interactive_session; then
         printf '%s... %s (0 checked)' "$progress_label" "${spinner[0]}" >&2
     fi
-    worker_tmp=$(mktemp -d)
+    worker_tmp=$(runtime_temp_dir workers)
     next_tag_index=0
     active_jobs=0
     while (( next_tag_index < ${#pool_candidate_tags[@]} || active_jobs > 0 )); do

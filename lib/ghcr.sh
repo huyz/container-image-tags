@@ -33,8 +33,8 @@ function ghcr_package_version {
         debug "GitHub Packages API command is unavailable: $GH"
         return "$LOOKUP_UNAVAILABLE"
     fi
-    response_tmp=$(mktemp)
-    error_tmp=$(mktemp)
+    response_tmp=$(runtime_temp_file ghcr-response)
+    error_tmp=$(runtime_temp_file ghcr-error)
 
     # A GHCR namespace can belong to either an organization or a user. Try
     # both owner-specific Packages API endpoints.
@@ -45,11 +45,7 @@ function ghcr_package_version {
             queried_api=1
         else
             api_status=$?
-            gh_error=$(<"$error_tmp")
-            gh_error=${gh_error//$'\n'/; }
-            if ((${#gh_error} > 1000)); then
-                gh_error="${gh_error:0:1000}..."
-            fi
+            gh_error=$(command_error_single_line "$error_tmp" 1000)
             [[ -n "$gh_error" ]] || gh_error="no stderr output"
             debug "GitHub Packages API request failed: endpoint=$endpoint status=$api_status error=$gh_error"
             continue
@@ -137,6 +133,17 @@ function ghcr_digest_for_tag {
     return "$lookup_status"
 }
 
+function ghcr_resolve_tag {
+    local ghcr_repository="$1"
+    local tag="$2"
+
+    if remote_tag_digest=$(ghcr_digest_for_tag "$ghcr_repository" "$tag"); then
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+    fi
+}
+
 # Ask how to proceed when the Packages API cannot be used. The selected action
 # is printed as "refresh", "anonymous", or "skip".
 function choose_ghcr_fallback {
@@ -177,7 +184,7 @@ function ghcr_tags_by_digest {
     local ghcr_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local can_refresh ghcr_choice package_lookup_status package_tags seed_tag=
+    local can_refresh ghcr_choice package_lookup_status package_tags
 
     debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository method=$opt_ghcr_method scan=$registry_tag_scan"
 
@@ -204,17 +211,9 @@ function ghcr_tags_by_digest {
     while true; do
         if registry_metadata=$(ghcr_package_version_by_digest "$ghcr_repository" "$digest"); then
             registry_lookup_backend=github-packages-api
-            if [[ "$registry_tag_scan" == any ]]; then
-                package_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
-                if [[ -n "${registry_direct_tag_confirmed-}" &&
-                        -n "${registry_direct_tag-}" ]]; then
-                    seed_tag="$registry_direct_tag"
-                fi
-                registry_tags=$(matching_tags_through_first_durable \
-                    "$package_tags" "$package_tags" "$seed_tag" || true)
-            else
-                registry_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
-            fi
+            package_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
+            registry_tags=$(select_matching_tags_for_scan \
+                "$package_tags" "$package_tags" || true)
             break
         else
             package_lookup_status=$?
@@ -276,31 +275,50 @@ function ghcr_tags_by_digest {
     done
 }
 
+function ghcr_find_tags {
+    ghcr_tags_by_digest "$@"
+}
+
 function ghcr_print_metadata {
+    local result_name="${1-}"
+    local lookup_result="$registry_lookup_result"
+    local lookup_backend="$registry_lookup_backend"
+    local metadata="$registry_metadata"
+    local digest="$registry_digest"
+    local tags="$registry_tags"
     local package_current_tags
 
-    case "$registry_lookup_result:$registry_lookup_backend" in
+    if [[ -n "$result_name" ]]; then
+        local -n result_ref="$result_name"
+        lookup_result="${result_ref[scan_status]}"
+        lookup_backend="${result_ref[scan_backend]}"
+        metadata="${result_ref[provider_metadata]}"
+        digest="${result_ref[digest]}"
+        tags="${result_ref[tags]}"
+    fi
+
+    case "$lookup_result:$lookup_backend" in
     completed:github-packages-api)
         package_current_tags=$(
             $JQ -r '
                 .metadata.container.tags // []
                 | if length == 0 then "none" else join(", ") end
-            ' <<<"$registry_metadata"
+            ' <<<"$metadata"
         )
         echo
         echo "GHCR package info:"
-        echo "Created: $($JQ -r '.created_at // "unknown"' <<<"$registry_metadata")"
-        echo "Updated: $($JQ -r '.updated_at // "unknown"' <<<"$registry_metadata")"
+        echo "Created: $($JQ -r '.created_at // "unknown"' <<<"$metadata")"
+        echo "Updated: $($JQ -r '.updated_at // "unknown"' <<<"$metadata")"
         if [[ "$package_current_tags" == none ]]; then
             echo "Note: the digest is still an active GHCR package version, but no current tag points to it."
         fi
         ;;
     not_found:github-packages-api)
-        warn "No active GHCR package version was found for $registry_digest"
+        warn "No active GHCR package version was found for $digest"
         ;;
     completed:oci-registry-api)
-        if [[ -z "$registry_tags" ]]; then
-            warn "No current GHCR tag was found for $registry_digest"
+        if [[ -z "$tags" ]]; then
+            warn "No current GHCR tag was found for $digest"
         fi
         ;;
     esac

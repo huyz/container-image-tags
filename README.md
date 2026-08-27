@@ -123,6 +123,8 @@ or find tags are still available with a local baseline.
 Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
 `--ghcr-method auto|packages|anonymous` to select the GHCR strategy. Run
 `container-image-tags --help` for the full option and input-resolution guide.
+See [Architecture](docs/architecture.md) for the processing pipeline, result
+record, provider boundaries, fallback ownership, and runtime-resource model.
 
 `any` means any matching tag heuristically assumed durable, not merely any
 arbitrary alias. The heuristic infers the most precise recurring semantic

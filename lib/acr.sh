@@ -35,21 +35,14 @@ function acr_metadata_anonymously {
     *) return "$LOOKUP_UNAVAILABLE" ;;
     esac
 
-    response_tmp=$(mktemp)
-    if ! http_code=$(
-        "$CURL" -sS -H 'Accept: application/json' -o "$response_tmp" \
-            -w '%{http_code}' \
-            "https://$registry/acr/v1/$repository/$endpoint?api-version=2021-07-01"
-    ); then
+    response_tmp=$(runtime_temp_file acr-response)
+    if ! http_code=$(registry_http_request GET \
+            "https://$registry/acr/v1/$repository/$endpoint?api-version=2021-07-01" \
+            "$response_tmp" '' -H 'Accept: application/json'); then
         rm -f "$response_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
-    error_message=$(
-        "$JQ" -r '
-            (.errors[0].message // .message // .error // empty)
-            | if type == "string" then gsub("[\\r\\n]+"; " ") else tostring end
-        ' "$response_tmp" 2>/dev/null || true
-    )
+    error_message=$(registry_json_error_message "$response_tmp")
     case "$http_code" in
     200)
         cat "$response_tmp"
@@ -101,7 +94,7 @@ function acr_metadata_with_azure_cli {
     [[ -z "$registry_suffix" ]] || azure_args+=(--suffix "$registry_suffix")
 
     notice "ACR requires authentication; requesting artifact metadata through Azure CLI."
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file acr-error)
     if response=$("$AZ" "${azure_args[@]}" 2>"$error_tmp"); then
         rm -f "$error_tmp"
     else
@@ -109,7 +102,7 @@ function acr_metadata_with_azure_cli {
             rm -f "$error_tmp"
             return "$LOOKUP_NOT_FOUND"
         fi
-        debug "Azure CLI metadata lookup failed for $registry/$image_reference: $(tr '\n' ' ' <"$error_tmp")"
+        debug "Azure CLI metadata lookup failed for $registry/$image_reference: $(command_error_single_line "$error_tmp")"
         rm -f "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
@@ -198,11 +191,25 @@ function acr_digest_for_tag {
     skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" acr_authenticate
 }
 
+function acr_resolve_tag {
+    local registry="$1"
+    local repository="$2"
+    local tag="$3"
+    local display_reference="$4"
+
+    if remote_tag_digest=$(acr_digest_for_tag \
+            "$registry" "$repository" "$tag" "$display_reference"); then
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+    fi
+}
+
 function acr_tags_by_digest_api {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local metadata returned_digest matching_tags seed_tag=
+    local metadata returned_digest matching_tags
 
     metadata=$(acr_metadata "$registry" "$repository" manifest "$digest") || return $?
     returned_digest=$(
@@ -214,16 +221,7 @@ function acr_tags_by_digest_api {
     fi
     matching_tags=$("$JQ" -r \
         '[(.manifest.tags // .tags // [])[]?] | unique | .[]' <<<"$metadata")
-    if [[ "$registry_tag_scan" == any ]]; then
-        if [[ -n "${registry_direct_tag_confirmed-}" &&
-                -n "${registry_direct_tag-}" ]]; then
-            seed_tag="$registry_direct_tag"
-        fi
-        matching_tags_through_first_durable \
-            "$matching_tags" "$matching_tags" "$seed_tag" || true
-    else
-        printf '%s\n' "$matching_tags"
-    fi
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
 }
 
 function acr_tags_by_digest_with_skopeo {
@@ -233,4 +231,31 @@ function acr_tags_by_digest_with_skopeo {
 
     skopeo_tags_by_digest_with_lazy_auth \
         "$registry" "$repository" "$digest" acr_authenticate
+}
+
+function acr_find_tags {
+    local registry="$1"
+    local repository="$2"
+    local digest="$3"
+    local display_repository="$4"
+    local lookup_status
+
+    registry_lookup_backend=acr-api
+    if registry_tags=$(acr_tags_by_digest_api "$registry" "$repository" "$digest"); then
+        return
+    else
+        lookup_status=$?
+    fi
+    case "$lookup_status" in
+    "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
+    "$LOOKUP_STOPPED") abort "ACR API lookup stopped for $display_repository" ;;
+    *)
+        notice "ACR metadata lookup is unavailable for $display_repository; falling back to Skopeo"
+        registry_lookup_backend=skopeo
+        skopeo_is_available || abort "Install skopeo to query registry '$registry'"
+        registry_tags=$(acr_tags_by_digest_with_skopeo \
+            "$registry" "$display_repository" "$digest") ||
+            abort "ACR lookup failed for $display_repository"
+        ;;
+    esac
 }

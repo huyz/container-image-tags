@@ -32,12 +32,11 @@ fi
 function skopeo_prepare_lazy_auth {
     [[ -n "$skopeo_anonymous_authfile" ]] && return
 
-    skopeo_anonymous_authfile=$(mktemp)
-    skopeo_session_authfile=$(mktemp)
+    skopeo_anonymous_authfile=$(runtime_temp_file skopeo-anonymous-auth)
+    skopeo_session_authfile=$(runtime_temp_file skopeo-session-auth)
     chmod 600 "$skopeo_anonymous_authfile" "$skopeo_session_authfile"
     printf '{"auths":{}}\n' >"$skopeo_anonymous_authfile"
     printf '{"auths":{}}\n' >"$skopeo_session_authfile"
-    trap skopeo_cleanup_lazy_auth EXIT
 }
 
 function skopeo_cleanup_lazy_auth {
@@ -150,7 +149,7 @@ function skopeo_tags_by_digest {
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
     verbose "Listing registry tags with skopeo for $repository"
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file skopeo-error)
     if tags=$(
         "$SKOPEO" list-tags "${auth_args[@]}" "docker://$repository" 2>"$error_tmp" |
             $JQ -r '.Tags[]?'
@@ -161,7 +160,7 @@ function skopeo_tags_by_digest {
         if grep -Eqi 'unauthorized|authentication required|access denied|denied:|status( code)?:? (401|403)' "$error_tmp"; then
             skopeo_status=$LOOKUP_DENIED
         fi
-        debug "Skopeo tag listing failed for $repository: $(tr '\n' ' ' <"$error_tmp")"
+        debug "Skopeo tag listing failed for $repository: $(command_error_single_line "$error_tmp")"
         rm -f "$error_tmp"
         return "$skopeo_status"
     fi
@@ -210,7 +209,7 @@ function skopeo_digest_for_tag_with_status {
 
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file skopeo-error)
     if manifest_digest=$(
         "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
             "${auth_args[@]}" --raw "docker://$image_reference" 2>"$error_tmp" |
@@ -230,7 +229,7 @@ function skopeo_digest_for_tag_with_status {
     else
         skopeo_status=$LOOKUP_UNAVAILABLE
     fi
-    debug "Skopeo tag lookup failed for $image_reference: $(tr '\n' ' ' <"$error_tmp")"
+    debug "Skopeo tag lookup failed for $image_reference: $(command_error_single_line "$error_tmp")"
     rm -f "$error_tmp"
     return "$skopeo_status"
 }

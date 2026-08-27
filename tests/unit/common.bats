@@ -145,6 +145,19 @@ function lookup_and_log {
     ! tag_is_assumed_durable main
 }
 
+@test "COMMON-011 any includes confirmed local tag and incidental floating matches" {
+    load_common
+    registry_tag_scan=any
+    registry_direct_tag=latest
+    registry_direct_tag_confirmed=1
+
+    run select_matching_tags_for_scan \
+        $'1.796\n1.796.0\n1.797.0' \
+        $'latest\n1.796\n1.796.0\n1.797.0'
+    assert_status 0
+    assert_output_exact $'latest\n1.796\n1.796.0'
+}
+
 @test "POOL-001 rolling pool never exceeds its configured worker cap" {
     load_common
     registry_tag_scan=all

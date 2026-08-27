@@ -42,6 +42,9 @@ function cleanup_test_environment {
         kill "$child" 2>/dev/null || true
         wait "$child" 2>/dev/null || true
     done
+    if declare -F runtime_cleanup >/dev/null; then
+        runtime_cleanup
+    fi
     [[ ! -d ${TEST_ROOT-} ]] || rm -rf -- "$TEST_ROOT"
 }
 
@@ -73,6 +76,10 @@ function write_static_stub {
 function load_common {
     # shellcheck source=../../lib/common.sh
     source "$REPO_ROOT/lib/common.sh"
+    # shellcheck source=../../lib/runtime.sh
+    CIT_RUNTIME_NO_EXIT_TRAP=1
+    source "$REPO_ROOT/lib/runtime.sh"
+    unset CIT_RUNTIME_NO_EXIT_TRAP
 }
 
 function load_module {

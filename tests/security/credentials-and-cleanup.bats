@@ -125,6 +125,7 @@ EOF
     write_stub interrupt-harness <<'EOF'
 SCRIPT_NAME=interrupt-harness
 source "$INTERRUPT_REPO_ROOT/lib/common.sh"
+source "$INTERRUPT_REPO_ROOT/lib/runtime.sh"
 source "$INTERRUPT_REPO_ROOT/lib/skopeo.sh"
 trap 'exit 130' INT
 skopeo_prepare_lazy_auth

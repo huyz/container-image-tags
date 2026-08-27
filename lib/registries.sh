@@ -65,105 +65,48 @@ function registry_classify {
 function registry_resolve_tag_digest {
     local repository="$1"
     local tag="$2"
+    local context_name="${3-}"
     local remote_tag_reference="$repository:$tag"
-    local lookup_output lookup_status oci_repository
+    local oci_repository
 
     remote_tag_digest=
     remote_tag_error=
+    remote_tag_status=$LOOKUP_UNAVAILABLE
     case "$registry_kind" in
     docker-hub)
-        if remote_tag_digest=$(docker_hub_digest_for_tag "$registry_repository" "$tag"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
-        if [[ "$remote_tag_status" == "$LOOKUP_UNAVAILABLE" ]] &&
-                remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
-            notice "Resolved Docker Hub tag with configured registry credentials"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        fi
+        docker_hub_resolve_tag "$registry_repository" "$tag" "$remote_tag_reference"
         ;;
     ghcr)
-        if remote_tag_digest=$(ghcr_digest_for_tag "$registry_repository" "$tag"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
+        ghcr_resolve_tag "$registry_repository" "$tag"
         ;;
     acr)
-        if remote_tag_digest=$(acr_digest_for_tag \
-                "$registry_host" "${registry_repository#*/}" "$tag" \
-                "$remote_tag_reference"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
+        acr_resolve_tag "$registry_host" "${registry_repository#*/}" \
+            "$tag" "$remote_tag_reference"
         ;;
     gar)
-        skopeo_is_available ||
-            abort "Install skopeo to check registry tag '$remote_tag_reference'"
-        if lookup_output=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
-            remote_tag_digest="$lookup_output"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-            remote_tag_error="$lookup_output"
-        fi
+        gar_resolve_tag "$registry_host" "$remote_tag_reference"
         ;;
     gcr)
-        if lookup_output=$(gcr_digest_for_tag_anonymously \
-                "$registry_host" "$registry_repository" "$tag"); then
-            remote_tag_digest="$lookup_output"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-            if (( remote_tag_status == LOOKUP_UNAVAILABLE ||
-                    remote_tag_status == LOOKUP_DENIED )); then
-                skopeo_is_available ||
-                    abort "Install skopeo to check registry tag '$remote_tag_reference'"
-                if lookup_output=$(gar_digest_for_tag "$registry_host" "$remote_tag_reference"); then
-                    remote_tag_digest="$lookup_output"
-                    remote_tag_status=$LOOKUP_SUCCEEDED
-                else
-                    remote_tag_status=$?
-                    remote_tag_error="$lookup_output"
-                fi
-            fi
-        fi
+        gcr_resolve_tag "$registry_host" "$registry_repository" \
+            "$tag" "$remote_tag_reference"
         ;;
     ecr)
-        if remote_tag_digest=$(ecr_digest_for_tag \
-                "$registry_host" "${registry_repository#*/}" "$tag" \
-                "$remote_tag_reference"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
+        ecr_resolve_tag "$registry_host" "${registry_repository#*/}" \
+            "$tag" "$remote_tag_reference"
         ;;
     other)
         oci_repository="${repository#*/}"
-        if remote_tag_digest=$(oci_digest_for_tag_anonymously \
-                "$registry_host" "$oci_repository" "$tag"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            lookup_status=$?
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND") remote_tag_status=$LOOKUP_NOT_FOUND ;;
-            "$LOOKUP_STOPPED") abort "OCI registry lookup stopped for '$remote_tag_reference'" ;;
-            *)
-                skopeo_is_available ||
-                    abort "Install skopeo to check registry tag '$remote_tag_reference'"
-                if remote_tag_digest=$(skopeo_digest_for_tag "$remote_tag_reference"); then
-                    notice "Resolved registry tag with the Skopeo fallback"
-                    remote_tag_status=$LOOKUP_SUCCEEDED
-                else
-                    remote_tag_status=$LOOKUP_UNAVAILABLE
-                fi
-                ;;
-            esac
-        fi
+        oci_resolve_tag "$registry_host" "$oci_repository" \
+            "$tag" "$remote_tag_reference"
         ;;
     esac
+
+    if [[ -n "$context_name" ]]; then
+        local -n context_ref="$context_name"
+        context_ref[status]="$remote_tag_status"
+        context_ref[digest]="$remote_tag_digest"
+        context_ref[error]="$remote_tag_error"
+    fi
 }
 
 # Populate registry_tags plus the reverse lookup result, backend, and optional
@@ -175,7 +118,8 @@ function registry_find_tags_by_digest {
     local digest="$2"
     local tag_scan_mode="$3"
     local direct_tag="$4"
-    local lookup_status oci_repository
+    local context_name="${5-}"
+    local oci_repository
 
     registry_tags=
     registry_lookup_result=completed
@@ -199,130 +143,51 @@ function registry_find_tags_by_digest {
 
     case "$registry_kind" in
     ghcr)
-        ghcr_tags_by_digest "$registry_repository" "$digest" "$repository"
+        ghcr_find_tags "$registry_repository" "$digest" "$repository"
         ;;
     docker-hub)
-        registry_lookup_backend=docker-hub-api
-        docker_hub_tags_by_digest "$registry_repository" "$digest" "$repository"
+        docker_hub_find_tags "$registry_repository" "$digest" "$repository"
         ;;
     acr)
-        registry_lookup_backend=acr-api
-        if registry_tags=$(acr_tags_by_digest_api \
-                "$registry_host" "${registry_repository#*/}" "$digest"); then
-            :
-        else
-            lookup_status=$?
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-            "$LOOKUP_STOPPED") abort "ACR API lookup stopped for $repository" ;;
-            *)
-                notice "ACR metadata lookup is unavailable for $repository; falling back to Skopeo"
-                registry_lookup_backend=skopeo
-                skopeo_is_available ||
-                    abort "Install skopeo to query registry '$registry_host'"
-                registry_tags=$(acr_tags_by_digest_with_skopeo \
-                    "$registry_host" "$repository" "$digest") ||
-                    abort "ACR lookup failed for $repository"
-                ;;
-            esac
-        fi
+        acr_find_tags "$registry_host" "${registry_repository#*/}" \
+            "$digest" "$repository"
         ;;
     gar)
-        registry_lookup_backend=skopeo
-        skopeo_is_available ||
-            abort "Install skopeo to query registry '$registry_host'"
-        registry_tags=$(gar_tags_by_digest \
-            "$registry_host" "$repository" "$digest") ||
-            abort "Google registry lookup failed for $repository"
+        gar_find_tags "$registry_host" "$repository" "$digest"
         ;;
     gcr)
-        registry_lookup_backend=gcr-api
-        if registry_tags=$(gcr_tags_by_digest_anonymously \
-                "$registry_host" "$registry_repository" "$digest"); then
-            :
-        else
-            lookup_status=$?
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-            "$LOOKUP_STOPPED") abort "GCR API lookup stopped for $repository" ;;
-            *)
-                registry_lookup_backend=skopeo
-                skopeo_is_available ||
-                    abort "Install skopeo to query registry '$registry_host'"
-                registry_tags=$(gar_tags_by_digest \
-                    "$registry_host" "$repository" "$digest") ||
-                    abort "Google Container Registry lookup failed for $repository"
-                ;;
-            esac
-        fi
+        gcr_find_tags "$registry_host" "$registry_repository" \
+            "$digest" "$repository"
         ;;
     ecr)
-        if [[ "$registry_host" != public.ecr.aws ]]; then
-            registry_lookup_backend=ecr-api
-            if registry_tags=$(ecr_tags_by_digest_api \
-                    "$registry_host" "${registry_repository#*/}" "$digest"); then
-                :
-            else
-                lookup_status=$?
-                case "$lookup_status" in
-                "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-                "$LOOKUP_STOPPED") abort "ECR API lookup stopped for $repository" ;;
-                *)
-                    notice "ECR API lookup is unavailable for $repository; falling back to Skopeo"
-                    registry_lookup_backend=skopeo
-                    skopeo_is_available ||
-                        abort "Install skopeo to query registry '$registry_host'"
-                    registry_tags=$(ecr_tags_by_digest_with_skopeo \
-                        "$registry_host" "$repository" "$digest") ||
-                        abort "ECR lookup failed for $repository"
-                    ;;
-                esac
-            fi
-        else
-            registry_lookup_backend=ecr-api
-            if registry_tags=$(ecr_public_tags_by_digest_api \
-                    "${registry_repository#*/}" "$digest"); then
-                :
-            else
-                lookup_status=$?
-                case "$lookup_status" in
-                "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-                "$LOOKUP_STOPPED") abort "ECR Public API lookup stopped for $repository" ;;
-                *)
-                    notice "ECR Public API lookup is unavailable for $repository; falling back to Skopeo"
-                    registry_lookup_backend=skopeo
-                    skopeo_is_available ||
-                        abort "Install skopeo to query registry '$registry_host'"
-                    registry_tags=$(ecr_tags_by_digest_with_skopeo \
-                        "$registry_host" "$repository" "$digest") ||
-                        abort "ECR lookup failed for $repository"
-                    ;;
-                esac
-            fi
-        fi
+        ecr_find_tags "$registry_host" "${registry_repository#*/}" \
+            "$digest" "$repository"
         ;;
     other)
         oci_repository="${repository#*/}"
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                "$registry_host" "$oci_repository" "$digest"); then
-            :
-        else
-            lookup_status=$?
-            (( lookup_status == LOOKUP_STOPPED )) &&
-                abort "OCI registry lookup stopped for $repository"
-            notice "Anonymous OCI HEAD lookup is unavailable for $repository; falling back to Skopeo"
-            registry_lookup_backend=skopeo
-            skopeo_is_available ||
-                abort "Install skopeo to query registry '$registry_host'"
-            registry_tags=$(skopeo_tags_by_digest "$repository" "$digest") ||
-                abort "Skopeo lookup failed for $repository"
-        fi
+        oci_find_tags "$registry_host" "$oci_repository" "$digest" "$repository"
         ;;
     esac
+
+    if [[ -n "$context_name" ]]; then
+        local -n context_ref="$context_name"
+        context_ref[result]="$registry_lookup_result"
+        context_ref[backend]="$registry_lookup_backend"
+        context_ref[metadata]="$registry_metadata"
+        context_ref[tags]="$registry_tags"
+    fi
 }
 
 function registry_print_metadata {
+    local result_name="${1-}"
+
+    if [[ -n "$result_name" ]]; then
+        local -n result_ref="$result_name"
+        case "${result_ref[registry_kind]}" in
+        ghcr) ghcr_print_metadata "$result_name" ;;
+        esac
+        return
+    fi
     case "$registry_kind" in
     ghcr) ghcr_print_metadata ;;
     esac

@@ -84,7 +84,7 @@ function oci_token_from_bearer_challenge {
         scope="repository:$repository:pull"
     fi
 
-    response_tmp=$(mktemp)
+    response_tmp=$(runtime_temp_file oci-token-response)
     token_args=(-sS -G -o "$response_tmp" -w '%{http_code}')
     [[ -z "$service" ]] || token_args+=(--data-urlencode "service=$service")
     token_args+=(--data-urlencode "scope=$scope")
@@ -122,8 +122,8 @@ function oci_request_tag_page {
 
     : >"$response_headers"
     : >"$response_body"
-    "$CURL" -sS -H "@$request_headers" -D "$response_headers" \
-        -o "$response_body" -w '%{http_code}' "$url"
+    registry_http_request GET "$url" "$response_body" "$response_headers" \
+        -H "@$request_headers"
 }
 
 # Populate oci_listed_tags and oci_bearer_token. Return LOOKUP_SUCCEEDED for a
@@ -141,9 +141,9 @@ function oci_list_tags_anonymously {
     oci_bearer_token=
     oci_listed_tags=
     oci_direct_tag_durable=
-    request_headers=$(mktemp)
-    response_headers=$(mktemp)
-    response_body=$(mktemp)
+    request_headers=$(runtime_temp_file oci-request-headers)
+    response_headers=$(runtime_temp_file oci-response-headers)
+    response_body=$(runtime_temp_file oci-response-body)
     oci_write_request_headers "$request_headers"
     next_url="https://$registry/v2/$repository/tags/list?n=100"
 
@@ -226,12 +226,10 @@ function oci_digest_for_tag_with_headers {
     local tag_encoded manifest_digest response_headers http_code lookup_status
 
     tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
-    response_headers=$(mktemp)
-    if ! http_code=$(
-        "$CURL" -sS -I -H "@$request_headers" -D "$response_headers" \
-            -o /dev/null -w '%{http_code}' \
-            "https://$registry/v2/$repository/manifests/$tag_encoded" 2>/dev/null
-    ); then
+    response_headers=$(runtime_temp_file oci-response-headers)
+    if ! http_code=$(registry_http_request HEAD \
+            "https://$registry/v2/$repository/manifests/$tag_encoded" \
+            /dev/null "$response_headers" -H "@$request_headers" 2>/dev/null); then
         rm -f "$response_headers"
         return "$LOOKUP_UNAVAILABLE"
     fi
@@ -271,9 +269,9 @@ function oci_tags_by_digest_with_curl_parallel {
     local -a observed=()
     local -a spinner=('|' '/' '-' $'\\')
 
-    config_tmp=$(mktemp)
-    error_tmp=$(mktemp)
-    result_dir=$(mktemp -d)
+    config_tmp=$(runtime_temp_file oci-curl-config)
+    error_tmp=$(runtime_temp_file oci-curl-error)
+    result_dir=$(runtime_temp_dir oci-results)
     printf 'parallel\nparallel-max = %d\n' "$parallel_jobs" >"$config_tmp"
     for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do
         tag=${parallel_candidate_tags[$tag_index]}
@@ -374,17 +372,15 @@ function oci_digest_for_tag_anonymously {
     local request_headers response_headers tag_encoded http_code auth_header token
     local lookup_status=$LOOKUP_SUCCEEDED
 
-    request_headers=$(mktemp)
-    response_headers=$(mktemp)
+    request_headers=$(runtime_temp_file oci-request-headers)
+    response_headers=$(runtime_temp_file oci-response-headers)
     oci_write_request_headers "$request_headers"
     tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
     while true; do
         : >"$response_headers"
-        if ! http_code=$(
-            "$CURL" -sS -I -H "@$request_headers" -D "$response_headers" \
-                -o /dev/null -w '%{http_code}' \
-                "https://$registry/v2/$repository/manifests/$tag_encoded"
-        ); then
+        if ! http_code=$(registry_http_request HEAD \
+                "https://$registry/v2/$repository/manifests/$tag_encoded" \
+                /dev/null "$response_headers" -H "@$request_headers"); then
             lookup_status=$LOOKUP_UNAVAILABLE
             break
         fi
@@ -420,6 +416,37 @@ function oci_digest_for_tag_anonymously {
     done
     rm -f "$request_headers" "$response_headers"
     return "$lookup_status"
+}
+
+# Complete generic-registry direct policy: anonymous OCI first, then Skopeo
+# only for unavailable/denied fast paths. Not-found and stopped are terminal.
+function oci_resolve_tag {
+    local registry="$1"
+    local repository="$2"
+    local tag="$3"
+    local display_reference="$4"
+    local lookup_status
+
+    if remote_tag_digest=$(oci_digest_for_tag_anonymously \
+            "$registry" "$repository" "$tag"); then
+        remote_tag_status=$LOOKUP_SUCCEEDED
+        return
+    else
+        lookup_status=$?
+    fi
+    case "$lookup_status" in
+    "$LOOKUP_NOT_FOUND") remote_tag_status=$LOOKUP_NOT_FOUND ;;
+    "$LOOKUP_STOPPED") abort "OCI registry lookup stopped for '$display_reference'" ;;
+    *)
+        skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
+        if remote_tag_digest=$(skopeo_digest_for_tag "$display_reference"); then
+            notice "Resolved registry tag with the Skopeo fallback"
+            remote_tag_status=$LOOKUP_SUCCEEDED
+        else
+            remote_tag_status=$LOOKUP_UNAVAILABLE
+        fi
+        ;;
+    esac
 }
 
 # Print tags whose complete manifest digest matches digest. Individual HEAD
@@ -482,7 +509,7 @@ function oci_tags_by_digest_anonymously {
         ;;
     esac
 
-    request_headers=$(mktemp)
+    request_headers=$(runtime_temp_file oci-request-headers)
     oci_write_request_headers "$request_headers" "$oci_bearer_token"
     if [[ -n "$use_parallel" ]]; then
         if tags=$(oci_tags_by_digest_with_curl_parallel \
@@ -504,4 +531,27 @@ function oci_tags_by_digest_anonymously {
     rm -f "$request_headers"
     (( lookup_status == LOOKUP_SUCCEEDED )) || return "$lookup_status"
     printf '%s' "$tags"
+}
+
+function oci_find_tags {
+    local registry="$1"
+    local repository="$2"
+    local digest="$3"
+    local display_repository="$4"
+    local lookup_status
+
+    registry_lookup_backend=oci-registry-api
+    if registry_tags=$(oci_tags_by_digest_anonymously \
+            "$registry" "$repository" "$digest"); then
+        return
+    else
+        lookup_status=$?
+    fi
+    (( lookup_status == LOOKUP_STOPPED )) &&
+        abort "OCI registry lookup stopped for $display_repository"
+    notice "Anonymous OCI HEAD lookup is unavailable for $display_repository; falling back to Skopeo"
+    registry_lookup_backend=skopeo
+    skopeo_is_available || abort "Install skopeo to query registry '$registry'"
+    registry_tags=$(skopeo_tags_by_digest "$display_repository" "$digest") ||
+        abort "Skopeo lookup failed for $display_repository"
 }

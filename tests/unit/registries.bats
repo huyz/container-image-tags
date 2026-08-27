@@ -4,8 +4,24 @@ load ../test-helper.bash
 
 function load_registry_dispatch {
     load_common
+    # Load the real adapter entry points; individual tests replace the backend
+    # operation they need to observe.
+    # shellcheck source=../../lib/skopeo.sh
+    source "$REPO_ROOT/lib/skopeo.sh"
+    # shellcheck source=../../lib/oci.sh
+    source "$REPO_ROOT/lib/oci.sh"
     # shellcheck source=../../lib/docker-hub.sh
     source "$REPO_ROOT/lib/docker-hub.sh"
+    # shellcheck source=../../lib/ghcr.sh
+    source "$REPO_ROOT/lib/ghcr.sh"
+    # shellcheck source=../../lib/acr.sh
+    source "$REPO_ROOT/lib/acr.sh"
+    # shellcheck source=../../lib/gar.sh
+    source "$REPO_ROOT/lib/gar.sh"
+    # shellcheck source=../../lib/gcr.sh
+    source "$REPO_ROOT/lib/gcr.sh"
+    # shellcheck source=../../lib/ecr.sh
+    source "$REPO_ROOT/lib/ecr.sh"
     function skopeo_prepare_lazy_auth { :; }
     # shellcheck source=../../lib/registries.sh
     source "$REPO_ROOT/lib/registries.sh"
@@ -295,4 +311,28 @@ function assert_classification {
     assert_status 1
     assert_stderr_contains 'GCR API lookup stopped'
     refute_file_exists "$CALLS_DIR/skopeo"
+}
+
+@test "DISPATCH-014 direct dispatch exports an explicit lookup context" {
+    load_registry_dispatch
+    function docker_hub_digest_for_tag { printf '%s\n' sha256:context; }
+    registry_classify alpine
+    local -A lookup=()
+
+    registry_resolve_tag_digest alpine latest lookup
+    [[ "${lookup[status]}" -eq "$LOOKUP_SUCCEEDED" ]]
+    [[ "${lookup[digest]}" == sha256:context ]]
+    [[ -z "${lookup[error]}" ]]
+}
+
+@test "DISPATCH-015 reverse dispatch exports an explicit lookup context" {
+    load_registry_dispatch
+    function docker_hub_tags_by_digest { registry_tags=$'latest\n1.2.3'; }
+    registry_classify alpine
+    local -A lookup=()
+
+    registry_find_tags_by_digest alpine sha256:context all latest lookup
+    [[ "${lookup[result]}" == completed ]]
+    [[ "${lookup[backend]}" == docker-hub-api ]]
+    [[ "${lookup[tags]}" == $'latest\n1.2.3' ]]
 }

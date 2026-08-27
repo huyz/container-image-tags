@@ -142,6 +142,8 @@ tests/
 │   └── skopeo/
 ├── unit/
 │   ├── common.bats
+│   ├── runtime.bats
+│   ├── results.bats
 │   ├── local-images.bats
 │   ├── registries.bats
 │   ├── docker-hub.bats
@@ -297,6 +299,7 @@ Implement these cases in `tests/unit/common.bats`:
 | COMMON-008 | P0 | Mixed floating aliases and two-/three-component semver tags | Greatest recurring precision is inferred as durable |
 | COMMON-009 | P0 | Repository whose releases use two components | Two-component release tags are treated as durable |
 | COMMON-010 | P0 | Durable direct-tag classification without a repository sample | Full semver, date, and commit-like tags pass; channels and short semver do not |
+| COMMON-011 | P0 | Confirmed local tag plus floating and durable registry matches | Local tag and incidental floating matches precede the first durable tag |
 | POOL-001 | P0 | More candidates than workers | Active workers never exceed the supplied cap |
 | POOL-002 | P0 | Workers complete out of order | Matching tags are emitted in candidate order |
 | POOL-003 | P0 | `any` finds a durable match | No new work is scheduled afterward; in-flight work drains |
@@ -407,6 +410,8 @@ Classification inputs must include:
 | DISPATCH-007 | P0 | `LOOKUP_STOPPED` | Immediate abort; no fallback |
 | DISPATCH-008 | P0 | New lookup begins after a prior result | Shared result, metadata, and error fields reset |
 | DISPATCH-009 | P0 | `any` with a confirmed durable direct tag | Direct tag satisfies the lookup without invoking a reverse backend |
+| DISPATCH-014 | P0 | Direct adapter returns through an explicit context | Status, digest, and error are copied exactly |
+| DISPATCH-015 | P0 | Reverse adapter returns through an explicit context | Result, backend, metadata, and ordered tags are copied exactly |
 | DISPATCH-010 | P1 | Provider metadata unsupported | Metadata remains empty/null |
 
 ## Docker Hub

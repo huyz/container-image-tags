@@ -44,17 +44,16 @@ function docker_hub_digest_for_tag {
     local -a request_args
 
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
-    response_tmp=$(mktemp)
-    request_args=(-sS -o "$response_tmp" -w '%{http_code}')
+    response_tmp=$(runtime_temp_file docker-hub-response)
+    request_args=()
     if [[ -n "$docker_hub_token" ]]; then
-        request_headers=$(mktemp)
+        request_headers=$(runtime_temp_file docker-hub-request-headers)
         docker_hub_write_request_headers "$request_headers"
         request_args+=(-H "@$request_headers")
     fi
-    if ! http_code=$(
-        $CURL "${request_args[@]}" \
-            "https://hub.docker.com/v2/repositories/$hub_repository/tags/$tag_encoded"
-    ); then
+    if ! http_code=$(registry_http_request GET \
+            "https://hub.docker.com/v2/repositories/$hub_repository/tags/$tag_encoded" \
+            "$response_tmp" '' "${request_args[@]}"); then
         rm -f "$response_tmp"
         [[ -z "$request_headers" ]] || rm -f "$request_headers"
         return "$LOOKUP_UNAVAILABLE"
@@ -85,6 +84,25 @@ function docker_hub_digest_for_tag {
         return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
+}
+
+# Complete Docker Hub direct-lookup policy: fast Hub API first, then configured
+# registry credentials through Skopeo only when the API is unavailable.
+function docker_hub_resolve_tag {
+    local hub_repository="$1"
+    local tag="$2"
+    local display_reference="$3"
+
+    if remote_tag_digest=$(docker_hub_digest_for_tag "$hub_repository" "$tag"); then
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+    fi
+    if [[ "$remote_tag_status" == "$LOOKUP_UNAVAILABLE" ]] &&
+            remote_tag_digest=$(skopeo_digest_for_tag "$display_reference"); then
+        notice "Resolved Docker Hub tag with configured registry credentials"
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    fi
 }
 
 # Exchange a Docker Hub username and PAT for a short-lived API access token.
@@ -263,31 +281,24 @@ function docker_hub_tags_by_digest {
 
     digest="${digest#sha256:}"
     next_url="https://hub.docker.com/v2/repositories/$hub_repository/tags/?page_size=100"
-    response_tmp=$(mktemp)
+    response_tmp=$(runtime_temp_file docker-hub-response)
     while [[ -n "$next_url" ]]; do
         verbose "Listing Docker Hub tags from: $next_url"
-        request_args=(-sS -o "$response_tmp" -w '%{http_code}')
+        request_args=()
         if [[ -n "$docker_hub_token" ]]; then
-            request_headers=$(mktemp)
+            request_headers=$(runtime_temp_file docker-hub-request-headers)
             docker_hub_write_request_headers "$request_headers"
             request_args+=(-H "@$request_headers")
         fi
-        if ! http_code=$(
-            $CURL "${request_args[@]}" "$next_url"
-        ); then
+        if ! http_code=$(registry_http_request GET \
+                "$next_url" "$response_tmp" '' "${request_args[@]}"); then
             rm -f "$response_tmp"
             [[ -z "$request_headers" ]] || rm -f "$request_headers"
             abort "Failed to list tags for $display_repository"
         fi
         [[ -z "$request_headers" ]] || rm -f "$request_headers"
         request_headers=
-        error_message=$(
-            $JQ -r '
-                (.message // .detail // .error // empty)
-                | if type == "string" then gsub("[\\r\\n]+"; " ") else tostring end
-                | .[0:512]
-            ' "$response_tmp" 2>/dev/null || true
-        )
+        error_message=$(registry_json_error_message "$response_tmp")
         case "$http_code" in
         200) ;;
         401 | 403)
@@ -389,4 +400,13 @@ function docker_hub_tags_by_digest {
         next_url=$($JQ -r '.next // empty' "$response_tmp")
     done
     rm -f "$response_tmp"
+}
+
+function docker_hub_find_tags {
+    local hub_repository="$1"
+    local digest="$2"
+    local display_repository="$3"
+
+    registry_lookup_backend=docker-hub-api
+    docker_hub_tags_by_digest "$hub_repository" "$digest" "$display_repository"
 }

@@ -14,21 +14,14 @@ function gcr_metadata_anonymously {
     local repository="$2"
     local response_tmp http_code error_message
 
-    response_tmp=$(mktemp)
-    if ! http_code=$(
-        "$CURL" -sS -o "$response_tmp" -w '%{http_code}' \
-            "https://$registry/v2/$repository/tags/list"
-    ); then
+    response_tmp=$(runtime_temp_file gcr-response)
+    if ! http_code=$(registry_http_request GET \
+            "https://$registry/v2/$repository/tags/list" "$response_tmp" ''); then
         rm -f "$response_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
 
-    error_message=$(
-        "$JQ" -r '
-            (.errors[0].message // .message // .error // empty)
-            | if type == "string" then gsub("[\\r\\n]+"; " ") else tostring end
-        ' "$response_tmp" 2>/dev/null || true
-    )
+    error_message=$(registry_json_error_message "$response_tmp")
     case "$http_code" in
     200)
         if ! "$JQ" -e '.manifest | type == "object"' "$response_tmp" >/dev/null; then
@@ -85,6 +78,32 @@ function gcr_digest_for_tag_anonymously {
     printf '%s\n' "$digests"
 }
 
+function gcr_resolve_tag {
+    local registry="$1"
+    local repository="$2"
+    local tag="$3"
+    local display_reference="$4"
+    local lookup_output
+
+    if lookup_output=$(gcr_digest_for_tag_anonymously "$registry" "$repository" "$tag"); then
+        remote_tag_digest="$lookup_output"
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+        if (( remote_tag_status == LOOKUP_UNAVAILABLE ||
+                remote_tag_status == LOOKUP_DENIED )); then
+            skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
+            if lookup_output=$(gar_digest_for_tag "$registry" "$display_reference"); then
+                remote_tag_digest="$lookup_output"
+                remote_tag_status=$LOOKUP_SUCCEEDED
+            else
+                remote_tag_status=$?
+                remote_tag_error="$lookup_output"
+            fi
+        fi
+    fi
+}
+
 # Print current tags for one complete digest. In "any" mode, retain matching
 # tags through the first tag heuristically assumed durable under the
 # repository's observed convention.
@@ -92,20 +111,38 @@ function gcr_tags_by_digest_anonymously {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local metadata matching_tags observed_tags seed_tag=
+    local metadata matching_tags observed_tags
 
     metadata=$(gcr_metadata_anonymously "$registry" "$repository") || return $?
     matching_tags=$("$JQ" -r --arg digest "$digest" \
         '.manifest[$digest].tag[]?' <<<"$metadata")
-    if [[ "$registry_tag_scan" == any ]]; then
-        observed_tags=$("$JQ" -r '.manifest[].tag[]?' <<<"$metadata")
-        if [[ -n "${registry_direct_tag_confirmed-}" &&
-                -n "${registry_direct_tag-}" ]]; then
-            seed_tag="$registry_direct_tag"
-        fi
-        matching_tags_through_first_durable \
-            "$matching_tags" "$observed_tags" "$seed_tag" || true
+    observed_tags=$("$JQ" -r '.manifest[].tag[]?' <<<"$metadata")
+    select_matching_tags_for_scan "$matching_tags" "$observed_tags" || true
+}
+
+function gcr_find_tags {
+    local registry="$1"
+    local repository="$2"
+    local digest="$3"
+    local display_repository="$4"
+    local lookup_status
+
+    registry_lookup_backend=gcr-api
+    if registry_tags=$(gcr_tags_by_digest_anonymously \
+            "$registry" "$repository" "$digest"); then
+        return
     else
-        printf '%s\n' "$matching_tags"
+        lookup_status=$?
     fi
+    case "$lookup_status" in
+    "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
+    "$LOOKUP_STOPPED") abort "GCR API lookup stopped for $display_repository" ;;
+    *)
+        registry_lookup_backend=skopeo
+        skopeo_is_available || abort "Install skopeo to query registry '$registry'"
+        registry_tags=$(gar_tags_by_digest \
+            "$registry" "$display_repository" "$digest") ||
+            abort "Google Container Registry lookup failed for $display_repository"
+        ;;
+    esac
 }

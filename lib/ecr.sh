@@ -49,7 +49,7 @@ function ecr_private_image_details {
     account=$(ecr_account_from_registry "$registry") || return "$LOOKUP_UNAVAILABLE"
     region=$(ecr_region_from_registry "$registry") || return "$LOOKUP_UNAVAILABLE"
 
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file ecr-error)
     if response=$(
         "$AWS" ecr describe-images \
             --registry-id "$account" \
@@ -70,7 +70,7 @@ function ecr_private_image_details {
             rm -f "$error_tmp"
             return "$LOOKUP_STOPPED"
         fi
-        error_message=$(tr '\n' ' ' <"$error_tmp")
+        error_message=$(command_error_single_line "$error_tmp")
         debug "ECR DescribeImages failed for $registry/$repository: $error_message"
         rm -f "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
@@ -92,7 +92,7 @@ function ecr_public_registry_id_for_alias {
 
     command -v "${AWS:=aws}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
     ecr_aws_credentials_may_be_available || return "$LOOKUP_UNAVAILABLE"
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file ecr-public-alias-error)
     if response=$(
         "$AWS" ecr-public describe-registries \
             --region us-east-1 \
@@ -103,7 +103,7 @@ function ecr_public_registry_id_for_alias {
     ); then
         rm -f "$error_tmp"
     else
-        error_message=$(tr '\n' ' ' <"$error_tmp")
+        error_message=$(command_error_single_line "$error_tmp")
         debug "ECR Public registry-alias lookup failed for $alias: $error_message"
         rm -f "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
@@ -139,7 +139,7 @@ function ecr_public_image_details {
         return "$LOOKUP_UNAVAILABLE"
     registry_id=$(ecr_public_registry_id_for_alias "$alias") || return $?
 
-    error_tmp=$(mktemp)
+    error_tmp=$(runtime_temp_file ecr-public-error)
     if response=$(
         "$AWS" ecr-public describe-images \
             --registry-id "$registry_id" \
@@ -160,7 +160,7 @@ function ecr_public_image_details {
             rm -f "$error_tmp"
             return "$LOOKUP_STOPPED"
         fi
-        error_message=$(tr '\n' ' ' <"$error_tmp")
+        error_message=$(command_error_single_line "$error_tmp")
         debug "ECR Public DescribeImages failed for $repository_path: $error_message"
         rm -f "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
@@ -199,7 +199,7 @@ function ecr_tags_by_digest_api {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local response matching_images matching_tags seed_tag=
+    local response matching_images matching_tags
 
     response=$(ecr_private_image_details \
         "$registry" "$repository" "imageDigest=$digest") || return $?
@@ -227,22 +227,13 @@ function ecr_tags_by_digest_api {
             | unique
             | .[]
         ' <<<"$response")
-    if [[ "$registry_tag_scan" == any ]]; then
-        if [[ -n "${registry_direct_tag_confirmed-}" &&
-                -n "${registry_direct_tag-}" ]]; then
-            seed_tag="$registry_direct_tag"
-        fi
-        matching_tags_through_first_durable \
-            "$matching_tags" "$matching_tags" "$seed_tag" || true
-    else
-        printf '%s\n' "$matching_tags"
-    fi
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
 }
 
 function ecr_public_tags_by_digest_api {
     local repository_path="$1"
     local digest="$2"
-    local response matching_images matching_tags seed_tag=
+    local response matching_images matching_tags
 
     response=$(ecr_public_image_details \
         "$repository_path" "imageDigest=$digest") || return $?
@@ -270,16 +261,7 @@ function ecr_public_tags_by_digest_api {
             | unique
             | .[]
         ' <<<"$response")
-    if [[ "$registry_tag_scan" == any ]]; then
-        if [[ -n "${registry_direct_tag_confirmed-}" &&
-                -n "${registry_direct_tag-}" ]]; then
-            seed_tag="$registry_direct_tag"
-        fi
-        matching_tags_through_first_durable \
-            "$matching_tags" "$matching_tags" "$seed_tag" || true
-    else
-        printf '%s\n' "$matching_tags"
-    fi
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
 }
 
 function ecr_authenticate {
@@ -338,6 +320,20 @@ function ecr_digest_for_tag {
     skopeo_digest_for_tag_with_lazy_auth "$registry" "$image_reference" ecr_authenticate
 }
 
+function ecr_resolve_tag {
+    local registry="$1"
+    local repository="$2"
+    local tag="$3"
+    local display_reference="$4"
+
+    if remote_tag_digest=$(ecr_digest_for_tag \
+            "$registry" "$repository" "$tag" "$display_reference"); then
+        remote_tag_status=$LOOKUP_SUCCEEDED
+    else
+        remote_tag_status=$?
+    fi
+}
+
 function ecr_tags_by_digest_with_skopeo {
     local registry="$1"
     local repository="$2"
@@ -345,4 +341,46 @@ function ecr_tags_by_digest_with_skopeo {
 
     skopeo_tags_by_digest_with_lazy_auth \
         "$registry" "$repository" "$digest" ecr_authenticate
+}
+
+function ecr_find_tags {
+    local registry="$1"
+    local repository="$2"
+    local digest="$3"
+    local display_repository="$4"
+    local lookup_status
+
+    registry_lookup_backend=ecr-api
+    if [[ "$registry" == public.ecr.aws ]]; then
+        if registry_tags=$(ecr_public_tags_by_digest_api "$repository" "$digest"); then
+            return
+        else
+            lookup_status=$?
+        fi
+    elif registry_tags=$(ecr_tags_by_digest_api "$registry" "$repository" "$digest"); then
+        return
+    else
+        lookup_status=$?
+    fi
+    case "$lookup_status" in
+    "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
+    "$LOOKUP_STOPPED")
+        if [[ "$registry" == public.ecr.aws ]]; then
+            abort "ECR Public API lookup stopped for $display_repository"
+        fi
+        abort "ECR API lookup stopped for $display_repository"
+        ;;
+    *)
+        if [[ "$registry" == public.ecr.aws ]]; then
+            notice "ECR Public API lookup is unavailable for $display_repository; falling back to Skopeo"
+        else
+            notice "ECR API lookup is unavailable for $display_repository; falling back to Skopeo"
+        fi
+        registry_lookup_backend=skopeo
+        skopeo_is_available || abort "Install skopeo to query registry '$registry'"
+        registry_tags=$(ecr_tags_by_digest_with_skopeo \
+            "$registry" "$display_repository" "$digest") ||
+            abort "ECR lookup failed for $display_repository"
+        ;;
+    esac
 }
