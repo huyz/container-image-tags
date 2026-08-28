@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Google Container Registry's tags/list response includes a manifest object
 # keyed by complete digest, with each value carrying its current tags. Use that
@@ -152,9 +153,8 @@ function gcr_resolve_tag {
     fi
 }
 
-# Print current tags for one complete digest. In "any" mode, retain matching
-# tags through the first tag heuristically assumed durable under the
-# repository's observed convention.
+# Print current tags for one complete digest, applying the shared bounded or
+# exhaustive scan contract.
 function gcr_tags_by_digest_from_metadata {
     local registry="$1"
     local repository="$2"

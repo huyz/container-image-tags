@@ -24,8 +24,10 @@ static)
     # STATIC-001 runs this parser gate again in the Bash 4.4 CI job.
     # STATIC-002 exercises the same complete source set with current Bash.
     "$bash_bin" -n container-image-tags lib/*.sh tests/run tests/helpers/*.bash tests/test-helper.bash
-    # STATIC-003 resolves all sourced modules from the top-level executable.
-    shellcheck -x container-image-tags tests/run
+    # STATIC-003 checks both the integrated executable and every standalone
+    # shell module/helper so context-sensitive findings cannot be hidden.
+    shellcheck -x container-image-tags tests/run lib/*.sh \
+        tests/helpers/*.bash tests/test-helper.bash
     # STATIC-004 intentionally gates trailing whitespace, not repository-wide formatting.
     if rg -n '[[:blank:]]+$' --glob '*.sh' --glob '*.bash' --glob '*.bats' \
             --glob '*.md' --glob '*.yml' --glob '*.yaml' .; then

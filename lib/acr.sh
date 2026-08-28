@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Azure Container Registry support. Public access stays anonymous; private
 # access obtains a short-lived Azure CLI token only after an auth challenge.

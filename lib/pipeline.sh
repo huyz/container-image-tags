@@ -244,7 +244,7 @@ function process_resolved_baseline {
     fi
     if [[ "$tag_scan_mode" == ask ]]; then
         tag_scan_mode=$(choose_remote_tag_scan) ||
-            abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, or --tag-scan=all"
+            abort "Cannot prompt to scan remote tags; rerun with --tag-scan=never, --tag-scan=any, --tag-scan=any-durable, or --tag-scan=all"
         result_ref[scan_mode]="$tag_scan_mode"
         if [[ "$tag_scan_mode" == none ]]; then
             result_ref[scan_mode]=ask

@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # GitHub Container Registry fast paths. Anonymous access uses the shared OCI
 # implementation; this module contains only the GitHub Packages API behavior.
@@ -197,10 +198,10 @@ function ghcr_tags_by_digest {
 
     debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository credential_policy=${opt_credential_policy:-if-faster} scan=$registry_tag_scan"
 
-    if [[ "$registry_tag_scan" == any &&
-            credential_policy_allows_public &&
+    if [[ "$registry_tag_scan" == any-durable &&
             -n "${registry_direct_tag_confirmed-}" &&
             -n "$registry_direct_tag" ]] &&
+            credential_policy_allows_public &&
             oci_list_tags_anonymously ghcr.io "$ghcr_repository" sample &&
             [[ -n "$oci_direct_tag_durable" ]]; then
         registry_tags="$registry_direct_tag"

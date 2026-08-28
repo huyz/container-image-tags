@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034  # standalone module lint: shared output fields
 
 # Local Docker image and repository-reference helpers.
 

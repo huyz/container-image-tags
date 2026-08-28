@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone lint: shared fields and associative namerefs
 
 # Registry classification and dispatch. Registry-specific modules implement
 # lookup and authentication paths; this file is the single integration point
@@ -115,9 +116,8 @@ function registry_resolve_tag_digest {
 }
 
 # Populate registry_tags plus the reverse lookup result, backend, and optional
-# provider metadata. In "any" mode, retain matching tags through the first one
-# heuristically assumed durable. A directly confirmed durable tag may satisfy
-# the lookup itself.
+# provider metadata. "any" stops at the first match. "any-durable" retains
+# matching tags through the first one heuristically assumed durable.
 function registry_find_tags_by_digest {
     local repository="$1"
     local digest="$2"
@@ -138,6 +138,13 @@ function registry_find_tags_by_digest {
     [[ "$direct_tag" == '<none>' ]] || registry_direct_tag="$direct_tag"
 
     if [[ "$registry_tag_scan" == any &&
+            -n "$registry_direct_tag" &&
+            -n "${registry_direct_tag_confirmed-}" ]]; then
+        registry_tags="$registry_direct_tag"
+        registry_lookup_backend=direct-tag-check
+        return
+    fi
+    if [[ "$registry_tag_scan" == any-durable &&
             -n "$registry_direct_tag" &&
             -n "${registry_direct_tag_confirmed-}" ]] &&
             tag_is_assumed_durable "$registry_direct_tag"; then

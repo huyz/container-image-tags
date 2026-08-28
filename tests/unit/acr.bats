@@ -175,14 +175,14 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "ACR-013 any returns matches through a durable tag and all deduplicates" {
+@test "ACR-013 any-durable returns matches through a durable tag and all deduplicates" {
     load_acr
     function acr_metadata {
         printf '{"manifest":{"digest":"%s","tags":["stable","1.2","1.2.3","1.2.3"]}}\n' "$DIGEST"
     }
     registry_direct_tag=stable
     registry_direct_tag_confirmed=1
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
 
     run acr_tags_by_digest_api vault.azurecr.io team/app "$DIGEST"
     assert_status 0

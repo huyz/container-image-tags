@@ -160,12 +160,13 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
             local: require a local image as the baseline
             remote: ignore local Docker state and resolve the tag through the registry
         --tag-scan: control the reverse lookup after resolving the baseline digest:
-            ask: prompt to scan for any or all matching remote tags
+            ask: prompt to choose a bounded or exhaustive scan
             never: do not perform a reverse tag lookup
-            any: stop after finding one matching tag heuristically assumed durable;
+            any: stop after finding the first matching tag, even if it is floating
+            any-durable: stop after finding one matching tag heuristically assumed durable;
                 a directly confirmed durable baseline tag satisfies this without a scan
             all: scan for every matching remote tag
-            The default is 'ask' with an interactive terminal; 'any' otherwise or with --json
+            The default is 'ask' with an interactive terminal; 'any-durable' otherwise or with --json
         --credential-policy: control when registry credentials may be used
                     (default: $opt_credential_policy):
             never: use only public/anonymous access
@@ -175,8 +176,8 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
             require: use only credentialed access; do not make public/anonymous requests
 
 For a local baseline, its known tag is checked first. Interactive runs then ask
-whether to find any heuristically durable matching tag or all matching tags;
-non-interactive runs stop after a durable match unless '--tag-scan all' is specified.
+whether to stop at any matching tag, stop at a durable match, or find all matching tags;
+non-interactive runs stop after a durable match unless another mode is specified.
 Expensive interactive per-tag registry scans print an advisory and continue.
 Expensive non-interactive scans fail fast unless '--allow-expensive-scan' is
 specified. Public generic OCI registries use parallel manifest HEAD requests;
@@ -228,8 +229,8 @@ never | if-required | if-faster | require) ;;
 esac
 
 case "$opt_tag_scan" in
-'' | ask | never | any | all) ;;
-*) abort "--tag-scan must be 'ask', 'never', 'any', or 'all'" ;;
+'' | ask | never | any | any-durable | all) ;;
+*) abort "--tag-scan must be 'ask', 'never', 'any', 'any-durable', or 'all'" ;;
 esac
 
 case "$opt_tag_resolution" in
@@ -244,11 +245,11 @@ fi
 
 if [[ -z "$opt_tag_scan" ]]; then
     if [[ -n "$opt_json" ]]; then
-        opt_tag_scan=any
+        opt_tag_scan=any-durable
     elif is_interactive_session; then
         opt_tag_scan=ask
     else
-        opt_tag_scan=any
+        opt_tag_scan=any-durable
     fi
 fi
 

@@ -85,7 +85,8 @@ function run_cli_with_tty_input {
     run_cli --help
     assert_status 0
     assert_output_contains '--tag-resolution'
-    assert_output_contains 'any: stop after finding one matching tag heuristically assumed durable'
+    assert_output_contains 'any: stop after finding the first matching tag, even if it is floating'
+    assert_output_contains 'any-durable: stop after finding one matching tag heuristically assumed durable'
 
     run_cli -h
     assert_status 0
@@ -130,9 +131,12 @@ function run_cli_with_tty_input {
 @test "CLI-005 invalid tag scan reports accepted values" {
     install_noop_required_tools
 
+    run_cli --help --tag-scan=any-durable
+    assert_status 0
+
     run_cli --tag-resolution=remote --tag-scan=invalid example
     assert_status 1
-    assert_stderr_contains "--tag-scan must be 'ask', 'never', 'any', or 'all'"
+    assert_stderr_contains "--tag-scan must be 'ask', 'never', 'any', 'any-durable', or 'all'"
 }
 
 @test "CLI-006 credential policy accepts four modes and rejects ambiguous legacy names" {
@@ -180,7 +184,7 @@ EOF
     assert_stderr_contains 'DEBUG: Docker Hub tag lookup returned HTTP 500'
 }
 
-@test "CLI-008 JSON defaults to any and emits one clean array" {
+@test "CLI-008 JSON defaults to any-durable and emits one clean array" {
     install_empty_oci_curl
     write_static_stub docker '' 1
 
@@ -188,11 +192,11 @@ EOF
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
     assert_valid_json
-    assert_json 'length == 1 and .[0].tag_scan.mode == "any"'
+    assert_json 'length == 1 and .[0].tag_scan.mode == "any-durable"'
     assert_json '.[0].tag_scan.backend == "oci-registry-api"'
 }
 
-@test "CLI-009 non-interactive human mode defaults to any even when Bats owns a TTY" {
+@test "CLI-009 non-interactive human mode defaults to any-durable even when Bats owns a TTY" {
     install_empty_oci_curl
     write_static_stub docker '' 1
 
@@ -211,7 +215,7 @@ EOF
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
     assert_output_contains 'Scan remote tags?'
-    assert_output_contains 'Choose [1/a/n]:'
+    assert_output_contains 'Choose [1/d/a/n]:'
     refute_output_contains 'Other remote tags:'
     assert_file_exists "$TEST_ROOT/tty-stdout"
     [[ $(<"$TEST_ROOT/tty-stdout") == *'Repository:'* ]] ||

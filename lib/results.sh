@@ -106,7 +106,8 @@ function render_scan_human {
     case "${result_ref[scan_status]}" in
     not_requested | declined | skipped) return ;;
     esac
-    if [[ "${result_ref[scan_mode]}" == any ]]; then
+    if [[ "${result_ref[scan_mode]}" == any ||
+            "${result_ref[scan_mode]}" == any-durable ]]; then
         echo "Remote tags (partial scan):"
     else
         echo "Other remote tags:"

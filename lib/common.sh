@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Shared output and prompting helpers for container-image-tags.
 
@@ -44,6 +45,7 @@ function remote_tag_scan_choice {
     choice_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
     case "$choice_lower" in
     1 | any) printf 'any\n' ;;
+    d | durable | any-durable) printf 'any-durable\n' ;;
     a | all) printf 'all\n' ;;
     '' | n | no) printf 'none\n' ;;
     *) return 1 ;;
@@ -78,7 +80,7 @@ function tag_semver_precision {
 # greatest precision present.
 function durable_semver_precision_from_tags {
     local tags="$1"
-    local tag precision greatest= recurring=
+    local tag precision greatest='' recurring=''
     local -A precision_counts=()
 
     while IFS= read -r tag; do
@@ -102,7 +104,7 @@ function durable_semver_precision_from_tags {
 # Heuristically classify one tag as durable. Known channel names always float.
 # With an observed precision, only the repository's most precise semver shape
 # is durable. Without a sample, require a strong standalone signal so a direct
-# tag can safely satisfy "any" without starting a bulk scan.
+# tag can safely satisfy "any-durable" without starting a bulk scan.
 function tag_is_assumed_durable {
     local tag="$1"
     local observed_precision="${2-}"
@@ -188,15 +190,28 @@ function matching_tags_through_first_durable {
 }
 
 # Apply the public scan-mode contract to one complete provider tag set. In
-# "any" mode, a confirmed baseline tag is the first result (including a local
-# tag), floating matches are retained in provider order, and the first durable
-# match terminates the result. "all" returns the supplied matches unchanged.
+# "any" mode returns the first match, including a confirmed baseline tag.
+# "any-durable" retains a confirmed baseline tag and floating matches in
+# provider order through the first durable match. "all" returns every match.
 function select_matching_tags_for_scan {
     local matching_tags="$1"
     local observed_tags="${2-$matching_tags}"
     local seed_tag=
 
-    if [[ "$registry_tag_scan" != any ]]; then
+    if [[ "$registry_tag_scan" == any ]]; then
+        if [[ -n "${registry_direct_tag_confirmed-}" &&
+                -n "${registry_direct_tag-}" ]]; then
+            printf '%s' "$registry_direct_tag"
+        else
+            while IFS= read -r tag; do
+                [[ -n "$tag" ]] || continue
+                printf '%s' "$tag"
+                break
+            done <<<"$matching_tags"
+        fi
+        return
+    fi
+    if [[ "$registry_tag_scan" != any-durable ]]; then
         printf '%s' "$matching_tags"
         return
     fi
@@ -214,7 +229,7 @@ function select_matching_tags_for_scan {
 # even when lookups finish out of order. The lookup function receives the
 # repository, tag, and any remaining arguments and prints one complete digest.
 # When require_complete is nonempty, failed workers make an exhaustive lookup
-# fail; an "any" lookup may still succeed once it has a durable match.
+# fail; a bounded lookup may still succeed once it has its requested match.
 function tags_by_digest_with_rolling_pool {
     local repository="$1"
     local digest="$2"
@@ -231,7 +246,7 @@ function tags_by_digest_with_rolling_pool {
     local checked=0
     local failed=0
     local terminal_status=$LOOKUP_SUCCEEDED
-    local durable_match_found=
+    local bounded_match_found=
     local stop_scheduling=
     local matches=
     local -a active_pids=()
@@ -245,7 +260,7 @@ function tags_by_digest_with_rolling_pool {
     next_tag_index=0
     active_jobs=0
     while (( next_tag_index < ${#pool_candidate_tags[@]} || active_jobs > 0 )); do
-        while [[ -z "$durable_match_found" && -z "$stop_scheduling" ]] &&
+        while [[ -z "$bounded_match_found" && -z "$stop_scheduling" ]] &&
                 (( active_jobs < parallel_jobs &&
                     next_tag_index < ${#pool_candidate_tags[@]} )); do
             tag_index=$next_tag_index
@@ -262,7 +277,7 @@ function tags_by_digest_with_rolling_pool {
                 fi
                 : >"$done_tmp"
             ) &
-            active_pids[$tag_index]=$!
+            active_pids[tag_index]=$!
             ((++next_tag_index))
             ((++active_jobs))
         done
@@ -297,12 +312,16 @@ function tags_by_digest_with_rolling_pool {
             active_jobs=$((active_jobs - 1))
 
             if [[ "$manifest_digest" == "$digest" ]]; then
-                matching_indices[$tag_index]=1
-                if [[ "$registry_tag_scan" == any ]] &&
-                        tag_is_assumed_durable "$tag" \
+                matching_indices[tag_index]=1
+                case "$registry_tag_scan" in
+                any) bounded_match_found=1 ;;
+                any-durable)
+                    if tag_is_assumed_durable "$tag" \
                             "${registry_durable_semver_precision-}"; then
-                    durable_match_found=1
-                fi
+                        bounded_match_found=1
+                    fi
+                    ;;
+                esac
             fi
             ((++checked))
             if is_interactive_session; then
@@ -318,11 +337,15 @@ function tags_by_digest_with_rolling_pool {
         [[ -n ${matching_indices[$tag_index]-} ]] || continue
         tag=${pool_candidate_tags[$tag_index]}
         matches+="${matches:+$'\n'}$tag"
-        if [[ "$registry_tag_scan" == any ]] &&
-                tag_is_assumed_durable "$tag" \
+        case "$registry_tag_scan" in
+        any) break ;;
+        any-durable)
+            if tag_is_assumed_durable "$tag" \
                     "${registry_durable_semver_precision-}"; then
-            break
-        fi
+                break
+            fi
+            ;;
+        esac
     done
     if is_interactive_session; then
         printf '\r%s... done (%d checked)\n' "$progress_label" "$checked" >&2
@@ -330,18 +353,20 @@ function tags_by_digest_with_rolling_pool {
 
     printf '%s' "$matches"
     if (( terminal_status == LOOKUP_STOPPED )) &&
-            [[ "$registry_tag_scan" != any || -z "$matches" ]]; then
+            [[ "$registry_tag_scan" != any &&
+                "$registry_tag_scan" != any-durable || -z "$matches" ]]; then
         return "$LOOKUP_STOPPED"
     fi
     if [[ -n "$require_complete" && "$failed" -gt 0 ]] &&
-            [[ "$registry_tag_scan" != any || -z "$matches" ]]; then
+            [[ "$registry_tag_scan" != any &&
+                "$registry_tag_scan" != any-durable || -z "$matches" ]]; then
         return "$LOOKUP_UNAVAILABLE"
     fi
 }
 
 # Ask which reverse lookup to perform after the known local tag has been
-# checked. Print "any", "all", or "none"; return nonzero only when prompting
-# is unavailable.
+# checked. Print "any", "any-durable", "all", or "none"; return nonzero only
+# when prompting is unavailable.
 function choose_remote_tag_scan {
     local choice action
 
@@ -349,11 +374,12 @@ function choose_remote_tag_scan {
         return 1
     fi
     echo "Scan remote tags?" >&2
-    echo "  [1] Stop after any matching durable tag" >&2
+    echo "  [1] Stop after the first matching tag" >&2
+    echo "  [d] Stop after the first matching durable tag" >&2
     echo "  [a] Find all matching tags" >&2
     echo "  [n] Do not scan" >&2
     while true; do
-        printf 'Choose [1/a/n]: ' >&2
+        printf 'Choose [1/d/a/n]: ' >&2
         IFS= read -r choice </dev/tty || return 1
         if action=$(remote_tag_scan_choice "$choice"); then
             printf '%s\n' "$action"

@@ -110,10 +110,10 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "ECR-009 any returns matches through a durable tag and deduplicates" {
+@test "ECR-009 any-durable returns matches through a durable tag and deduplicates" {
     load_ecr
     install_aws_response "{\"imageDetails\":[{\"imageDigest\":\"$DIGEST\",\"imageTags\":[\"stable\",\"1.2\",\"1.2.3\",\"1.2.3\"]}]}"
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     registry_direct_tag=stable
     registry_direct_tag_confirmed=1
 

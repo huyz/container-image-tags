@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Anonymous OCI Distribution fast path for public registries. List tags once,
 # obtain at most one repository-scoped bearer token, then resolve tag digests
@@ -182,7 +183,7 @@ function oci_list_tags {
                 oci_listed_tags+="${oci_listed_tags:+$'\n'}$page_tags"
             fi
             durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
-            if [[ "$registry_tag_scan" == any &&
+            if [[ "$registry_tag_scan" == any-durable &&
                     -n "${registry_direct_tag_confirmed-}" &&
                     -n "${registry_direct_tag-}" ]] &&
                     tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
@@ -308,10 +309,10 @@ function oci_tags_by_digest_with_curl_parallel {
     curl_pid=$!
     while kill -0 "$curl_pid" 2>/dev/null; do
         for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do
-            [[ -z ${observed[$tag_index]-} ]] || continue
+            [[ -z ${observed[tag_index]-} ]] || continue
             header_file="$result_dir/$tag_index.headers"
             [[ -s "$header_file" ]] || continue
-            observed[$tag_index]=1
+            observed[tag_index]=1
             ((++checked))
             http_status=$(oci_http_status "$header_file")
             if [[ "$http_status" == 429 ]]; then
@@ -505,7 +506,7 @@ function oci_tags_by_digest {
     fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
-        if [[ "$registry_tag_scan" == any &&
+        if [[ "$registry_tag_scan" == any-durable &&
                 -n "${registry_direct_tag_confirmed-}" &&
                 "$tag" == "$registry_direct_tag" ]]; then
             registry_seed_matching_tags="$tag"

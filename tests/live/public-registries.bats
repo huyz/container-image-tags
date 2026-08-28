@@ -8,6 +8,6 @@ load ../test-helper.bash
 
     PATH="$ORIGINAL_PATH" CURL=curl JQ="$SYSTEM_JQ" GETOPT="$SYSTEM_GETOPT" REALPATH="$SYSTEM_REALPATH" \
         run "$SYSTEM_BASH" "$REPO_ROOT/container-image-tags" \
-            --tag-resolution=remote --tag-scan=any "$CIT_LIVE_GENERIC_OCI_REF"
+            --tag-resolution=remote --tag-scan=any-durable "$CIT_LIVE_GENERIC_OCI_REF"
     assert_status 0
 }

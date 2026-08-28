@@ -121,7 +121,7 @@ announce a fallback and resolve the tag through the registry. Use
 remote` to ignore Docker's local state. Remote registry queries used to compare
 or find tags are still available with a local baseline.
 
-Use `--tag-scan ask|never|any|all` to control reverse tag lookup. Use
+Use `--tag-scan ask|never|any|any-durable|all` to control reverse tag lookup. Use
 `--credential-policy never|if-required|if-faster|require` to control when user
 credentials may be used; the default is `if-faster`. Run
 `container-image-tags --help` for the full option and input-resolution guide.
@@ -129,19 +129,20 @@ See [Architecture](docs/architecture.md) for the processing pipeline, result
 record, provider boundaries, current registry-access matrix, credential-policy
 design direction, fallback ownership, and runtime-resource model.
 
-`any` means any matching tag heuristically assumed durable, not merely any
-arbitrary alias. The heuristic infers the most precise recurring semantic
+`any` stops at the first matching tag, including a floating alias such as
+`latest`. `any-durable` retains the previous bounded-scan behavior: it stops at
+a tag heuristically assumed durable. The heuristic infers the most precise recurring semantic
 version shape in the tags exposed by the registry: for a repository containing
 both `1.796` and `1.796.0`, the three-component tag is treated as durable and
 the shorter tag as floating. Known channels such as `latest`, `main`, `dev`,
 `stable`, and `edge` are floating; complete commit-like and date-like tags are
-durable. A directly checked three-or-more-component version can satisfy `any`
+durable. A directly checked three-or-more-component version can satisfy `any-durable`
 immediately. For shorter version schemes, the first registry tag page supplies
-the repository convention and can satisfy `any` without further pagination or
+the repository convention and can satisfy `any-durable` without further pagination or
 manifest probes. These classifications express publisher convention, not a
 registry guarantee. `all` remains exhaustive and returns every matching tag.
 
-While searching, `any` retains every matching tag encountered in candidate
+While searching, `any-durable` retains every matching tag encountered in candidate
 order, including floating tags, and stops after the first durable match. A
 confirmed floating baseline tag is included without probing it again. Thus a
 result may contain `latest`, `1.796`, and `1.796.0`; the final tag is the durable
@@ -149,14 +150,14 @@ match that satisfied the scan.
 
 Generic public OCI scans list tags once, reuse one anonymous repository token,
 and issue manifest `HEAD` requests with up to eight transfers in flight. Curl's
-parallel engine reuses connections for exhaustive scans; `any` mode checks
-candidate tags with the rolling worker pool so it can stop scheduling after the
-first durable match. Skopeo uses the same pool
+parallel engine reuses connections for exhaustive scans; `any` and
+`any-durable` check candidate tags with the rolling worker pool so they can stop
+scheduling after the requested match. Skopeo uses the same pool
 when the OCI fast path is unavailable. Interactive scans estimated above three
 minutes print an advisory and continue. Non-interactive scans estimated above
 ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
 
-The engine is selected automatically; `any` scans always use the pool so they
+The engine is selected automatically; bounded scans always use the pool so they
 can stop scheduling early. See [Benchmarks](docs/benchmarks.md) for the
 Codeberg comparison that informed this choice.
 
@@ -165,7 +166,7 @@ Codeberg comparison that informed this choice.
 Use `--json` for automation. Standard output is a single JSON array with one
 object per resolved image; wildcard inputs may therefore add multiple objects.
 Diagnostics continue to use standard error. JSON mode defaults to
-`--tag-scan=any` even on an interactive terminal, while an explicit
+`--tag-scan=any-durable` even on an interactive terminal, while an explicit
 `--tag-scan` value takes precedence. Each result includes the original input,
 baseline source, local image and container details, repository digest, registry
 classification, direct remote-tag check, and reverse-scan status and tags.

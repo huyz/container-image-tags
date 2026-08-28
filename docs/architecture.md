@@ -73,7 +73,7 @@ slow, or an anonymous path as necessarily fast.
 | Cost guard      | May an estimated long per-tag scan proceed unattended?  | `--allow-expensive-scan`                               |
 
 The current default paths are below. Numbers show attempt order within each
-lookup column. A “Skopeo fallback” step expands to the sequence in that row's
+lookup column. A "Skopeo fallback" step expands to the sequence in that row's
 Skopeo column.
 
 | Registry | Direct tag lookup order | Reverse digest lookup order | Native credential path | Skopeo fallback | Reverse-scan cost |
@@ -87,9 +87,9 @@ Skopeo column.
 | ECR Public | 1. Public OCI manifest request<br>2. Skopeo fallback | 1. Signed ECR Public API when AWS credentials are detectable<br>2. Public OCI listing and parallel manifest `HEAD` requests<br>3. Skopeo fallback | 1. Use AWS credentials with the signed reverse-lookup API<br>2. Obtain a short-lived AWS token if Skopeo is denied | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived AWS token after access denial | ECR API: **fast**<br>OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
 | Other OCI | 1. Public OCI manifest request<br>2. Skopeo fallback | 1. Public OCI tag listing and parallel manifest `HEAD` requests<br>2. Skopeo fallback | Not applicable | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
 
-Here, “public” means that no user credential is supplied (i.e. anonymous). An OCI registry may
-still issue a repository-scoped bearer token for public access, so “no user
-credentials” is more precise than “no authentication.” A rate limit or an
+Here, "public" means that no user credential is supplied (i.e. anonymous). An OCI registry may
+still issue a repository-scoped bearer token for public access, so "no user
+credentials" is more precise than "no authentication." A rate limit or an
 authoritative not-found response is terminal; it must not trigger a broader or
 credentialed fallback.
 
@@ -112,13 +112,16 @@ Backend selection remains automatic within that constraint:
 This policy should remain orthogonal to `--tag-scan` and
 `--allow-expensive-scan`. Scan breadth determines completeness; the expensive
 scan guard determines whether a costly chosen path may proceed. Backend
-selection should stay automatic within those constraints because “fast” and
-“authenticated” do not form opposite ends of one scale.
+selection should stay automatic within those constraints because "fast" and
+"authenticated" do not form opposite ends of one scale.
 
-## `any` scan contract
+## Bounded scan contracts
 
-`any` means the first matching tag heuristically classified as durable, not the
-first arbitrary match. All matching floating tags encountered before that
+`any` stops at the first matching tag in provider order. A baseline tag whose
+direct check matched satisfies the scan immediately, even when it is floating.
+
+`any-durable` means the first matching tag heuristically classified as durable.
+All matching floating tags encountered before that
 durable tag are retained. A baseline tag whose direct check matched is seeded
 as the first result—including a local tag—and is not probed again. If that tag
 is floating, scanning continues; if it is durable under the observed repository
@@ -127,7 +130,8 @@ convention, it satisfies the scan immediately.
 `select_matching_tags_for_scan` is the policy entry point for providers that
 receive a complete metadata tag set. OCI and Skopeo use the same durability
 helpers in the shared rolling worker scheduler so incremental scans preserve
-candidate order and stop scheduling only after a durable match is observed.
+candidate order and stop scheduling after the match required by the selected
+bounded mode is observed.
 
 ## Runtime resources
 

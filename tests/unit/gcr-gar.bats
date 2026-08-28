@@ -55,12 +55,12 @@ EOF
     assert_output_exact sha256:one
 }
 
-@test "GCR-004 reverse lookup matches the full digest and any returns a durable tag" {
+@test "GCR-004 reverse lookup matches the full digest and any-durable returns a durable tag" {
     load_gcr
     function gcr_metadata_anonymously {
         printf '{"manifest":{"%s":{"tag":["stable","1.2.3"]},"sha256:prefix":{"tag":["1.2","wrong"]}}}\n' "$DIGEST"
     }
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     registry_direct_tag=stable
     registry_direct_tag_confirmed=1
 

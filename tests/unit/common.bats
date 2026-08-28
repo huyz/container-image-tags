@@ -79,6 +79,9 @@ function lookup_and_log {
     run remote_tag_scan_choice 1
     assert_status 0
     assert_output_exact any
+    run remote_tag_scan_choice d
+    assert_status 0
+    assert_output_exact any-durable
     run remote_tag_scan_choice a
     assert_status 0
     assert_output_exact all
@@ -103,7 +106,9 @@ function lookup_and_log {
 @test "COMMON-007 uppercase and long-form choices normalize to documented actions" {
     load_common
 
-    for pair in 'ANY any' 'All all' 'NO none' 'N none' 'A all'; do
+    for pair in 'ANY any' 'Any any' \
+            'Any-Durable any-durable' 'Durable any-durable' \
+            'D any-durable' 'All all' 'NO none' 'N none' 'A all'; do
         set -- $pair
         run remote_tag_scan_choice "$1"
         assert_status 0
@@ -145,9 +150,9 @@ function lookup_and_log {
     ! tag_is_assumed_durable main
 }
 
-@test "COMMON-011 any includes confirmed local tag and incidental floating matches" {
+@test "COMMON-011 any-durable includes confirmed local tag and incidental floating matches" {
     load_common
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     registry_direct_tag=latest
     registry_direct_tag_confirmed=1
 
@@ -156,6 +161,22 @@ function lookup_and_log {
         $'latest\n1.796\n1.796.0\n1.797.0'
     assert_status 0
     assert_output_exact $'latest\n1.796\n1.796.0'
+}
+
+@test "COMMON-012 any returns a confirmed floating tag or the first provider match" {
+    load_common
+    registry_tag_scan=any
+    registry_direct_tag=latest
+    registry_direct_tag_confirmed=1
+
+    run select_matching_tags_for_scan $'1.796\n1.796.0'
+    assert_status 0
+    assert_output_exact latest
+
+    registry_direct_tag_confirmed=
+    run select_matching_tags_for_scan $'stable\n1.796.0'
+    assert_status 0
+    assert_output_exact stable
 }
 
 @test "POOL-001 rolling pool never exceeds its configured worker cap" {
@@ -198,9 +219,9 @@ function lookup_and_log {
     assert_output_exact $'match-slow\nmatch'
 }
 
-@test "POOL-003 any mode stops scheduling after the first durable match" {
+@test "POOL-003 any-durable stops scheduling after the first durable match" {
     load_common
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     candidates=(1.2.3 slow never-one never-two)
 
     run lookup_pool_any
@@ -258,9 +279,9 @@ function lookup_pool_terminal {
         progress worker lookup_and_log 1
 }
 
-@test "POOL-007 any mode can succeed after an unrelated worker failure" {
+@test "POOL-007 any-durable can succeed after an unrelated worker failure" {
     load_common
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     candidates=(failed 1.2.3)
 
     run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
@@ -328,9 +349,9 @@ function lookup_pool_terminal {
     [[ "$before" == "$after" ]]
 }
 
-@test "POOL-013 any retains floating matches through the first durable match" {
+@test "POOL-013 any-durable retains floating matches through the first durable match" {
     load_common
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     registry_durable_semver_precision=3
     registry_seed_matching_tags=latest
     candidates=(1.2 1.2.3 never)
@@ -339,5 +360,17 @@ function lookup_pool_terminal {
         progress worker lookup_and_log ''
     assert_status 0
     assert_output_exact $'latest\n1.2\n1.2.3'
+    ! grep -Fxq never "$CALLS_DIR/lookups"
+}
+
+@test "POOL-014 any stops after the first matching floating tag" {
+    load_common
+    registry_tag_scan=any
+    candidates=(1.2 never)
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 1 \
+        progress worker lookup_and_log ''
+    assert_status 0
+    assert_output_exact 1.2
     ! grep -Fxq never "$CALLS_DIR/lookups"
 }

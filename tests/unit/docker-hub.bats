@@ -88,9 +88,9 @@ EOF
     [[ -z "$registry_tags" ]]
 }
 
-@test "HUB-006 any retains floating aliases and stops at a durable match" {
+@test "HUB-006 any-durable retains floating aliases and stops at a durable match" {
     load_hub
-    registry_tag_scan=any; registry_direct_tag=latest; registry_tags=; skip_input=
+    registry_tag_scan=any-durable; registry_direct_tag=latest; registry_tags=; skip_input=
     registry_direct_tag_confirmed=1
     install_hub_response 200 \
         "{\"results\":[{\"name\":\"latest\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.2\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.2.3\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.3.0\",\"digest\":\"sha256:other\"}],\"next\":\"https://unused.example\"}"
@@ -276,4 +276,14 @@ EOF
     assert_status 1
     assert_stderr_contains 'HTTP 429'
     refute_file_exists "$CALLS_DIR/skopeo"
+}
+
+@test "HUB-018 any stops at the first matching floating tag" {
+    load_hub
+    registry_tag_scan=any; registry_direct_tag=; registry_tags=; skip_input=
+    install_hub_response 200 \
+        "{\"results\":[{\"name\":\"stable\",\"digest\":\"sha256:$DIGEST\"},{\"name\":\"1.2.3\",\"digest\":\"sha256:$DIGEST\"}],\"next\":\"https://unused.example\"}"
+
+    docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
+    [[ "$registry_tags" == stable ]]
 }

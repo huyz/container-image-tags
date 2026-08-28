@@ -24,9 +24,9 @@ tags: `11`, `11.0`, and `11.0.16`.
 Curl's parallel engine was 1.93x faster, saving about 20.4 seconds per scan
 (48.2% lower wall-clock time). The result supports automatic selection of curl
 parallel transfers for exhaustive scans when the installed curl supports them,
-with the rolling pool retained as the compatibility fallback. `any` scans
-continue to use the pool because they can stop scheduling after a match
-of durable tag.
+with the rolling pool retained as the compatibility fallback. `any` and
+`any-durable` scans continue to use the pool because they can stop scheduling
+after the requested match.
 
 These measurements are network-dependent and are intended as directional
 evidence rather than a performance guarantee for every OCI registry.

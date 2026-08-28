@@ -1,3 +1,7 @@
+# shellcheck shell=bash
+# shellcheck source-path=SCRIPTDIR
+# shellcheck disable=SC2034  # setup exports test configuration to sourced modules
+
 function setup_test_environment {
     TEST_ROOT="$BATS_TEST_TMPDIR/cit"
     STUB_BIN="$TEST_ROOT/bin"

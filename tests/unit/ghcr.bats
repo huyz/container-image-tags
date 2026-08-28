@@ -151,9 +151,9 @@ EOF
     "$SYSTEM_JQ" -e '.name == "'"$DIGEST"'"' >/dev/null <<<"$registry_metadata"
 }
 
-@test "GHCR-016 Packages any retains matches through the first durable tag" {
+@test "GHCR-016 Packages any-durable retains matches through the first durable tag" {
     load_ghcr
-    registry_tag_scan=any; registry_direct_tag=latest
+    registry_tag_scan=any-durable; registry_direct_tag=latest
     registry_direct_tag_confirmed=1
     registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
     function ghcr_package_version_by_digest {
@@ -164,9 +164,9 @@ EOF
     [[ "$registry_tags" == $'latest\n1.796\n1.796.0' ]]
 }
 
-@test "GHCR-017 if-faster any uses an OCI tag sample before Packages pagination" {
+@test "GHCR-017 if-faster any-durable uses an OCI tag sample before Packages pagination" {
     load_ghcr
-    registry_tag_scan=any; registry_direct_tag=17.6; registry_direct_tag_confirmed=1
+    registry_tag_scan=any-durable; registry_direct_tag=17.6; registry_direct_tag_confirmed=1
     registry_tags=; registry_lookup_backend=; registry_lookup_result=completed
     function oci_list_tags_anonymously {
         [[ "$3" == sample ]]

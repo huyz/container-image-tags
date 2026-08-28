@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# shellcheck disable=SC2154  # Bats supplies status to assertion helpers
+
 function fail_test {
     printf 'FAIL: %s\n' "$*" >&2
     return 1

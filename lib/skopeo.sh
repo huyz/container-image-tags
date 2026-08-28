@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Generic OCI registry fallback. Skopeo reads credentials written by
 # skopeo/podman login and, as a fallback, Docker's config.json (including
@@ -112,7 +113,8 @@ function registry_expensive_scan_preflight {
     local estimated_seconds=$(( estimated_batches * estimated_seconds_per_batch ))
     local estimated_duration scan_description threshold worker_description
 
-    if [[ "$registry_tag_scan" == any ]]; then
+    if [[ "$registry_tag_scan" == any ||
+            "$registry_tag_scan" == any-durable ]]; then
         scan_description="may inspect up to $candidate_count tags"
     else
         scan_description="will inspect $candidate_count tags"
@@ -181,7 +183,7 @@ function skopeo_tags_by_digest {
 
     durable_precision=$(durable_semver_precision_from_tags "$tags")
     registry_durable_semver_precision="$durable_precision"
-    if [[ "$registry_tag_scan" == any &&
+    if [[ "$registry_tag_scan" == any-durable &&
             -n "${registry_direct_tag_confirmed-}" &&
             -n "$registry_direct_tag" ]] &&
             tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
@@ -190,7 +192,7 @@ function skopeo_tags_by_digest {
     fi
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
-        if [[ "$registry_tag_scan" == any &&
+        if [[ "$registry_tag_scan" == any-durable &&
                 -n "${registry_direct_tag_confirmed-}" &&
                 "$tag" == "$registry_direct_tag" ]]; then
             registry_seed_matching_tags="$tag"

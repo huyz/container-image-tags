@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Amazon Elastic Container Registry support. Private registries first use the
 # signed metadata API; registry credentials and ECR Public access retain the

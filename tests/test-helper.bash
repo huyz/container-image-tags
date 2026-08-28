@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# shellcheck source-path=SCRIPTDIR
+
 TESTS_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bats_require_minimum_version 1.5.0
 REPO_ROOT=$(cd -- "$TESTS_DIR/.." && pwd)

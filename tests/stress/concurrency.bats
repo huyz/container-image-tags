@@ -60,9 +60,9 @@ function lookup_terminal_stress {
     done
 }
 
-@test "STRESS-002 any mode stops new scheduling over 25 varied runs" {
+@test "STRESS-002 any-durable stops new scheduling over 25 varied runs" {
     load_common
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     candidates=(1.2.3 slow never-one never-two)
 
     for STRESS_ITERATION in $(seq 1 25); do

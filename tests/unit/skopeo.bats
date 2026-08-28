@@ -100,9 +100,9 @@ EOF
     [[ $(grep -ao 'list-tags' "$CALLS_DIR/skopeo.args" | wc -l) -eq 1 ]]
 }
 
-@test "SKOPEO-007 any mode schedules floating tags until a durable match" {
+@test "SKOPEO-007 any-durable schedules floating tags until a durable match" {
     load_skopeo
-    registry_tag_scan=any
+    registry_tag_scan=any-durable
     registry_direct_tag=latest
     write_stub skopeo <<'EOF'
 printf '%s\n' '{"Tags":["latest","1.2","1.2.3","1.3.0"]}'

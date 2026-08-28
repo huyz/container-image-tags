@@ -158,11 +158,11 @@ EOF
     assert_output_contains '<none>'
 }
 
-@test "OUTPUT-009 confirmed durable direct tag satisfies any without reverse scan" {
+@test "OUTPUT-009 confirmed durable direct tag satisfies any-durable without reverse scan" {
     install_local_output_fixtures
     export LOCAL_REPO_TAGS=registry.example/app:1.2.3
 
-    run_cli --tag-resolution=local --tag-scan=any registry.example/app:1.2.3
+    run_cli --tag-resolution=local --tag-scan=any-durable registry.example/app:1.2.3
     assert_status 0
     assert_output_contains 'Remote tags (partial scan):'
     assert_output_contains '1.2.3'

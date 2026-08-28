@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
 
 # Google registry access. GAR uses the shared OCI HEAD engine for public and
 # short-lived-token access; Skopeo remains the compatibility fallback. GCR also
