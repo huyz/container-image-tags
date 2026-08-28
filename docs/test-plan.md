@@ -449,6 +449,8 @@ Implement in `tests/unit/docker-hub.bats`:
   interactive PAT retry of the exact tag.
 - `HUB-020` P0: an authoritative not-found or stopped direct fallback never
   prompts for another credential.
+- `HUB-021` P0: an exhaustive first page feeds total page count and measured
+  latency into the shared cost guard.
 
 ## GHCR
 
@@ -456,8 +458,8 @@ Implement in `tests/unit/ghcr.bats`:
 
 - `GHCR-001` P0: package names are URL encoded exactly.
 - `GHCR-002` P0: organization and user endpoints are tried as documented.
-- `GHCR-003` P0: paginated arrays are combined; newest matching active version
-  wins.
+- `GHCR-003` P0: pages are searched incrementally and stop after an exact
+  digest or tag match without invoking `--paginate`.
 - `GHCR-004` P0: lookup by complete digest and by exact tag.
 - `GHCR-005` P0: reachable API with no match returns `LOOKUP_NOT_FOUND`.
 - `GHCR-006` P0: unavailable `gh` or failed endpoints return
@@ -480,6 +482,15 @@ Implement in `tests/unit/ghcr.bats`:
   confirmed two-component direct tag before Packages pagination.
 - `GHCR-018` P0: an authoritative not-found or stopped direct fallback never
   prompts for scope refresh.
+- `GHCR-019` P0: a first-page Packages match completes without listing OCI
+  tags.
+- `GHCR-020` P0: adaptive selection chooses OCI when its conservative
+  remaining estimate is lower.
+- `GHCR-021` P0: adaptive selection continues Packages when measured page cost
+  is lower.
+- `GHCR-022` P0: refusal by the shared Packages cost guard is terminal.
+- `GHCR-023` P0: a failed comparison-only OCI inventory retains a viable
+  Packages continuation.
 
 ## ACR
 
@@ -642,6 +653,10 @@ Implement in `tests/unit/oci.bats`:
 - `OCI-023` P0: Bearer token never appears in argv or diagnostics.
 - `OCI-024` P0: request, response, and header temporary files are removed on all
   handled exits.
+- `OCI-025` P0: tag pagination stops when the observed tag lower bound already
+  makes the subsequent manifest scan too expensive.
+- `OCI-026` P0: comparison-only tag inventory stops once its lower-bound scan
+  cost exceeds the competing backend estimate.
 
 ## Skopeo and credential policy
 

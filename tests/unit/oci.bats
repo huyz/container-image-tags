@@ -431,3 +431,48 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
     [[ -z $(find "$TMPDIR" -mindepth 1 -print -quit) ]]
 }
+
+@test "OCI-025 pagination stops when the observed tag lower bound is already expensive" {
+    load_oci
+    registry_tag_scan=all; registry_direct_tag=
+    function registry_estimated_milliseconds { printf '%s\n' 999999999; }
+    function registry_expensive_work_preflight {
+        printf '%s\0' "$@" >"$CALLS_DIR/preflight.args"
+        return "$LOOKUP_STOPPED"
+    }
+    write_stub curl <<'EOF'
+headers= body=
+for ((index = 1; index <= $#; ++index)); do
+    if [[ "${!index}" == -D ]]; then index=$((index + 1)); headers="${!index}"; fi
+    if [[ "${!index}" == -o ]]; then index=$((index + 1)); body="${!index}"; fi
+done
+printf 'HTTP/1.1 200 OK\r\nLink: </v2/team/app/tags/list?n=100&last=z>; rel="next"\r\n' >"$headers"
+printf '%s\n' '{"tags":["a","b"]}' >"$body"
+printf '200'
+EOF
+
+    run oci_list_tags_anonymously registry.example team/app
+    assert_status "$LOOKUP_STOPPED"
+    assert_call_args "$CALLS_DIR/preflight.args" \
+        'OCI HEAD' registry.example/team/app \
+        'must already inspect at least 2 listed tags' 2 8 1000
+}
+
+@test "OCI-026 comparison inventory stops once its lower bound exceeds the competitor" {
+    load_oci
+    registry_tag_scan=all; registry_direct_tag=
+    write_stub curl <<'EOF'
+headers= body=
+for ((index = 1; index <= $#; ++index)); do
+    if [[ "${!index}" == -D ]]; then index=$((index + 1)); headers="${!index}"; fi
+    if [[ "${!index}" == -o ]]; then index=$((index + 1)); body="${!index}"; fi
+done
+printf 'HTTP/1.1 200 OK\r\nLink: </v2/team/app/tags/list?n=100&last=z>; rel="next"\r\n' >"$headers"
+printf '%s\n' '{"tags":["a","b","c","d","e","f","g","h","i"]}' >"$body"
+printf '200'
+EOF
+
+    run oci_list_tags_anonymously registry.example team/app inventory 1000
+    assert_status "$LOOKUP_UNAVAILABLE"
+    [[ "$output" == '' ]]
+}

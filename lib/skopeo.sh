@@ -23,8 +23,6 @@ skopeo_inspect_platform_args=()
 # obviously expensive scans, not to promise an exact completion time.
 readonly SKOPEO_ESTIMATED_SECONDS_PER_TAG=2
 readonly SKOPEO_MAX_PARALLEL_JOBS=8
-readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE=180
-readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE=600
 
 # Native Skopeo sees macOS as Darwin, but Docker Desktop runs container images
 # inside a Linux VM. Override only the OS on macOS so multi-platform inspection
@@ -86,60 +84,7 @@ function skopeo_digest_for_tag_worker {
 }
 
 function skopeo_format_estimated_duration {
-    local total_seconds="$1"
-    local minutes=$(( total_seconds / 60 ))
-    local seconds=$(( total_seconds % 60 ))
-
-    if (( minutes > 0 && seconds > 0 )); then
-        printf '%dm %ds' "$minutes" "$seconds"
-    elif (( minutes > 0 )); then
-        printf '%dm' "$minutes"
-    else
-        printf '%ds' "$seconds"
-    fi
-}
-
-# Warn before an expensive interactive scan. Non-interactive callers cannot
-# acknowledge an advisory, so require an explicit override and fail before the
-# first per-tag manifest lookup. Registry fast paths share the same thresholds
-# while supplying their own conservative per-batch estimate.
-function registry_expensive_scan_preflight {
-    local backend="$1"
-    local repository="$2"
-    local candidate_count="$3"
-    local parallel_jobs="$4"
-    local estimated_seconds_per_batch="$5"
-    local estimated_batches=$(( (candidate_count + parallel_jobs - 1) / parallel_jobs ))
-    local estimated_seconds=$(( estimated_batches * estimated_seconds_per_batch ))
-    local estimated_duration scan_description threshold worker_description
-
-    if [[ "$registry_tag_scan" == any ||
-            "$registry_tag_scan" == any-durable ]]; then
-        scan_description="may inspect up to $candidate_count tags"
-    else
-        scan_description="will inspect $candidate_count tags"
-    fi
-    estimated_duration=$(skopeo_format_estimated_duration "$estimated_seconds")
-    worker_description="$parallel_jobs parallel worker"
-    (( parallel_jobs == 1 )) || worker_description+=s
-
-    if is_interactive_session; then
-        threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE
-        if (( estimated_seconds > threshold )); then
-            warn "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because this is an interactive run."
-        fi
-        return 0
-    fi
-
-    threshold=$EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE
-    if (( estimated_seconds > threshold )); then
-        if [[ -n ${opt_allow_expensive_scan-} ]]; then
-            notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Continuing because --allow-expensive-scan was specified."
-        else
-            notice "$backend $scan_description for $repository; estimated time is about $estimated_duration with $worker_description. Rerun with --allow-expensive-scan to permit this non-interactive scan."
-            return "$LOOKUP_STOPPED"
-        fi
-    fi
+    registry_format_estimated_duration "$@"
 }
 
 function skopeo_expensive_scan_preflight {

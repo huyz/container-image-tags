@@ -154,7 +154,7 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
         -d|--debug: turn on debug mode; could trigger more requests
             to find get more error details from registries
         --json: write one JSON array containing all results to stdout
-        --allow-expensive-scan: permit an expensive non-interactive per-tag registry scan
+        --allow-expensive-scan: permit an expensive non-interactive bulk registry lookup
         --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
             local: require a local image as the baseline
@@ -178,8 +178,8 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
 For a local baseline, its known tag is checked first. Interactive runs then ask
 whether to stop at any matching tag, stop at a durable match, or find all matching tags;
 non-interactive runs stop after a durable match unless another mode is specified.
-Expensive interactive per-tag registry scans print an advisory and continue.
-Expensive non-interactive scans fail fast unless '--allow-expensive-scan' is
+Expensive interactive bulk registry lookups print an advisory and continue.
+Expensive non-interactive lookups fail fast unless '--allow-expensive-scan' is
 specified. Public generic OCI registries use parallel manifest HEAD requests;
 Skopeo remains the fallback for private or incompatible registries.
 Docker Hub scans start anonymously. Set environment variables 'DOCKER_HUB_USERNAME'

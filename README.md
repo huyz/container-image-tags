@@ -107,7 +107,7 @@ container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 # Check all local containers for all remote tags.
 container-image-tags --tag-scan=all $(docker ps -a --format '{{.Names}}')
 
-# Explicitly permit a long non-interactive per-tag registry scan.
+# Explicitly permit a long non-interactive bulk lookup.
 container-image-tags --tag-scan=all --allow-expensive-scan registry.example/app:1
 
 # Return one machine-readable array containing every result.
@@ -152,9 +152,20 @@ and issue manifest `HEAD` requests with up to eight transfers in flight. Curl's
 parallel engine reuses connections for exhaustive scans; `any` and
 `any-durable` check candidate tags with the rolling worker pool so they can stop
 scheduling after the requested match. Skopeo uses the same pool
-when the OCI fast path is unavailable. Interactive scans estimated above three
-minutes print an advisory and continue. Non-interactive scans estimated above
-ten minutes fail fast; pass `--allow-expensive-scan` to permit one explicitly.
+when the OCI fast path is unavailable. Tag pagination stops early when the
+observed lower bound alone proves that the subsequent scan is too expensive.
+Docker Hub similarly estimates exhaustive pagination from its first page.
+
+GHCR Packages pages are searched as they arrive. Under the default
+`if-faster` credential policy, an unresolved multi-page Packages lookup lists
+the current OCI tags, compares the measured Packages page cost with the
+conservative parallel OCI estimate, and selects the cheaper remaining path.
+OCI inventory pagination stops as soon as its observed lower-bound scan cost
+already exceeds the Packages estimate.
+Neither package pages nor provider tag arrays are assumed chronological; OCI
+tag pagination is lexical. Interactive bulk work estimated above three minutes
+prints an advisory and continues. Non-interactive work estimated above ten
+minutes fails fast; pass `--allow-expensive-scan` to permit one explicitly.
 
 The engine is selected automatically; bounded scans always use the pool so they
 can stop scheduling early. See [Benchmarks](docs/benchmarks.md) for the

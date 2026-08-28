@@ -137,8 +137,11 @@ function oci_list_tags {
     local page_mode="${3-full}"
     local initial_token="${4-}"
     local allow_anonymous_challenge="${5-}"
+    local inventory_scan_limit_ms="${6-}"
     local request_headers response_headers response_body
     local next_url next_link page_tags auth_header http_code token_status durable_precision
+    local page_tag_count listed_tag_count=0 estimated_scan_ms threshold_ms
+    local pagination_cost_advised=
     local lookup_status=$LOOKUP_SUCCEEDED
 
     oci_bearer_token="$initial_token"
@@ -179,6 +182,8 @@ function oci_list_tags {
                 break
             fi
             page_tags=$("$JQ" -r '.tags[]?' "$response_body")
+            page_tag_count=$("$JQ" -r '.tags | length' "$response_body")
+            listed_tag_count=$(( listed_tag_count + page_tag_count ))
             if [[ -n "$page_tags" ]]; then
                 oci_listed_tags+="${oci_listed_tags:+$'\n'}$page_tags"
             fi
@@ -194,6 +199,39 @@ function oci_list_tags {
             if [[ "$page_mode" == sample ]]; then
                 next_url=
                 continue
+            fi
+            estimated_scan_ms=$(registry_estimated_milliseconds \
+                "$listed_tag_count" "$OCI_MAX_PARALLEL_JOBS" \
+                "$(( OCI_ESTIMATED_SECONDS_PER_BATCH * 1000 ))")
+            if [[ "$page_mode" == inventory &&
+                    "$inventory_scan_limit_ms" =~ ^[0-9]+$ ]] &&
+                    (( estimated_scan_ms > inventory_scan_limit_ms )); then
+                debug "OCI inventory lower bound exceeded the competing backend estimate for $registry/$repository: tags=$listed_tag_count oci_ms=$estimated_scan_ms limit_ms=$inventory_scan_limit_ms"
+                lookup_status=$LOOKUP_UNAVAILABLE
+                break
+            fi
+            # Adaptive GHCR selection inventories tags only to compare the two
+            # backends. Defer the HEAD cost decision until OCI is actually
+            # selected; ordinary full scans can stop during pagination as soon
+            # as the observed lower bound is already too expensive.
+            if [[ "$page_mode" == full ]]; then
+                if is_interactive_session; then
+                    threshold_ms=$(( EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE * 1000 ))
+                else
+                    threshold_ms=$(( EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE * 1000 ))
+                fi
+                if [[ -z "$pagination_cost_advised" ]] &&
+                        (( estimated_scan_ms > threshold_ms )); then
+                    if ! registry_expensive_work_preflight \
+                            'OCI HEAD' "$registry/$repository" \
+                            "must already inspect at least $listed_tag_count listed tags" \
+                            "$listed_tag_count" "$OCI_MAX_PARALLEL_JOBS" \
+                            "$(( OCI_ESTIMATED_SECONDS_PER_BATCH * 1000 ))"; then
+                        lookup_status=$LOOKUP_STOPPED
+                        break
+                    fi
+                    pagination_cost_advised=1
+                fi
             fi
             next_link=$(oci_next_link "$response_headers")
             case "$next_link" in
@@ -223,7 +261,7 @@ function oci_list_tags {
 }
 
 function oci_list_tags_anonymously {
-    oci_list_tags "$1" "$2" "${3-full}" '' 1
+    oci_list_tags "$1" "$2" "${3-full}" '' 1 "${4-}"
 }
 
 function oci_list_tags_with_bearer_token {
@@ -481,23 +519,15 @@ function oci_resolve_tag {
 # Print tags whose complete manifest digest matches digest. Individual HEAD
 # failures make an exhaustive result fail so the dispatcher can retry through
 # Skopeo rather than silently returning an incomplete tag set.
-function oci_tags_by_digest {
+function oci_tags_by_digest_from_list {
     local registry="$1"
     local repository="$2"
     local digest="$3"
-    local supplied_token="${4-}"
-    local allow_anonymous_challenge="${5-}"
     local display_repository="$registry/$repository"
     local tag request_headers tags lookup_status durable_precision
     local candidate_count parallel_jobs use_parallel
     local -a candidate_tags=()
 
-    if [[ -n "$allow_anonymous_challenge" ]]; then
-        oci_list_tags_anonymously "$registry" "$repository" || return $?
-    else
-        oci_list_tags_with_bearer_token \
-            "$registry" "$repository" "$supplied_token" || return $?
-    fi
     durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
     registry_durable_semver_precision="$durable_precision"
     if [[ -n "$oci_direct_tag_durable" ]]; then
@@ -554,6 +584,22 @@ function oci_tags_by_digest {
     rm -f "$request_headers"
     (( lookup_status == LOOKUP_SUCCEEDED )) || return "$lookup_status"
     printf '%s' "$tags"
+}
+
+function oci_tags_by_digest {
+    local registry="$1"
+    local repository="$2"
+    local digest="$3"
+    local supplied_token="${4-}"
+    local allow_anonymous_challenge="${5-}"
+
+    if [[ -n "$allow_anonymous_challenge" ]]; then
+        oci_list_tags_anonymously "$registry" "$repository" || return $?
+    else
+        oci_list_tags_with_bearer_token \
+            "$registry" "$repository" "$supplied_token" || return $?
+    fi
+    oci_tags_by_digest_from_list "$registry" "$repository" "$digest"
 }
 
 function oci_tags_by_digest_anonymously {

@@ -41,18 +41,27 @@ EOF
     [[ "$args" == *'/users/owner/packages/container/app/versions?per_page=100'* ]]
 }
 
-@test "GHCR-003 newest matching package version wins across paginated arrays" {
+@test "GHCR-003 incremental Packages lookup stops on the first matching page" {
     load_ghcr
     export GH_DIGEST="$DIGEST"
     write_stub gh <<'EOF'
-printf '[{"name":"%s","created_at":"2025-01-01T00:00:00Z","metadata":{"container":{"tags":["old"]}}}]\n' "$GH_DIGEST"
-printf '[{"name":"%s","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["new"]}}}]\n' "$GH_DIGEST"
+printf '%s\0' "$@" >>"$CALLS_DIR/gh.args"
+endpoint="${!#}"
+if [[ "$endpoint" == *'page=1' ]]; then
+    base="${endpoint%&page=*}"
+    printf 'HTTP/2 200\r\nLink: <%s&page=2>; rel="next", <%s&page=2>; rel="last"\r\n\r\n' "$base" "$base"
+    printf '[{"name":"sha256:other","metadata":{"container":{"tags":[]}}}]\n'
+else
+    printf '[{"name":"%s","metadata":{"container":{"tags":["found"]}}}]\n' "$GH_DIGEST"
+fi
 EOF
 
     run ghcr_package_version owner/app digest "$DIGEST"
     assert_status 0
     assert_valid_json
-    assert_json '.metadata.container.tags == ["new"]'
+    assert_json '.metadata.container.tags == ["found"]'
+    [[ $(grep -ao -- '--include' "$CALLS_DIR/gh.args" | wc -l) -eq 2 ]]
+    ! grep -aFq -- '--paginate' "$CALLS_DIR/gh.args"
 }
 
 @test "GHCR-004 Packages API selects exact current tag membership" {
@@ -139,6 +148,7 @@ EOF
 
 @test "GHCR-010 Packages reverse result populates tags and provider metadata" {
     load_ghcr
+    opt_credential_policy=require
     registry_tag_scan=all; registry_direct_tag=stable
     registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
     function ghcr_package_version_by_digest {
@@ -153,6 +163,7 @@ EOF
 
 @test "GHCR-016 Packages any-durable retains matches through the first durable tag" {
     load_ghcr
+    opt_credential_policy=require
     registry_tag_scan=any-durable; registry_direct_tag=latest
     registry_direct_tag_confirmed=1
     registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
@@ -286,4 +297,118 @@ EOF
     run ghcr_digest_for_tag owner/app absent
     assert_status "$LOOKUP_NOT_FOUND"
     refute_file_exists "$CALLS_DIR/prompt"
+}
+
+@test "GHCR-019 adaptive lookup finishes from the first Packages page" {
+    load_ghcr
+    registry_tag_scan=all; registry_direct_tag=
+    registry_tags=; registry_metadata=; registry_lookup_backend=
+    function ghcr_probe_package_version_by_digest {
+        ghcr_package_probe_match='{"name":"sha256:match","metadata":{"container":{"tags":["stable"]}}}'
+        ghcr_package_probe_complete=
+    }
+    function oci_list_tags_anonymously { : >"$CALLS_DIR/oci"; }
+
+    ghcr_tags_by_digest_adaptively owner/app "$DIGEST" ghcr.io/owner/app
+    [[ "$registry_lookup_backend" == github-packages-api ]]
+    [[ "$registry_tags" == stable ]]
+    refute_file_exists "$CALLS_DIR/oci"
+}
+
+@test "GHCR-020 adaptive lookup selects OCI when package continuation costs more" {
+    load_ghcr
+    registry_tag_scan=all; registry_direct_tag=
+    registry_tags=; registry_metadata=; registry_lookup_backend=
+    function ghcr_probe_package_version_by_digest {
+        ghcr_package_probe_match=
+        ghcr_package_probe_complete=
+        ghcr_package_probe_endpoint_base=/endpoint
+        ghcr_package_probe_next=2
+        ghcr_package_probe_last=100
+        ghcr_package_probe_elapsed_ms=1000
+    }
+    function oci_list_tags_anonymously {
+        oci_listed_tags=$(printf 'tag-%d\n' {1..8})
+        oci_direct_tag_durable=
+    }
+    function oci_tags_by_digest_from_list {
+        printf '%s\n' tag-8
+    }
+    function ghcr_continue_package_version_by_digest { : >"$CALLS_DIR/packages"; }
+
+    ghcr_tags_by_digest_adaptively \
+        owner/app "$DIGEST" ghcr.io/owner/app 2>"$TEST_ROOT/stderr"
+    grep -Fq 'Selecting the anonymous OCI scan' "$TEST_ROOT/stderr"
+    [[ "$registry_lookup_backend" == oci-registry-api ]]
+    [[ "$registry_tags" == tag-8 ]]
+    refute_file_exists "$CALLS_DIR/packages"
+}
+
+@test "GHCR-021 adaptive lookup selects incremental Packages when it costs less" {
+    load_ghcr
+    registry_tag_scan=all; registry_direct_tag=
+    registry_tags=; registry_metadata=; registry_lookup_backend=
+    function ghcr_probe_package_version_by_digest {
+        ghcr_package_probe_match=
+        ghcr_package_probe_complete=
+        ghcr_package_probe_endpoint_base=/endpoint
+        ghcr_package_probe_next=2
+        ghcr_package_probe_last=2
+        ghcr_package_probe_elapsed_ms=1
+    }
+    function oci_list_tags_anonymously {
+        oci_listed_tags=$(printf 'tag-%03d\n' {1..100})
+        oci_direct_tag_durable=
+    }
+    function oci_tags_by_digest_from_list { : >"$CALLS_DIR/oci-scan"; }
+    function ghcr_continue_package_version_by_digest {
+        printf '{"name":"%s","metadata":{"container":{"tags":["release"]}}}\n' "$DIGEST"
+    }
+
+    ghcr_tags_by_digest_adaptively owner/app "$DIGEST" ghcr.io/owner/app
+    [[ "$registry_lookup_backend" == github-packages-api ]]
+    [[ "$registry_tags" == release ]]
+    refute_file_exists "$CALLS_DIR/oci-scan"
+}
+
+@test "GHCR-022 adaptive package refusal remains terminal" {
+    load_ghcr
+    registry_tag_scan=all; registry_direct_tag=
+    function ghcr_probe_package_version_by_digest {
+        ghcr_package_probe_match=
+        ghcr_package_probe_complete=
+        ghcr_package_probe_endpoint_base=/endpoint
+        ghcr_package_probe_next=2
+        ghcr_package_probe_last=1000
+        ghcr_package_probe_elapsed_ms=1000
+    }
+    function oci_list_tags_anonymously { return "$LOOKUP_UNAVAILABLE"; }
+    function registry_expensive_work_preflight { return "$LOOKUP_STOPPED"; }
+    function ghcr_continue_package_version_by_digest { : >"$CALLS_DIR/packages"; }
+
+    run ghcr_tags_by_digest_adaptively owner/app "$DIGEST" ghcr.io/owner/app
+    assert_status "$LOOKUP_STOPPED"
+    refute_file_exists "$CALLS_DIR/packages"
+}
+
+@test "GHCR-023 failed OCI inventory retains a viable Packages continuation" {
+    load_ghcr
+    registry_tag_scan=all; registry_direct_tag=
+    registry_tags=; registry_metadata=; registry_lookup_backend=
+    function ghcr_probe_package_version_by_digest {
+        ghcr_package_probe_match=
+        ghcr_package_probe_complete=
+        ghcr_package_probe_endpoint_base=/endpoint
+        ghcr_package_probe_next=2
+        ghcr_package_probe_last=2
+        ghcr_package_probe_elapsed_ms=1
+    }
+    function oci_list_tags_anonymously { return "$LOOKUP_STOPPED"; }
+    function ghcr_continue_package_version_by_digest {
+        printf '{"name":"%s","metadata":{"container":{"tags":["release"]}}}\n' "$DIGEST"
+    }
+
+    ghcr_tags_by_digest_adaptively owner/app "$DIGEST" ghcr.io/owner/app
+    [[ "$registry_lookup_backend" == github-packages-api ]]
+    [[ "$registry_tags" == release ]]
 }

@@ -324,3 +324,19 @@ EOF
     [[ "$remote_tag_status" == "$LOOKUP_NOT_FOUND" ]]
     refute_file_exists "$CALLS_DIR/prompt"
 }
+
+@test "HUB-021 exhaustive pagination uses the shared cost guard" {
+    load_hub
+    registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
+    install_hub_response 200 \
+        '{"count":1000000,"results":[{"name":"one","digest":"sha256:other"}],"next":"https://unused.example"}'
+    function registry_expensive_work_preflight {
+        printf '%s\0' "$@" >"$CALLS_DIR/preflight.args"
+        return "$LOOKUP_STOPPED"
+    }
+
+    run docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
+    assert_status "$LOOKUP_STOPPED"
+    args=$(tr '\0' '\n' <"$CALLS_DIR/preflight.args")
+    [[ "$args" == *$'Docker Hub API\napp\nmay request up to 9999 additional tag pages\n9999\n1'* ]]
+}

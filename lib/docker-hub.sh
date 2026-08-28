@@ -355,6 +355,9 @@ function docker_hub_tags_by_digest {
     local page_tags page_matches durable_precision durable_found
     local authentication_choice
     local has_skopeo_credentials=''
+    local page_started_ms page_finished_ms page_elapsed_ms total_tag_count total_pages
+    local remaining_pages
+    local pagination_cost_checked=
     local -a request_args
 
     digest="${digest#sha256:}"
@@ -383,12 +386,16 @@ function docker_hub_tags_by_digest {
             docker_hub_write_request_headers "$request_headers"
             request_args+=(-H "@$request_headers")
         fi
+        page_started_ms=$(registry_now_milliseconds)
         if ! http_code=$(registry_http_request GET \
                 "$next_url" "$response_tmp" '' "${request_args[@]}"); then
             rm -f "$response_tmp"
             [[ -z "$request_headers" ]] || rm -f "$request_headers"
             abort "Failed to list tags for $display_repository"
         fi
+        page_finished_ms=$(registry_now_milliseconds)
+        page_elapsed_ms=$(( page_finished_ms - page_started_ms ))
+        (( page_elapsed_ms > 0 )) || page_elapsed_ms=1
         [[ -z "$request_headers" ]] || rm -f "$request_headers"
         request_headers=
         error_message=$(registry_json_error_message "$response_tmp")
@@ -455,6 +462,23 @@ function docker_hub_tags_by_digest {
             abort "Docker Hub tag listing failed with HTTP $http_code${error_message:+: $error_message}"
             ;;
         esac
+        if [[ "$registry_tag_scan" == all && -z "$pagination_cost_checked" ]]; then
+            total_tag_count=$($JQ -r '.count // 0' "$response_tmp")
+            if [[ "$total_tag_count" =~ ^[0-9]+$ ]] && (( total_tag_count > 0 )); then
+                total_pages=$(( (total_tag_count + 99) / 100 ))
+                remaining_pages=$(( total_pages - 1 ))
+                if (( remaining_pages > 0 )); then
+                    registry_expensive_work_preflight \
+                        'Docker Hub API' "$display_repository" \
+                        "may request up to $remaining_pages additional tag pages" \
+                        "$remaining_pages" 1 "$page_elapsed_ms" || {
+                        rm -f "$response_tmp"
+                        return "$LOOKUP_STOPPED"
+                    }
+                fi
+            fi
+            pagination_cost_checked=1
+        fi
         page_tags=$($JQ -r '.results[].name' "$response_tmp")
         if [[ "$registry_tag_scan" == any-durable ]]; then
             durable_precision=$(durable_semver_precision_from_tags "$page_tags")
