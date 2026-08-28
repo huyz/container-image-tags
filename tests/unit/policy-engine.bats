@@ -7,6 +7,11 @@ function load_policy_engine {
     # shellcheck source=../../lib/policy-engine.sh
     source "$REPO_ROOT/lib/policy-engine.sh"
     declare -gA policy_request=() policy_result=()
+    declare -ga policy_attempt_ids=()
+    declare -gA policy_attempt_callback=() policy_attempt_backend=()
+    declare -gA policy_attempt_access=() policy_attempt_cost=()
+    declare -gA policy_attempt_authoritative=() policy_attempt_available=()
+    declare -gA policy_attempt_sequence=() policy_attempt_finished=()
     policy_request[operation]=direct
 }
 
@@ -137,4 +142,19 @@ function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCE
     [[ "${policy_result[backend]}" == direct-tag-check ]]
     [[ "${policy_result[tags]}" == latest ]]
     refute_file_exists "$CALLS_DIR/order"
+}
+
+@test "POLICY-ENGINE-011 complete plans leave no process-wide attempt state" {
+    load_common
+    source "$REPO_ROOT/lib/policy-engine.sh"
+    declare -A request=([operation]=direct) result=()
+    function register_attempts {
+        policy_add_attempt public attempt_public_success public-api \
+            "$POLICY_ACCESS_PUBLIC" 10
+    }
+
+    policy_build_and_execute_lookup request result register_attempts
+    [[ "${result[backend]}" == public-api ]]
+    ! declare -p policy_attempt_ids >/dev/null 2>&1
+    ! declare -p policy_attempt_callback >/dev/null 2>&1
 }

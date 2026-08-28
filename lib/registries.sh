@@ -110,9 +110,7 @@ function registry_resolve_tag_digest {
     request[operation]=direct
     request[tag]="$tag"
     request[display_reference]="$remote_tag_reference"
-    policy_plan_reset
-    registry_register_policy_attempts request
-    if policy_execute_lookup request attempt_result; then
+    if policy_build_and_execute_lookup request attempt_result registry_register_policy_attempts; then
         status=$LOOKUP_SUCCEEDED
     else
         status=$?
@@ -157,9 +155,7 @@ function registry_find_tags_by_digest {
     request[scan_mode]="$tag_scan_mode"
     request[direct_tag]="$registry_direct_tag"
     request[direct_tag_confirmed]="${registry_direct_tag_confirmed-}"
-    policy_plan_reset
-    registry_register_policy_attempts request
-    if policy_execute_lookup request attempt_result; then
+    if policy_build_and_execute_lookup request attempt_result registry_register_policy_attempts; then
         status=$LOOKUP_SUCCEEDED
     else
         status=$?

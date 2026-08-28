@@ -30,11 +30,12 @@ function ghcr_adaptive_lookup {
     local status
 
     opt_credential_policy=if-faster
-    policy_plan_reset
-    policy_add_attempt ghcr-packages-adaptive \
-        ghcr_policy_attempt_adaptive_probe github-packages-api \
-        "$POLICY_ACCESS_FAST_CREDENTIAL" 10
-    if policy_execute_lookup request result; then
+    function register_adaptive_attempt {
+        policy_add_attempt ghcr-packages-adaptive \
+            ghcr_policy_attempt_adaptive_probe github-packages-api \
+            "$POLICY_ACCESS_FAST_CREDENTIAL" 10
+    }
+    if policy_build_and_execute_lookup request result register_adaptive_attempt; then
         status=$LOOKUP_SUCCEEDED
     else
         status=$?
@@ -139,8 +140,8 @@ EOF
     registry_tag_scan=all; registry_direct_tag=
     registry_tags=; registry_metadata=; registry_lookup_backend=
     function ghcr_probe_package_version_by_digest {
-        ghcr_package_probe_match='{"name":"sha256:match","metadata":{"container":{"tags":["stable"]}}}'
-        ghcr_package_probe_complete=
+        local -n out="$3"
+        out=([match]='{"name":"sha256:match","metadata":{"container":{"tags":["stable"]}}}' [complete]='')
     }
     function oci_list_tags_anonymously { : >"$CALLS_DIR/oci"; }
 
@@ -155,16 +156,12 @@ EOF
     registry_tag_scan=all; registry_direct_tag=
     registry_tags=; registry_metadata=; registry_lookup_backend=
     function ghcr_probe_package_version_by_digest {
-        ghcr_package_probe_match=
-        ghcr_package_probe_complete=
-        ghcr_package_probe_endpoint_base=/endpoint
-        ghcr_package_probe_next=2
-        ghcr_package_probe_last=100
-        ghcr_package_probe_elapsed_ms=1000
+        local -n out="$3"
+        out=([match]='' [complete]='' [endpoint_base]=/endpoint [next]=2 [last]=100 [elapsed_ms]=1000)
     }
     function oci_list_tags_anonymously {
-        oci_listed_tags=$(printf 'tag-%d\n' {1..8})
-        oci_direct_tag_durable=
+        local -n out="$5"
+        out=([tags]="$(printf 'tag-%d\n' {1..8})" [token]='' [direct_tag_durable]='')
     }
     function oci_tags_by_digest_from_list {
         printf '%s\n' tag-8
@@ -183,16 +180,12 @@ EOF
     registry_tag_scan=all; registry_direct_tag=
     registry_tags=; registry_metadata=; registry_lookup_backend=
     function ghcr_probe_package_version_by_digest {
-        ghcr_package_probe_match=
-        ghcr_package_probe_complete=
-        ghcr_package_probe_endpoint_base=/endpoint
-        ghcr_package_probe_next=2
-        ghcr_package_probe_last=2
-        ghcr_package_probe_elapsed_ms=1
+        local -n out="$3"
+        out=([match]='' [complete]='' [endpoint_base]=/endpoint [next]=2 [last]=2 [elapsed_ms]=1)
     }
     function oci_list_tags_anonymously {
-        oci_listed_tags=$(printf 'tag-%03d\n' {1..100})
-        oci_direct_tag_durable=
+        local -n out="$5"
+        out=([tags]="$(printf 'tag-%03d\n' {1..100})" [token]='' [direct_tag_durable]='')
     }
     function oci_tags_by_digest_from_list { : >"$CALLS_DIR/oci-scan"; }
     function ghcr_continue_package_version_by_digest {
@@ -209,12 +202,8 @@ EOF
     load_ghcr
     registry_tag_scan=all; registry_direct_tag=
     function ghcr_probe_package_version_by_digest {
-        ghcr_package_probe_match=
-        ghcr_package_probe_complete=
-        ghcr_package_probe_endpoint_base=/endpoint
-        ghcr_package_probe_next=2
-        ghcr_package_probe_last=1000
-        ghcr_package_probe_elapsed_ms=1000
+        local -n out="$3"
+        out=([match]='' [complete]='' [endpoint_base]=/endpoint [next]=2 [last]=1000 [elapsed_ms]=1000)
     }
     function oci_list_tags_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function registry_expensive_work_preflight { return "$LOOKUP_STOPPED"; }
@@ -230,12 +219,8 @@ EOF
     registry_tag_scan=all; registry_direct_tag=
     registry_tags=; registry_metadata=; registry_lookup_backend=
     function ghcr_probe_package_version_by_digest {
-        ghcr_package_probe_match=
-        ghcr_package_probe_complete=
-        ghcr_package_probe_endpoint_base=/endpoint
-        ghcr_package_probe_next=2
-        ghcr_package_probe_last=2
-        ghcr_package_probe_elapsed_ms=1
+        local -n out="$3"
+        out=([match]='' [complete]='' [endpoint_base]=/endpoint [next]=2 [last]=2 [elapsed_ms]=1)
     }
     function oci_list_tags_anonymously { return "$LOOKUP_STOPPED"; }
     function ghcr_continue_package_version_by_digest {

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
 # Anonymous OCI Distribution fast path for public registries. List tags once,
 # obtain at most one repository-scoped bearer token, then resolve tag digests
@@ -9,10 +9,6 @@
 readonly OCI_MAX_PARALLEL_JOBS=8
 readonly OCI_ESTIMATED_SECONDS_PER_BATCH=1
 readonly OCI_MANIFEST_ACCEPT_HEADER='Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json'
-
-oci_bearer_token=
-oci_listed_tags=
-oci_direct_tag_durable=
 
 function oci_header_value {
     local header_file="$1"
@@ -127,7 +123,7 @@ function oci_request_tag_page {
         -H "@$request_headers"
 }
 
-# Populate oci_listed_tags and oci_bearer_token. Return LOOKUP_SUCCEEDED for a
+# Populate the caller-owned inventory context. Return LOOKUP_SUCCEEDED for a
 # complete list, LOOKUP_NOT_FOUND for an unavailable repository,
 # LOOKUP_UNAVAILABLE for an unsupported/failed fast path, LOOKUP_DENIED for
 # access denial, and LOOKUP_STOPPED for rate limiting.
@@ -138,19 +134,18 @@ function oci_list_tags {
     local initial_token="${4-}"
     local allow_anonymous_challenge="${5-}"
     local inventory_scan_limit_ms="${6-}"
+    local -n inventory_ref="$7"
     local request_headers response_headers response_body
     local next_url next_link page_tags auth_header http_code token_status durable_precision
     local page_tag_count listed_tag_count=0 estimated_scan_ms threshold_ms
     local pagination_cost_advised=
     local lookup_status=$LOOKUP_SUCCEEDED
 
-    oci_bearer_token="$initial_token"
-    oci_listed_tags=
-    oci_direct_tag_durable=
+    inventory_ref=([token]="$initial_token" [tags]='' [direct_tag_durable]='')
     request_headers=$(runtime_temp_file oci-request-headers)
     response_headers=$(runtime_temp_file oci-response-headers)
     response_body=$(runtime_temp_file oci-response-body)
-    oci_write_request_headers "$request_headers" "$oci_bearer_token"
+    oci_write_request_headers "$request_headers" "${inventory_ref[token]}"
     next_url="https://$registry/v2/$repository/tags/list?n=100"
 
     while [[ -n "$next_url" ]]; do
@@ -162,11 +157,11 @@ function oci_list_tags {
         fi
 
         if [[ "$http_code" == 401 && -n "$allow_anonymous_challenge" &&
-                -z "$oci_bearer_token" ]]; then
+                -z "${inventory_ref[token]}" ]]; then
             auth_header=$(oci_header_value "$response_headers" WWW-Authenticate)
-            if oci_bearer_token=$(oci_token_from_bearer_challenge \
+            if inventory_ref[token]=$(oci_token_from_bearer_challenge \
                     "$auth_header" "$repository"); then
-                oci_write_request_headers "$request_headers" "$oci_bearer_token"
+                oci_write_request_headers "$request_headers" "${inventory_ref[token]}"
                 continue
             else
                 token_status=$?
@@ -185,14 +180,14 @@ function oci_list_tags {
             page_tag_count=$("$JQ" -r '.tags | length' "$response_body")
             listed_tag_count=$(( listed_tag_count + page_tag_count ))
             if [[ -n "$page_tags" ]]; then
-                oci_listed_tags+="${oci_listed_tags:+$'\n'}$page_tags"
+                inventory_ref[tags]+="${inventory_ref[tags]:+$'\n'}$page_tags"
             fi
-            durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
+            durable_precision=$(durable_semver_precision_from_tags "${inventory_ref[tags]}")
             if [[ "$registry_tag_scan" == any-durable &&
                     -n "${registry_direct_tag_confirmed-}" &&
                     -n "${registry_direct_tag-}" ]] &&
                     tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
-                oci_direct_tag_durable=1
+                inventory_ref[direct_tag_durable]=1
                 next_url=
                 continue
             fi
@@ -261,11 +256,11 @@ function oci_list_tags {
 }
 
 function oci_list_tags_anonymously {
-    oci_list_tags "$1" "$2" "${3-full}" '' 1 "${4-}"
+    oci_list_tags "$1" "$2" "${3-full}" '' 1 "${4-}" "$5"
 }
 
 function oci_list_tags_with_bearer_token {
-    oci_list_tags "$1" "$2" "${4-full}" "$3" ''
+    oci_list_tags "$1" "$2" "${4-full}" "$3" '' '' "$5"
 }
 
 function oci_digest_for_tag_with_headers {
@@ -501,14 +496,15 @@ function oci_tags_by_digest_from_list {
     local registry="$1"
     local repository="$2"
     local digest="$3"
+    local -n inventory_ref="$4"
     local display_repository="$registry/$repository"
     local tag request_headers tags lookup_status durable_precision
     local candidate_count parallel_jobs use_parallel
     local -a candidate_tags=()
 
-    durable_precision=$(durable_semver_precision_from_tags "$oci_listed_tags")
+    durable_precision=$(durable_semver_precision_from_tags "${inventory_ref[tags]}")
     registry_durable_semver_precision="$durable_precision"
-    if [[ -n "$oci_direct_tag_durable" ]]; then
+    if [[ -n "${inventory_ref[direct_tag_durable]}" ]]; then
         printf '%s\n' "$registry_direct_tag"
         return
     fi
@@ -521,7 +517,7 @@ function oci_tags_by_digest_from_list {
             continue
         fi
         candidate_tags+=("$tag")
-    done <<<"$oci_listed_tags"
+    done <<<"${inventory_ref[tags]}"
 
     candidate_count=${#candidate_tags[@]}
     parallel_jobs=$OCI_MAX_PARALLEL_JOBS
@@ -541,7 +537,7 @@ function oci_tags_by_digest_from_list {
     fi
 
     request_headers=$(runtime_temp_file oci-request-headers)
-    oci_write_request_headers "$request_headers" "$oci_bearer_token"
+    oci_write_request_headers "$request_headers" "${inventory_ref[token]}"
     if [[ -n "$use_parallel" ]]; then
         if tags=$(oci_tags_by_digest_with_curl_parallel \
                 "$registry" "$repository" "$digest" candidate_tags \
@@ -570,14 +566,15 @@ function oci_tags_by_digest {
     local digest="$3"
     local supplied_token="${4-}"
     local allow_anonymous_challenge="${5-}"
+    local -A inventory=()
 
     if [[ -n "$allow_anonymous_challenge" ]]; then
-        oci_list_tags_anonymously "$registry" "$repository" || return $?
+        oci_list_tags_anonymously "$registry" "$repository" full '' inventory || return $?
     else
         oci_list_tags_with_bearer_token \
-            "$registry" "$repository" "$supplied_token" || return $?
+            "$registry" "$repository" "$supplied_token" full inventory || return $?
     fi
-    oci_tags_by_digest_from_list "$registry" "$repository" "$digest"
+    oci_tags_by_digest_from_list "$registry" "$repository" "$digest" inventory
 }
 
 function oci_tags_by_digest_anonymously {

@@ -4,17 +4,6 @@
 # GitHub Container Registry fast paths. Anonymous access uses the shared OCI
 # implementation; this module contains only the GitHub Packages API behavior.
 
-ghcr_package_page_match=
-ghcr_package_page_next=
-ghcr_package_page_last=
-ghcr_package_page_elapsed_ms=
-ghcr_package_probe_match=
-ghcr_package_probe_complete=
-ghcr_package_probe_endpoint_base=
-ghcr_package_probe_next=
-ghcr_package_probe_last=
-ghcr_package_probe_elapsed_ms=
-
 function ghcr_split_api_response {
     local response_file="$1"
     local header_file="$2"
@@ -65,13 +54,11 @@ function ghcr_package_version_page {
     local endpoint="$1"
     local selector="$2"
     local wanted="$3"
+    local -n page_ref="$4"
     local response_tmp header_tmp body_tmp error_tmp
     local started_ms finished_ms api_status gh_error
 
-    ghcr_package_page_match=
-    ghcr_package_page_next=
-    ghcr_package_page_last=
-    ghcr_package_page_elapsed_ms=
+    page_ref=([match]='' [next]='' [last]='' [elapsed_ms]='')
     response_tmp=$(runtime_temp_file ghcr-response)
     header_tmp=$(runtime_temp_file ghcr-headers)
     body_tmp=$(runtime_temp_file ghcr-body)
@@ -89,8 +76,8 @@ function ghcr_package_version_page {
         rm -f "$response_tmp" "$header_tmp" "$body_tmp" "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
-    ghcr_package_page_elapsed_ms=$(( finished_ms - started_ms ))
-    (( ghcr_package_page_elapsed_ms > 0 )) || ghcr_package_page_elapsed_ms=1
+    page_ref[elapsed_ms]=$(( finished_ms - started_ms ))
+    (( page_ref[elapsed_ms] > 0 )) || page_ref[elapsed_ms]=1
     ghcr_split_api_response "$response_tmp" "$header_tmp" "$body_tmp" || {
         rm -f "$response_tmp" "$header_tmp" "$body_tmp" "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
@@ -100,10 +87,10 @@ function ghcr_package_version_page {
         rm -f "$response_tmp" "$header_tmp" "$body_tmp" "$error_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
-    ghcr_package_page_next=$(ghcr_link_page "$header_tmp" next || true)
-    ghcr_package_page_last=$(ghcr_link_page "$header_tmp" last || true)
+    page_ref[next]=$(ghcr_link_page "$header_tmp" next || true)
+    page_ref[last]=$(ghcr_link_page "$header_tmp" last || true)
     # shellcheck disable=SC2016  # jq expression, not a shell expansion
-    ghcr_package_page_match=$(
+    page_ref[match]=$(
         "$JQ" -c --arg selector "$selector" --arg wanted "$wanted" '
             first(
                 .[]
@@ -135,6 +122,7 @@ function ghcr_package_version {
     local owner package_name package_encoded owner_kind endpoint match page
     local remaining_pages pagination_cost_checked
     local queried_api=
+    local -A page_result=()
 
     owner="${ghcr_repository%%/*}"
     package_name="${ghcr_repository#*/}"
@@ -158,27 +146,27 @@ function ghcr_package_version {
         while true; do
             endpoint="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100&page=$page"
             verbose "Searching GitHub package versions for $owner_kind/$owner/$package_name (page $page)"
-            if ghcr_package_version_page "$endpoint" "$selector" "$wanted"; then
+            if ghcr_package_version_page "$endpoint" "$selector" "$wanted" page_result; then
                 queried_api=1
             else
                 break
             fi
-            match="$ghcr_package_page_match"
+            match="${page_result[match]}"
             if [[ -n "$match" ]]; then
                 printf '%s\n' "$match"
                 return "$LOOKUP_SUCCEEDED"
             fi
-            [[ -n "$ghcr_package_page_next" ]] || break
+            [[ -n "${page_result[next]}" ]] || break
             if [[ -z "$pagination_cost_checked" &&
-                    -n "$ghcr_package_page_last" ]]; then
-                remaining_pages=$(( ghcr_package_page_last - page ))
+                    -n "${page_result[last]}" ]]; then
+                remaining_pages=$(( page_result[last] - page ))
                 registry_expensive_work_preflight \
                     'GitHub Packages API' "$ghcr_repository" \
                     "may request up to $remaining_pages additional package-version pages" \
-                    "$remaining_pages" 1 "$ghcr_package_page_elapsed_ms" || return $?
+                    "$remaining_pages" 1 "${page_result[elapsed_ms]}" || return $?
                 pagination_cost_checked=1
             fi
-            page="$ghcr_package_page_next"
+            page="${page_result[next]}"
         done
     done
 
@@ -200,15 +188,12 @@ function ghcr_package_version_by_tag {
 function ghcr_probe_package_version_by_digest {
     local ghcr_repository="$1"
     local wanted="$2"
+    local -n probe_ref="$3"
     local owner package_name package_encoded owner_kind endpoint
     local queried_api=
+    local -A page_result=()
 
-    ghcr_package_probe_match=
-    ghcr_package_probe_complete=
-    ghcr_package_probe_endpoint_base=
-    ghcr_package_probe_next=
-    ghcr_package_probe_last=
-    ghcr_package_probe_elapsed_ms=
+    probe_ref=([match]='' [complete]='' [endpoint_base]='' [next]='' [last]='' [elapsed_ms]='')
     owner="${ghcr_repository%%/*}"
     package_name="${ghcr_repository#*/}"
     [[ "$ghcr_repository" == */* && -n "$owner" && -n "$package_name" ]] ||
@@ -218,40 +203,42 @@ function ghcr_probe_package_version_by_digest {
     package_encoded=$("$JQ" -rn --arg value "$package_name" '$value | @uri')
 
     for owner_kind in orgs users; do
-        ghcr_package_probe_endpoint_base="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100"
-        endpoint="$ghcr_package_probe_endpoint_base&page=1"
+        probe_ref[endpoint_base]="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100"
+        endpoint="${probe_ref[endpoint_base]}&page=1"
         verbose "Probing GitHub package versions for $owner_kind/$owner/$package_name (page 1)"
-        if ! ghcr_package_version_page "$endpoint" digest "$wanted"; then
+        if ! ghcr_package_version_page "$endpoint" digest "$wanted" page_result; then
             continue
         fi
         queried_api=1
-        ghcr_package_probe_match="$ghcr_package_page_match"
-        ghcr_package_probe_next="$ghcr_package_page_next"
-        ghcr_package_probe_last="${ghcr_package_page_last:-$ghcr_package_page_next}"
-        ghcr_package_probe_elapsed_ms="$ghcr_package_page_elapsed_ms"
-        [[ -z "$ghcr_package_probe_match" ]] || return "$LOOKUP_SUCCEEDED"
-        [[ -z "$ghcr_package_probe_next" ]] || return "$LOOKUP_SUCCEEDED"
+        probe_ref[match]="${page_result[match]}"
+        probe_ref[next]="${page_result[next]}"
+        probe_ref[last]="${page_result[last]:-${page_result[next]}}"
+        probe_ref[elapsed_ms]="${page_result[elapsed_ms]}"
+        [[ -z "${probe_ref[match]}" ]] || return "$LOOKUP_SUCCEEDED"
+        [[ -z "${probe_ref[next]}" ]] || return "$LOOKUP_SUCCEEDED"
     done
 
     [[ -n "$queried_api" ]] || return "$LOOKUP_UNAVAILABLE"
-    ghcr_package_probe_complete=1
+    probe_ref[complete]=1
 }
 
 function ghcr_continue_package_version_by_digest {
     local wanted="$1"
-    local page="$ghcr_package_probe_next"
+    local endpoint_base="$2"
+    local page="$3"
     local endpoint
+    local -A page_result=()
 
     while [[ -n "$page" ]]; do
-        endpoint="$ghcr_package_probe_endpoint_base&page=$page"
+        endpoint="$endpoint_base&page=$page"
         verbose "Searching GitHub package versions (page $page)"
-        ghcr_package_version_page "$endpoint" digest "$wanted" ||
+        ghcr_package_version_page "$endpoint" digest "$wanted" page_result ||
             return "$LOOKUP_UNAVAILABLE"
-        if [[ -n "$ghcr_package_page_match" ]]; then
-            printf '%s\n' "$ghcr_package_page_match"
+        if [[ -n "${page_result[match]}" ]]; then
+            printf '%s\n' "${page_result[match]}"
             return "$LOOKUP_SUCCEEDED"
         fi
-        page="$ghcr_package_page_next"
+        page="${page_result[next]}"
     done
     return "$LOOKUP_NOT_FOUND"
 }
@@ -278,28 +265,33 @@ function ghcr_policy_attempt_adaptive_probe {
     local package_estimated_ms remaining_package_pages
     local tag_count=0 parallel_jobs oci_estimated_ms oci_status tag
     local package_cost=11 oci_cost=12
+    local -A oci_inventory=()
+    local -A package_probe=()
 
     ghcr_probe_package_version_by_digest \
-        "${request_ref[repository]}" "${request_ref[digest]}" || return $?
-    if [[ -n "$ghcr_package_probe_match" ]]; then
-        ghcr_use_package_metadata "$ghcr_package_probe_match"
+        "${request_ref[repository]}" "${request_ref[digest]}" package_probe || return $?
+    if [[ -n "${package_probe[match]}" ]]; then
+        ghcr_use_package_metadata "${package_probe[match]}"
         result_ref[tags]="$registry_tags"
         result_ref[metadata]="$registry_metadata"
         return "$LOOKUP_SUCCEEDED"
     fi
-    [[ -z "$ghcr_package_probe_complete" ]] || return "$LOOKUP_NOT_FOUND"
+    [[ -z "${package_probe[complete]}" ]] || return "$LOOKUP_NOT_FOUND"
 
-    remaining_package_pages=$(( ${ghcr_package_probe_last:-2} - 1 ))
+    remaining_package_pages=$(( ${package_probe[last]:-2} - 1 ))
     (( remaining_package_pages > 0 )) || remaining_package_pages=1
-    package_estimated_ms=$(( remaining_package_pages * ${ghcr_package_probe_elapsed_ms:-1000} ))
+    package_estimated_ms=$(( remaining_package_pages * ${package_probe[elapsed_ms]:-1000} ))
     request_ref[ghcr_remaining_package_pages]="$remaining_package_pages"
+    request_ref[ghcr_package_endpoint_base]="${package_probe[endpoint_base]}"
+    request_ref[ghcr_package_next]="${package_probe[next]}"
+    request_ref[ghcr_package_elapsed_ms]="${package_probe[elapsed_ms]}"
 
     if oci_list_tags_anonymously ghcr.io "${request_ref[repository]}" \
-            inventory "$package_estimated_ms"; then
+            inventory "$package_estimated_ms" oci_inventory; then
         while IFS= read -r tag; do
             [[ -n "$tag" ]] && ((++tag_count))
-        done <<<"$oci_listed_tags"
-        if [[ -n "$oci_direct_tag_durable" ]]; then
+        done <<<"${oci_inventory[tags]}"
+        if [[ -n "${oci_inventory[direct_tag_durable]}" ]]; then
             result_ref[tags]="${request_ref[direct_tag]}"
             result_ref[backend]=oci-registry-api
             return "$LOOKUP_SUCCEEDED"
@@ -309,6 +301,9 @@ function ghcr_policy_attempt_adaptive_probe {
         debug "GHCR OCI inventory could not complete for ${request_ref[display_repository]}: status=$oci_status; retaining the Packages continuation"
         tag_count=0
     fi
+    request_ref[ghcr_oci_token]="${oci_inventory[token]-}"
+    request_ref[ghcr_oci_tags]="${oci_inventory[tags]-}"
+    request_ref[ghcr_oci_direct_tag_durable]="${oci_inventory[direct_tag_durable]-}"
 
     parallel_jobs=$OCI_MAX_PARALLEL_JOBS
     (( tag_count < parallel_jobs )) && parallel_jobs=$tag_count
@@ -343,9 +338,10 @@ function ghcr_policy_attempt_packages_continuation {
         'GitHub Packages API' "${request_ref[display_repository]}" \
         "may request up to ${request_ref[ghcr_remaining_package_pages]} additional package-version pages" \
         "${request_ref[ghcr_remaining_package_pages]}" 1 \
-        "${ghcr_package_probe_elapsed_ms:-1000}" || return $?
+        "${request_ref[ghcr_package_elapsed_ms]:-1000}" || return $?
     if package_metadata=$(ghcr_continue_package_version_by_digest \
-            "${request_ref[digest]}"); then
+            "${request_ref[digest]}" "${request_ref[ghcr_package_endpoint_base]}" \
+            "${request_ref[ghcr_package_next]}"); then
         ghcr_use_package_metadata "$package_metadata"
         result_ref[tags]="$registry_tags"
         result_ref[metadata]="$registry_metadata"
@@ -362,10 +358,15 @@ function ghcr_policy_attempt_oci_inventory {
     local -n request_ref="$request_name"
     local -n result_ref="$result_name"
     local output status
+    local -A inventory=(
+        [token]="${request_ref[ghcr_oci_token]-}"
+        [tags]="${request_ref[ghcr_oci_tags]-}"
+        [direct_tag_durable]="${request_ref[ghcr_oci_direct_tag_durable]-}"
+    )
 
     notice "Selecting the anonymous OCI scan for ${request_ref[display_repository]} after comparing its measured cost with the Packages continuation."
     if output=$(oci_tags_by_digest_from_list \
-            ghcr.io "${request_ref[repository]}" "${request_ref[digest]}"); then
+            ghcr.io "${request_ref[repository]}" "${request_ref[digest]}" inventory); then
         result_ref[tags]="$output"
         return "$LOOKUP_SUCCEEDED"
     else

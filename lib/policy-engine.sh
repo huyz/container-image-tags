@@ -14,28 +14,6 @@ readonly POLICY_ACCESS_CREDENTIAL=credential
 readonly POLICY_ACCESS_INTERACTIVE=interactive
 readonly POLICY_DEFERRED=5
 
-declare -ga policy_attempt_ids=()
-declare -gA policy_attempt_callback=()
-declare -gA policy_attempt_backend=()
-declare -gA policy_attempt_access=()
-declare -gA policy_attempt_cost=()
-declare -gA policy_attempt_authoritative=()
-declare -gA policy_attempt_available=()
-declare -gA policy_attempt_sequence=()
-declare -gA policy_attempt_finished=()
-
-function policy_plan_reset {
-    policy_attempt_ids=()
-    policy_attempt_callback=()
-    policy_attempt_backend=()
-    policy_attempt_access=()
-    policy_attempt_cost=()
-    policy_attempt_authoritative=()
-    policy_attempt_available=()
-    policy_attempt_sequence=()
-    policy_attempt_finished=()
-}
-
 # Register one atomic mechanism. Cost is a relative integer used only among
 # attempts that satisfy the user's credential and completeness constraints.
 function policy_add_attempt {
@@ -246,4 +224,21 @@ function policy_execute_lookup {
     result_ref=()
     result_ref[status]="$last_status"
     return "$last_status"
+}
+
+# Own one complete plan in the lookup call's dynamic scope. Registration and
+# adaptive callbacks retain the compact policy_add_attempt API without sharing
+# plan state between lookups.
+function policy_build_and_execute_lookup {
+    local request_name="$1"
+    local result_name="$2"
+    local register_callback="$3"
+    local -a policy_attempt_ids=()
+    local -A policy_attempt_callback=() policy_attempt_backend=()
+    local -A policy_attempt_access=() policy_attempt_cost=()
+    local -A policy_attempt_authoritative=() policy_attempt_available=()
+    local -A policy_attempt_sequence=() policy_attempt_finished=()
+
+    "$register_callback" "$request_name"
+    policy_execute_lookup "$request_name" "$result_name"
 }

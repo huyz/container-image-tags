@@ -6,6 +6,7 @@ DIGEST=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 
 function load_oci {
     load_module oci
+    declare -gA oci_inventory=()
 }
 
 @test "OCI-001 header parsing is case-insensitive and uses the final status" {
@@ -131,9 +132,9 @@ else
     printf '{"tags":["a","b"]}' >"$body"; printf '200'
 fi
 EOF
-    oci_list_tags_anonymously registry.example team/app
-    [[ "$oci_bearer_token" == repo-token ]]
-    [[ "$oci_listed_tags" == $'a\nb' ]]
+    oci_list_tags_anonymously registry.example team/app full '' oci_inventory
+    [[ "${oci_inventory[token]}" == repo-token ]]
+    [[ "${oci_inventory[tags]}" == $'a\nb' ]]
     [[ $(grep -ao 'https://registry.example/v2/team/app/tags/list?n=100' "$CALLS_DIR/curl.args" | wc -l) -eq 2 ]]
 }
 
@@ -155,8 +156,8 @@ else
 fi
 printf '200'
 EOF
-    oci_list_tags_anonymously registry.example team/app
-    [[ "$oci_listed_tags" == $'a\nb' ]]
+    oci_list_tags_anonymously registry.example team/app full '' oci_inventory
+    [[ "${oci_inventory[tags]}" == $'a\nb' ]]
 }
 
 @test "OCI-028 first page can establish a confirmed two-part direct tag as durable" {
@@ -178,8 +179,8 @@ printf '{"tags":["latest","17.5","17.6","17.7"]}' >"$body"
 printf '200'
 EOF
 
-    oci_list_tags_anonymously registry.example team/app
-    [[ -n "$oci_direct_tag_durable" ]]
+    oci_list_tags_anonymously registry.example team/app full '' oci_inventory
+    [[ -n "${oci_inventory[direct_tag_durable]}" ]]
     [[ $(grep -ao '/tags/list' "$CALLS_DIR/curl.args" | wc -l) -eq 1 ]]
 }
 
@@ -196,7 +197,7 @@ done
 printf 'HTTP/1.1 200 OK\r\nLink: <https://evil.example/next>; rel="next"\r\n' >"$headers"
 printf '{"tags":["a"]}' >"$body"; printf '200'
 EOF
-    run oci_list_tags_anonymously registry.example team/app
+    run oci_list_tags_anonymously registry.example team/app full '' oci_inventory
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
@@ -213,7 +214,7 @@ done
 printf 'HTTP/1.1 200 OK\r\n' >"$headers"
 printf '{"tags":"not-an-array"}' >"$body"; printf '200'
 EOF
-    run oci_list_tags_anonymously registry.example team/app
+    run oci_list_tags_anonymously registry.example team/app full '' oci_inventory
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
@@ -233,7 +234,7 @@ done
 printf 'HTTP/1.1 %s Result\r\n' "$RESPONSE_CODE" >"$headers"
 printf '{}' >"$body"; printf '%s' "$RESPONSE_CODE"
 EOF
-        run oci_list_tags_anonymously registry.example team/app
+        run oci_list_tags_anonymously registry.example team/app full '' oci_inventory
         assert_status "$2"
     done
 }
@@ -312,7 +313,7 @@ EOF
 @test "OCI-016 exhaustive multi-tag lookup selects curl parallel engine" {
     load_oci
     registry_tag_scan=all; registry_direct_tag=
-    function oci_list_tags_anonymously { oci_listed_tags=$'a\nb'; oci_bearer_token=; }
+    function oci_list_tags_anonymously { local -n out="$5"; out=([tags]=$'a\nb' [token]='' [direct_tag_durable]=''); }
     function registry_expensive_scan_preflight { return 0; }
     function oci_curl_supports_parallel { return 0; }
     function oci_tags_by_digest_with_curl_parallel {
@@ -329,7 +330,7 @@ EOF
 @test "OCI-017 any-durable retains a directly confirmed tag and schedules until durable" {
     load_oci
     registry_tag_scan=any-durable; registry_direct_tag=latest; registry_direct_tag_confirmed=1
-    function oci_list_tags_anonymously { oci_listed_tags=$'latest\n1.2\n1.2.0\n1.3\n1.3.0'; oci_bearer_token=; }
+    function oci_list_tags_anonymously { local -n out="$5"; out=([tags]=$'latest\n1.2\n1.2.0\n1.3\n1.3.0' [token]='' [direct_tag_durable]=''); }
     function registry_expensive_scan_preflight { return 0; }
     function oci_curl_supports_parallel { return 0; }
     function oci_tags_by_digest_with_curl_parallel { : >"$CALLS_DIR/parallel"; }
@@ -351,8 +352,8 @@ EOF
     load_oci
     registry_tag_scan=all; registry_direct_tag=
     function oci_list_tags_anonymously {
-        oci_listed_tags=$(printf 'tag-%02d\n' {1..20})
-        oci_bearer_token=
+        local -n out="$5"
+        out=([tags]="$(printf 'tag-%02d\n' {1..20})" [token]='' [direct_tag_durable]='')
     }
     function registry_expensive_scan_preflight { return 0; }
     function oci_curl_supports_parallel { return 0; }
@@ -485,7 +486,7 @@ done
 printf '500'
 EOF
 
-    run oci_list_tags_anonymously registry.example team/app
+    run oci_list_tags_anonymously registry.example team/app full '' oci_inventory
     assert_status "$LOOKUP_UNAVAILABLE"
     [[ -z $(find "$TMPDIR" -mindepth 1 -print -quit) ]]
 
@@ -513,7 +514,7 @@ printf '%s\n' '{"tags":["a","b"]}' >"$body"
 printf '200'
 EOF
 
-    run oci_list_tags_anonymously registry.example team/app
+    run oci_list_tags_anonymously registry.example team/app full '' oci_inventory
     assert_status "$LOOKUP_STOPPED"
     assert_call_args "$CALLS_DIR/preflight.args" \
         'OCI HEAD' registry.example/team/app \
@@ -534,7 +535,7 @@ printf '%s\n' '{"tags":["a","b","c","d","e","f","g","h","i"]}' >"$body"
 printf '200'
 EOF
 
-    run oci_list_tags_anonymously registry.example team/app inventory 1000
+    run oci_list_tags_anonymously registry.example team/app inventory 1000 oci_inventory
     assert_status "$LOOKUP_UNAVAILABLE"
     [[ "$output" == '' ]]
 }
