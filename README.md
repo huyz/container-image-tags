@@ -41,6 +41,7 @@ The required tools are:
 - GNU `getopt`
 - `curl`
 - `jq`
+- Perl 5 (for portable command deadlines and registry response parsing)
 
 Recommended:
 - Docker CLI (for `auto` and `local` tag resolution) is required unless you
@@ -61,7 +62,7 @@ including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
 On macOS and Linux, Homebrew users can install all with:
 
 ```sh
-brew install bash coreutils gnu-getopt curl jq docker skopeo gh gcloud-cli azure-cli awscli
+brew install bash coreutils gnu-getopt curl jq perl docker skopeo gh gcloud-cli azure-cli awscli
 ```
 
 ### Docker Hub authentication

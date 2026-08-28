@@ -30,6 +30,7 @@
 # - on macOS, Homebrew with gnu-getopt and coreutils installed,
 # - curl
 # - jq
+# - Perl 5, for portable command deadlines and registry response parsing
 # - docker CLI
 # - registry credentials configured by docker login, skopeo login, or podman
 #   login, for private registries
