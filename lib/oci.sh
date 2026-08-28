@@ -480,42 +480,6 @@ function oci_digest_for_tag_with_bearer_token {
     oci_digest_for_tag "$1" "$2" "$3" "$4" ''
 }
 
-# Complete generic-registry direct policy: anonymous OCI first, then Skopeo
-# only for unavailable/denied fast paths. Not-found and stopped are terminal.
-function oci_resolve_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local display_reference="$4"
-    local lookup_status
-
-    if credential_policy_allows_public; then
-        if remote_tag_digest=$(oci_digest_for_tag_anonymously \
-                "$registry" "$repository" "$tag"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-            return
-        else
-            lookup_status=$?
-        fi
-    else
-        lookup_status=$LOOKUP_DENIED
-    fi
-    case "$lookup_status" in
-    "$LOOKUP_NOT_FOUND") remote_tag_status=$LOOKUP_NOT_FOUND ;;
-    "$LOOKUP_STOPPED") abort "OCI registry lookup stopped for '$display_reference'" ;;
-    *)
-        skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
-        if remote_tag_digest=$(skopeo_digest_for_tag_with_access_policy \
-                "$registry" "$display_reference" '' "$lookup_status"); then
-            notice "Resolved registry tag with the Skopeo fallback"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
-        ;;
-    esac
-}
-
 # Print tags whose complete manifest digest matches digest. Individual HEAD
 # failures make an exhaustive result fail so the dispatcher can retry through
 # Skopeo rather than silently returning an incomplete tag set.
@@ -610,30 +574,39 @@ function oci_tags_by_digest_with_bearer_token {
     oci_tags_by_digest "$1" "$2" "$3" "$4" ''
 }
 
-function oci_find_tags {
-    local registry="$1"
-    local repository="$2"
-    local digest="$3"
-    local display_repository="$4"
-    local lookup_status
+function oci_policy_attempt_public {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
 
-    if credential_policy_allows_public; then
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                "$registry" "$repository" "$digest"); then
-            return
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(oci_digest_for_tag_anonymously \
+                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "${request_ref[tag]}"); then
+            result_ref[digest]="$output"
+            return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            return $?
         fi
-    else
-        lookup_status=$LOOKUP_DENIED
     fi
-    (( lookup_status == LOOKUP_STOPPED )) &&
-        abort "OCI registry lookup stopped for $display_repository"
-    notice "OCI HEAD lookup did not complete for $display_repository; falling back to Skopeo"
-    registry_lookup_backend=skopeo
-    skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-        "$registry" "$display_repository" "$digest" '' "$lookup_status") ||
-        abort "Skopeo lookup failed for $display_repository"
+
+    if output=$(oci_tags_by_digest_anonymously \
+            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "${request_ref[digest]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+function oci_register_policy_attempts {
+    local request_name="$1"
+
+    policy_add_attempt oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 20
+    skopeo_register_policy_attempts "$request_name" oci 70
 }

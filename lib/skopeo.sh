@@ -6,13 +6,10 @@
 # credential helpers). Keep all Skopeo calls behind these helpers so private
 # registry behavior is consistent for direct checks and reverse lookups.
 #
-# `skopeo_with_access_policy` gives Skopeo one unambiguous meaning in the
-# fallback matrix. Subject to --credential-policy, it reuses an in-session
-# token, tries isolated public access, tries configured registry credentials
-# after an explicit denial, and finally obtains a provider token after another
-# denial. LOOKUP_UNAVAILABLE may select Skopeo as another backend, but never
-# authorizes credentials by itself. The public and session authfiles are
-# temporary, separate, and mode 0600.
+# Skopeo advertises separate session, isolated-public, configured-credential,
+# and provider-token attempts to the policy engine. The engine controls their
+# eligibility and order. The public and session authfiles are temporary,
+# separate, and mode 0600.
 
 skopeo_anonymous_authfile=
 skopeo_session_authfile=
@@ -205,84 +202,103 @@ function skopeo_session_has_registry {
         "$registry" >/dev/null 2>&1
 }
 
-# Run one Skopeo operation through explicit credential classes. `prior_status`
-# describes a public native attempt already made by the caller. A denial may
-# advance to credentials; an unavailable native backend may try anonymous
-# Skopeo compatibility, but cannot itself authorize credentials.
-function skopeo_with_access_policy {
-    local operation="$1"
-    local registry="$2"
-    local authenticate_function="$3"
-    local prior_status="$4"
-    shift 4
-    local output lookup_status="$prior_status"
-    local -a operation_args=("$@")
+function skopeo_policy_is_available {
+    skopeo_is_available
+}
 
-    if credential_policy_allows_credentials &&
-            skopeo_session_has_registry "$registry"; then
-        "$operation" "${operation_args[@]}" "$skopeo_session_authfile"
-        return $?
-    fi
+function skopeo_policy_session_is_available {
+    local -n request_ref="$1"
 
-    if credential_policy_allows_public; then
-        if [[ "$lookup_status" != "$LOOKUP_DENIED" ]]; then
-            if output=$("$operation" \
-                    "${operation_args[@]}" "$skopeo_anonymous_authfile"); then
-                printf '%s' "$output"
-                return "$LOOKUP_SUCCEEDED"
-            else
-                lookup_status=$?
-            fi
-        fi
-        credential_policy_allows_auth_after "$lookup_status" ||
-            return "$lookup_status"
-    else
-        lookup_status=$LOOKUP_DENIED
-    fi
+    skopeo_session_has_registry "${request_ref[registry]}"
+}
 
-    credential_policy_allows_credentials || return "$lookup_status"
-    if skopeo_has_registry_credentials "$registry"; then
-        notice "Using configured registry credentials for '$registry'."
-        if output=$("$operation" "${operation_args[@]}"); then
-            printf '%s' "$output"
+function skopeo_policy_configured_is_available {
+    local -n request_ref="$1"
+
+    skopeo_has_registry_credentials "${request_ref[registry]}"
+}
+
+function skopeo_policy_provider_auth_is_available {
+    local -n request_ref="$1"
+
+    [[ -n "${request_ref[provider_auth_callback]-}" ]] && skopeo_is_available
+}
+
+function skopeo_policy_attempt {
+    local request_name="$1"
+    local result_name="$2"
+    local authfile="${3-}"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(skopeo_digest_for_tag_with_status \
+                "${request_ref[display_reference]}" "$authfile"); then
+            result_ref[digest]="$output"
             return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            return $?
         fi
-        (( lookup_status == LOOKUP_DENIED )) || return "$lookup_status"
     fi
 
-    [[ -n "$authenticate_function" ]] || return "$lookup_status"
-    "$authenticate_function" "$registry" || return "$LOOKUP_UNAVAILABLE"
-    "$operation" "${operation_args[@]}" "$skopeo_session_authfile"
+    if output=$(skopeo_tags_by_digest \
+            "${request_ref[display_repository]}" \
+            "${request_ref[digest]}" "$authfile"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
 }
 
-function skopeo_digest_for_tag_with_access_policy {
-    local registry="$1"
-    local image_reference="$2"
-    local authenticate_function="${3-}"
-    local prior_status="${4-}"
-
-    skopeo_with_access_policy skopeo_digest_for_tag_with_status \
-        "$registry" "$authenticate_function" "$prior_status" "$image_reference"
+function skopeo_policy_attempt_session {
+    skopeo_policy_attempt "$1" "$2" "$skopeo_session_authfile"
 }
 
-function skopeo_tags_by_digest_with_access_policy {
-    local registry="$1"
-    local repository="$2"
-    local digest="$3"
-    local authenticate_function="${4-}"
-    local prior_status="${5-}"
-
-    skopeo_with_access_policy skopeo_tags_by_digest \
-        "$registry" "$authenticate_function" "$prior_status" "$repository" "$digest"
+function skopeo_policy_attempt_public {
+    skopeo_policy_attempt "$1" "$2" "$skopeo_anonymous_authfile"
 }
 
-# Compatibility names for provider adapters while they migrate independently.
-function skopeo_digest_for_tag_with_lazy_auth {
-    skopeo_digest_for_tag_with_access_policy "$@"
+function skopeo_policy_attempt_configured {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+
+    notice "Using configured registry credentials for '${request_ref[registry]}'."
+    skopeo_policy_attempt "$request_name" "$2"
 }
 
-function skopeo_tags_by_digest_with_lazy_auth {
-    skopeo_tags_by_digest_with_access_policy "$@"
+function skopeo_policy_attempt_provider_auth {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+    local authenticate_function="${request_ref[provider_auth_callback]}"
+
+    "$authenticate_function" "${request_ref[registry]}" ||
+        return "$LOOKUP_UNAVAILABLE"
+    skopeo_policy_attempt "$request_name" "$2" "$skopeo_session_authfile"
+}
+
+# Every supported registry can use the same compatibility mechanisms. The
+# provider supplies only an optional short-lived credential callback.
+function skopeo_register_policy_attempts {
+    local request_name="$1"
+    local id_prefix="$2"
+    local first_cost="${3:-70}"
+
+    policy_add_attempt "$id_prefix-skopeo-session" \
+        skopeo_policy_attempt_session skopeo "$POLICY_ACCESS_SESSION" \
+        "$first_cost" 1 skopeo_policy_session_is_available
+    policy_add_attempt "$id_prefix-skopeo-public" \
+        skopeo_policy_attempt_public skopeo "$POLICY_ACCESS_PUBLIC" \
+        "$(( first_cost + 10 ))" 1 skopeo_policy_is_available
+    policy_add_attempt "$id_prefix-skopeo-configured" \
+        skopeo_policy_attempt_configured skopeo "$POLICY_ACCESS_CREDENTIAL" \
+        "$(( first_cost + 20 ))" 1 skopeo_policy_configured_is_available
+    local -n request_ref="$request_name"
+    if [[ -n "${request_ref[provider_auth_callback]-}" ]]; then
+        policy_add_attempt "$id_prefix-skopeo-provider" \
+            skopeo_policy_attempt_provider_auth skopeo "$POLICY_ACCESS_CREDENTIAL" \
+            "$(( first_cost + 30 ))" 1 skopeo_policy_provider_auth_is_available
+    fi
 }

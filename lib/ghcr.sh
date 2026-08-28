@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
 # GitHub Container Registry fast paths. Anonymous access uses the shared OCI
 # implementation; this module contains only the GitHub Packages API behavior.
@@ -265,25 +265,24 @@ function ghcr_use_package_metadata {
         "$package_tags" "$package_tags" || true)
 }
 
-# On the default if-faster policy, do useful work on both observable backends
-# before committing to a long scan. The first Packages page is searched first;
-# only an unresolved multi-page history causes a complete (cheap) OCI tag-list
-# probe and a remaining-cost comparison.
-function ghcr_tags_by_digest_adaptively {
-    local ghcr_repository="$1"
-    local digest="$2"
-    local display_repository="$3"
-    local package_status oci_status package_metadata
-    local remaining_package_pages package_estimated_ms
-    local tag_count=0 parallel_jobs oci_estimated_ms tag
+# The adaptive GHCR probe measures both remaining paths, then advertises those
+# continuations back to the central engine. The provider supplies measurements;
+# it does not select the next backend.
+function ghcr_policy_attempt_adaptive_probe {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local package_estimated_ms remaining_package_pages
+    local tag_count=0 parallel_jobs oci_estimated_ms oci_status tag
+    local package_cost=11 oci_cost=12
 
-    if ghcr_probe_package_version_by_digest "$ghcr_repository" "$digest"; then
-        :
-    else
-        return $?
-    fi
+    ghcr_probe_package_version_by_digest \
+        "${request_ref[repository]}" "${request_ref[digest]}" || return $?
     if [[ -n "$ghcr_package_probe_match" ]]; then
         ghcr_use_package_metadata "$ghcr_package_probe_match"
+        result_ref[tags]="$registry_tags"
+        result_ref[metadata]="$registry_metadata"
         return "$LOOKUP_SUCCEEDED"
     fi
     [[ -z "$ghcr_package_probe_complete" ]] || return "$LOOKUP_NOT_FOUND"
@@ -291,20 +290,21 @@ function ghcr_tags_by_digest_adaptively {
     remaining_package_pages=$(( ${ghcr_package_probe_last:-2} - 1 ))
     (( remaining_package_pages > 0 )) || remaining_package_pages=1
     package_estimated_ms=$(( remaining_package_pages * ${ghcr_package_probe_elapsed_ms:-1000} ))
+    request_ref[ghcr_remaining_package_pages]="$remaining_package_pages"
 
-    if oci_list_tags_anonymously \
-            ghcr.io "$ghcr_repository" inventory "$package_estimated_ms"; then
+    if oci_list_tags_anonymously ghcr.io "${request_ref[repository]}" \
+            inventory "$package_estimated_ms"; then
         while IFS= read -r tag; do
             [[ -n "$tag" ]] && ((++tag_count))
         done <<<"$oci_listed_tags"
         if [[ -n "$oci_direct_tag_durable" ]]; then
-            registry_tags="$registry_direct_tag"
-            registry_lookup_backend=oci-registry-api
+            result_ref[tags]="${request_ref[direct_tag]}"
+            result_ref[backend]=oci-registry-api
             return "$LOOKUP_SUCCEEDED"
         fi
     else
         oci_status=$?
-        debug "GHCR OCI inventory could not complete for $display_repository: status=$oci_status; retaining the Packages continuation"
+        debug "GHCR OCI inventory could not complete for ${request_ref[display_repository]}: status=$oci_status; retaining the Packages continuation"
         tag_count=0
     fi
 
@@ -313,128 +313,69 @@ function ghcr_tags_by_digest_adaptively {
     (( parallel_jobs > 0 )) || parallel_jobs=1
     oci_estimated_ms=$(registry_estimated_milliseconds \
         "$tag_count" "$parallel_jobs" "$(( OCI_ESTIMATED_SECONDS_PER_BATCH * 1000 ))")
-    debug "GHCR adaptive estimate: repository=$display_repository package_remaining_pages=$remaining_package_pages package_ms=$package_estimated_ms oci_tags=$tag_count oci_ms=$oci_estimated_ms"
-
     if (( tag_count > 0 && oci_estimated_ms <= package_estimated_ms )); then
-        notice "Selecting the anonymous OCI scan for $display_repository after comparing the measured Packages page cost with $tag_count current registry tags."
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_from_list \
-                ghcr.io "$ghcr_repository" "$digest"); then
-            return "$LOOKUP_SUCCEEDED"
-        else
-            return $?
-        fi
+        package_cost=12
+        oci_cost=11
     fi
+    debug "GHCR adaptive estimate: repository=${request_ref[display_repository]} package_remaining_pages=$remaining_package_pages package_ms=$package_estimated_ms oci_tags=$tag_count oci_ms=$oci_estimated_ms"
+
+    policy_add_attempt ghcr-packages-continuation \
+        ghcr_policy_attempt_packages_continuation github-packages-api \
+        "$POLICY_ACCESS_FAST_CREDENTIAL" "$package_cost"
+    if (( tag_count > 0 )); then
+        policy_add_attempt ghcr-oci-inventory \
+            ghcr_policy_attempt_oci_inventory oci-registry-api \
+            "$POLICY_ACCESS_PUBLIC" "$oci_cost"
+    fi
+    return "$POLICY_DEFERRED"
+}
+
+function ghcr_policy_attempt_packages_continuation {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local package_metadata status
 
     registry_expensive_work_preflight \
-        'GitHub Packages API' "$display_repository" \
-        "may request up to $remaining_package_pages additional package-version pages" \
-        "$remaining_package_pages" 1 "${ghcr_package_probe_elapsed_ms:-1000}" || return $?
-    if package_metadata=$(ghcr_continue_package_version_by_digest "$digest"); then
+        'GitHub Packages API' "${request_ref[display_repository]}" \
+        "may request up to ${request_ref[ghcr_remaining_package_pages]} additional package-version pages" \
+        "${request_ref[ghcr_remaining_package_pages]}" 1 \
+        "${ghcr_package_probe_elapsed_ms:-1000}" || return $?
+    if package_metadata=$(ghcr_continue_package_version_by_digest \
+            "${request_ref[digest]}"); then
         ghcr_use_package_metadata "$package_metadata"
+        result_ref[tags]="$registry_tags"
+        result_ref[metadata]="$registry_metadata"
         return "$LOOKUP_SUCCEEDED"
     else
-        package_status=$?
+        status=$?
     fi
-    return "$package_status"
+    return "$status"
+}
+
+function ghcr_policy_attempt_oci_inventory {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    notice "Selecting the anonymous OCI scan for ${request_ref[display_repository]} after comparing its measured cost with the Packages continuation."
+    if output=$(oci_tags_by_digest_from_list \
+            ghcr.io "${request_ref[repository]}" "${request_ref[digest]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
 }
 
 # Keep the terminal attachment in one helper so both direct and reverse
 # recovery use the same interactive gh authentication flow.
 function ghcr_refresh_authentication {
     "$GH" auth refresh -s read:packages </dev/tty >/dev/tty
-}
-
-# Prefer the inexpensive public manifest check for direct lookups. The Packages
-# API supports private packages after an explicit denial, while Skopeo remains
-# the compatibility fallback selected by the registry-wide credential policy.
-function ghcr_digest_for_tag {
-    local ghcr_repository="$1"
-    local tag="$2"
-    local manifest_digest package_version lookup_status auth_trigger_status
-    local can_refresh
-
-    if credential_policy_allows_public; then
-        if manifest_digest=$(oci_digest_for_tag_anonymously \
-                ghcr.io "$ghcr_repository" "$tag"); then
-            printf '%s\n' "$manifest_digest"
-            return "$LOOKUP_SUCCEEDED"
-        else
-            lookup_status=$?
-        fi
-        if [[ "$lookup_status" == "$LOOKUP_NOT_FOUND" ||
-                "$lookup_status" == "$LOOKUP_STOPPED" ]]; then
-            return "$lookup_status"
-        fi
-    else
-        lookup_status=$LOOKUP_DENIED
-    fi
-
-    auth_trigger_status=$lookup_status
-    if [[ "${opt_credential_policy:-if-faster}" == require ]] ||
-            credential_policy_allows_auth_after "$lookup_status"; then
-        if package_version=$(ghcr_package_version_by_tag "$ghcr_repository" "$tag"); then
-            manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
-            [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
-            printf '%s\n' "$manifest_digest"
-            return "$LOOKUP_SUCCEEDED"
-        else
-            lookup_status=$?
-        fi
-        (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
-    fi
-
-    if skopeo_is_available; then
-        if manifest_digest=$(skopeo_digest_for_tag_with_access_policy \
-                ghcr.io "ghcr.io/$ghcr_repository:$tag" '' \
-                "$auth_trigger_status"); then
-            notice "Resolved GHCR tag with the Skopeo fallback"
-            printf '%s\n' "$manifest_digest"
-            return "$LOOKUP_SUCCEEDED"
-        else
-            lookup_status=$?
-        fi
-    fi
-
-    # Existing gh and registry credentials are automatic. If public access was
-    # explicitly denied and neither credentialed path worked, an interactive
-    # caller can grant gh the missing Packages scope and retry this exact tag.
-    if (( auth_trigger_status == LOOKUP_DENIED )) &&
-            (( lookup_status != LOOKUP_NOT_FOUND &&
-                lookup_status != LOOKUP_STOPPED )) &&
-            credential_policy_allows_credentials; then
-        if command -v "${GH:=gh}" &>/dev/null; then
-            can_refresh=1
-        else
-            can_refresh=
-        fi
-        if choose_ghcr_direct_authentication "$can_refresh"; then
-            if ! ghcr_refresh_authentication; then
-                warn "gh authentication refresh failed"
-            fi
-            if package_version=$(ghcr_package_version_by_tag \
-                    "$ghcr_repository" "$tag"); then
-                manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
-                [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
-                printf '%s\n' "$manifest_digest"
-                return "$LOOKUP_SUCCEEDED"
-            else
-                lookup_status=$?
-            fi
-        fi
-    fi
-    return "$lookup_status"
-}
-
-function ghcr_resolve_tag {
-    local ghcr_repository="$1"
-    local tag="$2"
-
-    if remote_tag_digest=$(ghcr_digest_for_tag "$ghcr_repository" "$tag"); then
-        remote_tag_status=$LOOKUP_SUCCEEDED
-    else
-        remote_tag_status=$?
-    fi
 }
 
 # Offer the one interactive action that can make an existing gh installation
@@ -495,165 +436,120 @@ function choose_ghcr_fallback {
     esac
 }
 
-# Populate the shared registry result fields using the credential policy.
-function ghcr_tags_by_digest {
-    local ghcr_repository="$1"
-    local digest="$2"
-    local display_repository="$3"
-    local can_refresh ghcr_choice package_lookup_status package_tags
-
-    debug "GHCR reverse lookup: repository=$ghcr_repository digest=$digest display=$display_repository credential_policy=${opt_credential_policy:-if-faster} scan=$registry_tag_scan"
-
-    if [[ "$registry_tag_scan" == any-durable &&
-            -n "${registry_direct_tag_confirmed-}" &&
-            -n "$registry_direct_tag" ]] &&
-            credential_policy_allows_public &&
-            oci_list_tags_anonymously ghcr.io "$ghcr_repository" sample &&
-            [[ -n "$oci_direct_tag_durable" ]]; then
-        registry_tags="$registry_direct_tag"
-        registry_lookup_backend=oci-registry-api
-        return
-    fi
-
-    if [[ "${opt_credential_policy:-if-faster}" == never ]]; then
-        if ! registry_tags=$(oci_tags_by_digest_anonymously \
-                ghcr.io "$ghcr_repository" "$digest"); then
-            abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
-        fi
-        registry_lookup_backend=oci-registry-api
-        return
-    fi
-
-    if [[ "${opt_credential_policy:-if-faster}" == if-required ]]; then
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                ghcr.io "$ghcr_repository" "$digest"); then
-            registry_lookup_backend=oci-registry-api
-            return
-        else
-            package_lookup_status=$?
-        fi
-        case "$package_lookup_status" in
-        "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; registry_lookup_backend=oci-registry-api; return ;;
-        "$LOOKUP_STOPPED") abort "GHCR OCI lookup stopped for $display_repository" ;;
-        "$LOOKUP_UNAVAILABLE")
-            registry_lookup_backend=skopeo
-            if registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-                    ghcr.io "$display_repository" "$digest" '' \
-                    "$package_lookup_status"); then
-                return
-            else
-                package_lookup_status=$?
-            fi
-            (( package_lookup_status == LOOKUP_DENIED )) ||
-                abort "Public GHCR lookup failed for $display_repository"
-            ;;
-        esac
-    fi
-
-    while true; do
-        if [[ "${opt_credential_policy:-if-faster}" == if-faster ]]; then
-            if ghcr_tags_by_digest_adaptively \
-                    "$ghcr_repository" "$digest" "$display_repository"; then
-                break
-            else
-                package_lookup_status=$?
-            fi
-        else
-            if registry_metadata=$(ghcr_package_version_by_digest "$ghcr_repository" "$digest"); then
-                registry_lookup_backend=github-packages-api
-                package_tags=$($JQ -r '.metadata.container.tags[]?' <<<"$registry_metadata")
-                registry_tags=$(select_matching_tags_for_scan \
-                    "$package_tags" "$package_tags" || true)
-                break
-            else
-                package_lookup_status=$?
-            fi
-        fi
-        case "$package_lookup_status" in
-        "$LOOKUP_NOT_FOUND")
-            debug "GHCR Packages API was reachable, but no active version matched $ghcr_repository@$digest"
-            registry_lookup_result=not_found
-            registry_lookup_backend=github-packages-api
-            break
-            ;;
-        "$LOOKUP_STOPPED")
-            abort "GHCR lookup stopped for $display_repository"
-            ;;
-        esac
-
-        if [[ "${opt_credential_policy:-if-faster}" == if-required ]]; then
-            if skopeo_is_available &&
-                    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-                        ghcr.io "$display_repository" "$digest" '' \
-                        "$LOOKUP_DENIED"); then
-                registry_lookup_backend=skopeo
-                break
-            fi
-        else
-            if credential_policy_allows_public; then
-                if registry_tags=$(oci_tags_by_digest_anonymously \
-                        ghcr.io "$ghcr_repository" "$digest"); then
-                    registry_lookup_backend=oci-registry-api
-                    break
-                else
-                    package_lookup_status=$?
-                fi
-                case "$package_lookup_status" in
-                "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; registry_lookup_backend=oci-registry-api; break ;;
-                "$LOOKUP_STOPPED") abort "GHCR OCI lookup stopped for $display_repository" ;;
-                esac
-            else
-                package_lookup_status=$LOOKUP_DENIED
-            fi
-
-            if skopeo_is_available &&
-                    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-                        ghcr.io "$display_repository" "$digest" '' \
-                        "$package_lookup_status"); then
-                registry_lookup_backend=skopeo
-                break
-            fi
-        fi
-
-        if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
-            abort "Credentialed GHCR lookup failed; configure gh or registry credentials"
-        fi
-
-        if command -v "${GH:=gh}" &>/dev/null; then
-            can_refresh=1
-        else
-            can_refresh=
-        fi
-        if ! ghcr_choice=$(choose_ghcr_fallback "$can_refresh"); then
-            abort "GHCR lookup cancelled; no usable GitHub Packages credentials and anonymous scanning was not approved"
-        fi
-
-        case "$ghcr_choice" in
-        refresh)
-            if ! ghcr_refresh_authentication; then
-                warn "gh authentication refresh failed"
-            fi
-            # Retry the Packages API whether refresh succeeded or failed: the
-            # authentication flow may still have updated the token.
-            ;;
-        anonymous)
-            if ! registry_tags=$(oci_tags_by_digest_anonymously \
-                    ghcr.io "$ghcr_repository" "$digest"); then
-                abort "Anonymous GHCR lookup failed for $display_repository (is the package public?)"
-            fi
-            registry_lookup_backend=oci-registry-api
-            break
-            ;;
-        skip)
-            skip_input=1
-            break
-            ;;
-        esac
-    done
+function ghcr_policy_gh_is_available {
+    command -v "${GH:=gh}" &>/dev/null
 }
 
-function ghcr_find_tags {
-    ghcr_tags_by_digest "$@"
+function ghcr_policy_attempt_public_oci {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(oci_digest_for_tag_anonymously \
+                ghcr.io "${request_ref[repository]}" "${request_ref[tag]}"); then
+            result_ref[digest]="$output"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            return $?
+        fi
+    fi
+    if output=$(oci_tags_by_digest_anonymously \
+            ghcr.io "${request_ref[repository]}" "${request_ref[digest]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+function ghcr_policy_attempt_packages {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local metadata output status package_tags
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if metadata=$(ghcr_package_version_by_tag \
+                "${request_ref[repository]}" "${request_ref[tag]}"); then
+            output=$("$JQ" -r '.name // empty' <<<"$metadata")
+            [[ -n "$output" ]] || return "$LOOKUP_UNAVAILABLE"
+            result_ref[digest]="$output"
+            result_ref[metadata]="$metadata"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            return $?
+        fi
+    fi
+    if metadata=$(ghcr_package_version_by_digest \
+            "${request_ref[repository]}" "${request_ref[digest]}"); then
+        package_tags=$("$JQ" -r '.metadata.container.tags[]?' <<<"$metadata")
+        output=$(select_matching_tags_for_scan \
+            "$package_tags" "$package_tags" || true)
+        result_ref[tags]="$output"
+        result_ref[metadata]="$metadata"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+# Provider-specific prompt content remains here; the policy engine decides when
+# this interactive recovery attempt is eligible.
+function ghcr_policy_attempt_interactive {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local choice
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        choose_ghcr_direct_authentication 1 || return "$LOOKUP_DENIED"
+        ghcr_refresh_authentication || warn "gh authentication refresh failed"
+        ghcr_policy_attempt_packages "$request_name" "$result_name"
+        return $?
+    fi
+    choice=$(choose_ghcr_fallback 1) || return "$LOOKUP_DENIED"
+    case "$choice" in
+    refresh)
+        ghcr_refresh_authentication || warn "gh authentication refresh failed"
+        ghcr_policy_attempt_packages "$request_name" "$result_name"
+        ;;
+    anonymous)
+        ghcr_policy_attempt_public_oci "$request_name" "$result_name"
+        ;;
+    skip)
+        skip_input=1
+        result_ref[tags]=
+        result_ref[skip]=1
+        return "$LOOKUP_SUCCEEDED"
+        ;;
+    esac
+}
+
+function ghcr_register_policy_attempts {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+
+    if [[ "${request_ref[operation]}" == reverse ]]; then
+        policy_add_attempt ghcr-packages-adaptive \
+            ghcr_policy_attempt_adaptive_probe github-packages-api \
+            "$POLICY_ACCESS_FAST_CREDENTIAL" 10 1 ghcr_policy_gh_is_available
+    fi
+    policy_add_attempt ghcr-oci-public ghcr_policy_attempt_public_oci \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 20
+    policy_add_attempt ghcr-packages ghcr_policy_attempt_packages \
+        github-packages-api "$POLICY_ACCESS_CREDENTIAL" 30 1 \
+        ghcr_policy_gh_is_available
+    skopeo_register_policy_attempts "$request_name" ghcr 70
+    policy_add_attempt ghcr-interactive ghcr_policy_attempt_interactive \
+        github-packages-api "$POLICY_ACCESS_INTERACTIVE" 110 1 \
+        ghcr_policy_gh_is_available
 }
 
 function ghcr_print_metadata {

@@ -119,6 +119,9 @@ source "$MODULE_DIR/gcr.sh"
 # shellcheck source=lib/ecr.sh
 source "$MODULE_DIR/ecr.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/policy-engine.sh
+source "$MODULE_DIR/policy-engine.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/registries.sh
 source "$MODULE_DIR/registries.sh"
 # shellcheck source-path=SCRIPTDIR

@@ -658,7 +658,32 @@ Implement in `tests/unit/oci.bats`:
 - `OCI-026` P0: comparison-only tag inventory stops once its lower-bound scan
   cost exceeds the competing backend estimate.
 
-## Skopeo and credential policy
+## Central policy engine
+
+Implement in `tests/unit/policy-engine.bats` and exercise real provider
+declarations through `tests/unit/registries.bats`:
+
+- `POLICY-ENGINE-001` P0: `if-required` unlocks credentials only after public
+  denial.
+- `POLICY-ENGINE-002` P0: unavailable changes mechanisms without authorizing
+  credentials.
+- `POLICY-ENGINE-003` P0: `if-faster` selects an available fast-credential
+  attempt before higher-cost public work.
+- `POLICY-ENGINE-004` P0: `never` excludes all credential classes.
+- `POLICY-ENGINE-005` P0: `require` excludes public attempts.
+- `POLICY-ENGINE-006` P0: authoritative not-found is terminal.
+- `POLICY-ENGINE-007` P0: non-authoritative not-found permits another
+  mechanism.
+- `POLICY-ENGINE-008` P0: stopped is terminal.
+- `POLICY-ENGINE-009` P0: interactive recovery is eligible only after denial
+  in a real terminal.
+- `POLICY-ENGINE-010` P0: a confirmed direct tag is a built-in reverse shortcut.
+- Provider dispatch tests verify actual registration order, backend reporting,
+  fallback, and terminal behavior for both direct and reverse requests.
+- GHCR adaptive tests verify that a probe advertises measured continuations and
+  the engine selects the cheaper remaining attempt.
+
+## Skopeo mechanisms
 
 Implement in `tests/unit/skopeo.bats`:
 
@@ -673,10 +698,6 @@ Implement in `tests/unit/skopeo.bats`:
 - `SKOPEO-007` P0: `any-durable` retains matches through the first durable candidate;
   `all` requires complete worker results.
 - `SKOPEO-008` P0: empty and mode-0600 anonymous/session authfiles are created.
-- `SKOPEO-009` P0: lazy order is session credentials, isolated anonymous,
-  configured credentials, then provider short-lived auth.
-- `SKOPEO-010` P0: not-found, unavailable, and stopped results do not invoke a
-  credential acquisition path intended only for denial.
 - `SKOPEO-011` P0: authfiles are removed on normal exit and interrupt.
 - `SKOPEO-012` P1: duration formatting covers seconds, minutes, and mixed values.
 - `SKOPEO-013` P0: expensive interactive scan warns and continues.
@@ -684,11 +705,9 @@ Implement in `tests/unit/skopeo.bats`:
 - `SKOPEO-015` P0: `--allow-expensive-scan` permits only that guard and emits a
   notice.
 - `SKOPEO-016` P1: below-threshold scans do not emit an advisory.
-- `SKOPEO-017` P0: `never` uses only the isolated public Skopeo context.
-- `SKOPEO-018` P0: `require` skips public Skopeo and uses configured
-  credentials.
-- `SKOPEO-019` P0: `LOOKUP_UNAVAILABLE` may change backend but never authorizes
-  credentials under `if-required`.
+- The central policy-engine cases cover Skopeo session, public, configured, and
+  provider-token eligibility; `LOOKUP_UNAVAILABLE` may change backend but never
+  authorizes credentials.
 
 ## Human and JSON output
 
@@ -874,7 +893,7 @@ Exit criteria:
 
 Implement provider files in this order to maximize helper reuse:
 
-1. Skopeo and credential policy.
+1. Central policy engine and Skopeo mechanisms.
 2. Generic OCI.
 3. Docker Hub.
 4. GHCR.

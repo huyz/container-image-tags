@@ -99,49 +99,6 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
-@test "GAR-001 public success uses OCI and does not invoke gcloud" {
-    load_module gar
-    function oci_digest_for_tag_anonymously { printf '%s\n' sha256:public; }
-    write_stub gcloud <<'EOF'
-: >"$CALLS_DIR/gcloud"
-exit 99
-EOF
-
-    run gar_digest_for_tag us-docker.pkg.dev project/repo/app stable \
-        us-docker.pkg.dev/project/repo/app:stable
-    assert_status 0
-    assert_output_exact sha256:public
-    refute_file_exists "$CALLS_DIR/gcloud"
-}
-
-@test "GAR-002 denial tries configured credentials before requesting gcloud token" {
-    load_common
-    # shellcheck source=../../lib/skopeo.sh
-    source "$REPO_ROOT/lib/skopeo.sh"
-    # shellcheck source=../../lib/gar.sh
-    source "$REPO_ROOT/lib/gar.sh"
-    skopeo_anonymous_authfile="$TEST_ROOT/anonymous.json"
-    skopeo_session_authfile="$TEST_ROOT/session.json"
-    function skopeo_session_has_registry { return 1; }
-    function skopeo_has_registry_credentials { return 0; }
-    function skopeo_digest_for_tag_with_status {
-        case "${2-}" in
-        "$skopeo_anonymous_authfile") printf '%s\n' anonymous >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        '') printf '%s\n' configured >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        "$skopeo_session_authfile") printf '%s\n' session >>"$CALLS_DIR/order"; printf '%s\n' sha256:ok ;;
-        esac
-    }
-    function fake_gar_authenticate { printf '%s\n' gcloud >>"$CALLS_DIR/order"; }
-
-    run --separate-stderr skopeo_digest_for_tag_with_lazy_auth \
-        us-docker.pkg.dev us-docker.pkg.dev/project/repo/app:stable \
-        fake_gar_authenticate
-    assert_status 0
-    assert_output_exact sha256:ok
-    assert_stderr_contains 'Using configured registry credentials'
-    [[ $(<"$CALLS_DIR/order") == $'anonymous\nconfigured\ngcloud\nsession' ]]
-}
-
 @test "GAR-003 gcloud authentication uses exact quiet access-token command" {
     load_module gar
     skopeo_session_authfile="$TEST_ROOT/google-auth.json"
@@ -198,40 +155,6 @@ EOF
     run --separate-stderr gar_debug_denial_detail gcr.io/project/app:stable
     assert_status 0
     assert_output_exact 'permission missing'
-}
-
-@test "GAR-006 non-denial statuses propagate without debug fallback" {
-    load_module gar
-    function oci_digest_for_tag_anonymously { return "$LOOKUP_STOPPED"; }
-    function gar_debug_denial_detail { : >"$CALLS_DIR/debug"; }
-
-    run gar_digest_for_tag gcr.io project/app stable gcr.io/project/app:stable
-    assert_status "$LOOKUP_STOPPED"
-    refute_file_exists "$CALLS_DIR/debug"
-}
-
-@test "GAR-007 denial reuses a Google token with the OCI fast path" {
-    load_module gar
-    function oci_digest_for_tag_anonymously {
-        printf '%s\n' public >>"$CALLS_DIR/order"
-        return "$LOOKUP_DENIED"
-    }
-    function gar_access_token {
-        printf '%s\n' token >>"$CALLS_DIR/order"
-        printf '%s\n' short-lived-token
-    }
-    function oci_digest_for_tag_with_bearer_token {
-        printf 'authenticated:%s\n' "$4" >>"$CALLS_DIR/order"
-        printf '%s\n' sha256:authenticated
-    }
-    function skopeo_is_available { : >"$CALLS_DIR/unexpected-skopeo"; return 0; }
-
-    run gar_digest_for_tag us-docker.pkg.dev project/repo/app stable \
-        us-docker.pkg.dev/project/repo/app:stable
-    assert_status 0
-    assert_output_exact sha256:authenticated
-    [[ $(<"$CALLS_DIR/order") == $'public\ntoken\nauthenticated:short-lived-token' ]]
-    refute_file_exists "$CALLS_DIR/unexpected-skopeo"
 }
 
 @test "GAR-008 DockerImage metadata uses the exact digest resource and a header file" {
@@ -295,69 +218,4 @@ EOF
         us-docker.pkg.dev/project/repo/app "$DIGEST" token
     assert_status 0
     assert_output_exact $'latest\n1.2.3'
-}
-
-@test "GAR-012 if-faster uses available DockerImage metadata before public OCI" {
-    load_module gar
-    function gar_access_token_if_available { printf '%s\n' token; }
-    function gar_tags_by_digest_api {
-        printf '%s\n' metadata >>"$CALLS_DIR/order"
-        printf '%s\n' stable
-    }
-    function oci_tags_by_digest_anonymously {
-        : >"$CALLS_DIR/unexpected-oci"
-    }
-
-    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
-    [[ "$registry_lookup_backend" == gar-api ]]
-    [[ "$registry_tags" == stable ]]
-    [[ $(<"$CALLS_DIR/order") == metadata ]]
-    refute_file_exists "$CALLS_DIR/unexpected-oci"
-}
-
-@test "GAR-013 if-faster without configured Google credentials retains public OCI" {
-    load_module gar
-    function gar_access_token_if_available { return "$LOOKUP_UNAVAILABLE"; }
-    function gar_tags_by_digest_api { : >"$CALLS_DIR/unexpected-api"; }
-    function oci_tags_by_digest_anonymously { printf '%s\n' public; }
-
-    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
-    [[ "$registry_lookup_backend" == oci-registry-api ]]
-    [[ "$registry_tags" == public ]]
-    refute_file_exists "$CALLS_DIR/unexpected-api"
-}
-
-@test "GAR-014 if-required tries public OCI before authenticated metadata" {
-    load_module gar
-    opt_credential_policy=if-required
-    function oci_tags_by_digest_anonymously {
-        printf '%s\n' public >>"$CALLS_DIR/order"
-        return "$LOOKUP_DENIED"
-    }
-    function gar_access_token {
-        printf '%s\n' token >>"$CALLS_DIR/order"
-        printf '%s\n' short-lived-token
-    }
-    function gar_tags_by_digest_api {
-        printf 'metadata:%s\n' "$4" >>"$CALLS_DIR/order"
-        printf '%s\n' private
-    }
-
-    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
-    [[ "$registry_lookup_backend" == gar-api ]]
-    [[ "$registry_tags" == private ]]
-    [[ $(<"$CALLS_DIR/order") == $'public\ntoken\nmetadata:short-lived-token' ]]
-}
-
-@test "GAR-015 unavailable metadata falls back to public OCI without claiming not-found" {
-    load_module gar
-    registry_lookup_result=completed
-    function gar_access_token_if_available { printf '%s\n' token; }
-    function gar_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
-    function oci_tags_by_digest_anonymously { printf '%s\n' public; }
-
-    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
-    [[ "$registry_lookup_backend" == oci-registry-api ]]
-    [[ "$registry_lookup_result" == completed ]]
-    [[ "$registry_tags" == public ]]
 }

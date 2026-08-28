@@ -145,35 +145,6 @@ EOF
     [[ "$args" != *"$AWS_CANARY"* ]]
 }
 
-@test "ECR-012 configured credentials are attempted before AWS CLI login" {
-    load_common
-    # shellcheck source=../../lib/skopeo.sh
-    source "$REPO_ROOT/lib/skopeo.sh"
-    # shellcheck source=../../lib/ecr.sh
-    source "$REPO_ROOT/lib/ecr.sh"
-    skopeo_anonymous_authfile="$TEST_ROOT/anonymous.json"
-    skopeo_session_authfile="$TEST_ROOT/session.json"
-    function skopeo_session_has_registry { return 1; }
-    function skopeo_has_registry_credentials { return 0; }
-    function skopeo_digest_for_tag_with_status {
-        case "${2-}" in
-        "$skopeo_anonymous_authfile") printf '%s\n' anonymous >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        '') printf '%s\n' configured >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        "$skopeo_session_authfile") printf '%s\n' session >>"$CALLS_DIR/order"; printf '%s\n' sha256:ok ;;
-        esac
-    }
-    function fake_ecr_authenticate { printf '%s\n' aws >>"$CALLS_DIR/order"; }
-
-    run --separate-stderr skopeo_digest_for_tag_with_lazy_auth \
-        123456789012.dkr.ecr.us-west-2.amazonaws.com \
-        123456789012.dkr.ecr.us-west-2.amazonaws.com/app:stable \
-        fake_ecr_authenticate
-    assert_status 0
-    assert_output_exact sha256:ok
-    assert_stderr_contains 'Using configured registry credentials'
-    [[ $(<"$CALLS_DIR/order") == $'anonymous\nconfigured\naws\nsession' ]]
-}
-
 @test "ECRP-001 supported AWS credential variables enable metadata probing" {
     load_ecr
     write_stub aws <<'EOF'
@@ -287,19 +258,6 @@ EOF
     run --separate-stderr ecr_public_image_details alias/app imageDigest=sha256:one
     assert_status "$LOOKUP_STOPPED"
     assert_stderr_contains 'ECR Public API rate limit reached'
-}
-
-@test "ECRP-011 direct public tags use the OCI fast path before Skopeo" {
-    load_ecr
-    function ecr_digest_for_tag_api { : >"$CALLS_DIR/unexpected-api"; }
-    function oci_digest_for_tag_anonymously { printf '%s\n' sha256:registry; }
-    function skopeo_digest_for_tag_with_access_policy { : >"$CALLS_DIR/unexpected-skopeo"; }
-
-    run ecr_digest_for_tag public.ecr.aws alias/app stable public.ecr.aws/alias/app:stable
-    assert_status 0
-    assert_output_exact sha256:registry
-    refute_file_exists "$CALLS_DIR/unexpected-api"
-    refute_file_exists "$CALLS_DIR/unexpected-skopeo"
 }
 
 @test "ECRP-012 public login password uses stdin and fixed us-east-1" {

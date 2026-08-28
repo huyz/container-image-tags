@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
 # Amazon Elastic Container Registry support. Private registries first use the
 # signed metadata API; registry credentials and ECR Public access retain the
@@ -298,173 +298,74 @@ function ecr_authenticate {
     fi
 }
 
-function ecr_digest_for_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local image_reference="$4"
-    local digest lookup_status auth_trigger_status
+function ecr_policy_fast_api_is_available {
+    local -n request_ref="$1"
 
-    if [[ "$registry" != public.ecr.aws ]] &&
-            credential_policy_prefers_fast_credentials; then
-        if digest=$(ecr_digest_for_tag_api "$registry" "$repository" "$tag"); then
-            printf '%s\n' "$digest"
+    if [[ "${request_ref[registry]}" == public.ecr.aws ]]; then
+        ecr_aws_credentials_may_be_available
+    else
+        return 0
+    fi
+}
+
+function ecr_policy_attempt_api {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    [[ -z "${request_ref[ecr_api_attempted]-}" ]] ||
+        return "$LOOKUP_UNAVAILABLE"
+    request_ref[ecr_api_attempted]=1
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        [[ "${request_ref[registry]}" != public.ecr.aws ]] ||
+            return "$LOOKUP_UNAVAILABLE"
+        if output=$(ecr_digest_for_tag_api \
+                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "${request_ref[tag]}"); then
+            result_ref[digest]="$output"
             return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            return $?
         fi
-        (( lookup_status == LOOKUP_NOT_FOUND )) && return "$LOOKUP_NOT_FOUND"
-        (( lookup_status == LOOKUP_STOPPED )) && return "$LOOKUP_STOPPED"
-        notice "ECR API lookup is unavailable for $registry/$repository:$tag; trying registry fallback paths"
-        if credential_policy_allows_public; then
-            if digest=$(oci_digest_for_tag_anonymously \
-                    "$registry" "$repository" "$tag"); then
-                printf '%s\n' "$digest"
-                return "$LOOKUP_SUCCEEDED"
-            else
-                lookup_status=$?
-            fi
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
-            esac
-        fi
-    elif credential_policy_allows_public; then
-        if digest=$(oci_digest_for_tag_anonymously \
-                "$registry" "$repository" "$tag"); then
-            printf '%s\n' "$digest"
+    fi
+    if [[ "${request_ref[registry]}" == public.ecr.aws ]]; then
+        if output=$(ecr_public_tags_by_digest_api \
+                "${request_ref[repository]}" "${request_ref[digest]}"); then
+            result_ref[tags]="$output"
             return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            status=$?
         fi
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
-        esac
-
-        auth_trigger_status=$lookup_status
-        if [[ "$registry" != public.ecr.aws ]] &&
-                credential_policy_allows_auth_after "$lookup_status"; then
-            if digest=$(ecr_digest_for_tag_api "$registry" "$repository" "$tag"); then
-                printf '%s\n' "$digest"
-                return "$LOOKUP_SUCCEEDED"
-            else
-                lookup_status=$?
-            fi
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
-            esac
-            lookup_status=$auth_trigger_status
-        fi
+    elif output=$(ecr_tags_by_digest_api \
+            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "${request_ref[digest]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
     else
-        lookup_status=$LOOKUP_DENIED
+        status=$?
     fi
-
-    skopeo_is_available || return "$LOOKUP_UNAVAILABLE"
-    skopeo_digest_for_tag_with_access_policy \
-        "$registry" "$image_reference" ecr_authenticate "$lookup_status"
+    return "$status"
 }
 
-function ecr_resolve_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local display_reference="$4"
+function ecr_register_policy_attempts {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+    local api_available=ecr_policy_fast_api_is_available
 
-    if remote_tag_digest=$(ecr_digest_for_tag \
-            "$registry" "$repository" "$tag" "$display_reference"); then
-        remote_tag_status=$LOOKUP_SUCCEEDED
-    else
-        remote_tag_status=$?
+    request_ref[provider_auth_callback]=ecr_authenticate
+    if [[ "${request_ref[registry]}" != public.ecr.aws ||
+            "${request_ref[operation]}" == reverse ]]; then
+        policy_add_attempt ecr-api-fast ecr_policy_attempt_api \
+            ecr-api "$POLICY_ACCESS_FAST_CREDENTIAL" 10 1 "$api_available"
     fi
-}
-
-function ecr_tags_by_digest_with_skopeo {
-    local registry="$1"
-    local repository="$2"
-    local digest="$3"
-    local prior_status="${4-}"
-
-    skopeo_tags_by_digest_with_access_policy \
-        "$registry" "$repository" "$digest" ecr_authenticate "$prior_status"
-}
-
-function ecr_find_tags {
-    local registry="$1"
-    local repository="$2"
-    local digest="$3"
-    local display_repository="$4"
-    local lookup_status auth_trigger_status
-
-    if credential_policy_prefers_fast_credentials; then
-        registry_lookup_backend=ecr-api
-        if [[ "$registry" == public.ecr.aws ]]; then
-            if registry_tags=$(ecr_public_tags_by_digest_api "$repository" "$digest"); then
-                return
-            else
-                lookup_status=$?
-            fi
-        elif registry_tags=$(ecr_tags_by_digest_api "$registry" "$repository" "$digest"); then
-            return
-        else
-            lookup_status=$?
-        fi
-    elif credential_policy_allows_public; then
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                "$registry" "$repository" "$digest"); then
-            return
-        else
-            lookup_status=$?
-        fi
-        auth_trigger_status=$lookup_status
-        if credential_policy_allows_auth_after "$lookup_status"; then
-            registry_lookup_backend=ecr-api
-            if [[ "$registry" == public.ecr.aws ]]; then
-                if registry_tags=$(ecr_public_tags_by_digest_api \
-                        "$repository" "$digest"); then
-                    return
-                else
-                    lookup_status=$?
-                fi
-            elif registry_tags=$(ecr_tags_by_digest_api \
-                    "$registry" "$repository" "$digest"); then
-                return
-            else
-                lookup_status=$?
-            fi
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") ;;
-            *) lookup_status=$auth_trigger_status ;;
-            esac
-        fi
-    else
-        lookup_status=$LOOKUP_DENIED
+    policy_add_attempt ecr-oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 20
+    if [[ "${request_ref[registry]}" != public.ecr.aws ||
+            "${request_ref[operation]}" == reverse ]]; then
+        policy_add_attempt ecr-api-after-denial ecr_policy_attempt_api \
+            ecr-api "$POLICY_ACCESS_CREDENTIAL" 25
     fi
-    if credential_policy_prefers_fast_credentials &&
-            (( lookup_status == LOOKUP_UNAVAILABLE )) &&
-            credential_policy_allows_public; then
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                "$registry" "$repository" "$digest"); then
-            return
-        else
-            lookup_status=$?
-        fi
-    fi
-    case "$lookup_status" in
-    "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-    "$LOOKUP_STOPPED")
-        if [[ "$registry" == public.ecr.aws ]]; then
-            abort "ECR Public API lookup stopped for $display_repository"
-        fi
-        abort "ECR API lookup stopped for $display_repository"
-        ;;
-    *)
-        notice "ECR fast paths did not complete for $display_repository; falling back to Skopeo"
-        registry_lookup_backend=skopeo
-        skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-        registry_tags=$(ecr_tags_by_digest_with_skopeo \
-            "$registry" "$display_repository" "$digest" "$lookup_status") ||
-            abort "ECR lookup failed for $display_repository"
-        ;;
-    esac
+    skopeo_register_policy_attempts "$request_name" ecr 70
 }

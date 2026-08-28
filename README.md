@@ -240,18 +240,19 @@ The `lib` directory contains shared diagnostics and rolling workers
 (`common.sh`), local image resolution (`local-images.sh`), anonymous generic
 OCI lookup (`oci.sh`), its portable credential-aware fallback (`skopeo.sh`),
 registry adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and
-`ecr.sh`), and central registry classification and dispatch (`registries.sh`).
+`ecr.sh`), the universal ordering and fallback engine (`policy-engine.sh`), and
+central registry classification and request construction (`registries.sh`).
 
 To add registry-specific support, source its adapter before `registries.sh`,
-classify its repository host in `registry_classify`, and add it to the direct
-tag and reverse-lookup dispatch functions. Lookup helpers use the named status
+classify its repository host in `registry_classify`, and give it one capability
+registration function whose atomic callbacks share the direct/reverse request
+and result API. Lookup helpers use the named status
 contract in `common.sh`: `LOOKUP_SUCCEEDED` (0), `LOOKUP_NOT_FOUND` (1),
 `LOOKUP_UNAVAILABLE` (2), `LOOKUP_DENIED` (3), and terminal
-`LOOKUP_STOPPED` (4). Adapter helpers exchange provider-internal state with the
-central dispatcher. Each dispatch caller supplies a lightweight associative
-lookup context that receives status, digest, errors, tags, backend, and optional
-provider metadata as applicable. User-choice helpers produce string actions so
-nonzero exit statuses remain reserved for actual failures.
+`LOOKUP_STOPPED` (4). `policy-engine.sh` alone interprets these statuses and
+decides eligibility, ordering, fallback, and interactive-recovery timing. Each
+dispatch caller supplies a lightweight associative lookup context that receives
+status, digest, errors, tags, backend, and optional provider metadata.
 
 ### Tests
 

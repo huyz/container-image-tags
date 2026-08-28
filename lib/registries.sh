@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034,SC2154,SC2178  # standalone lint: shared fields and associative namerefs
 
-# Registry classification and dispatch. Registry-specific modules implement
-# lookup and authentication paths; this file is the single integration point
-# for adding another registry such as GAR, ECR, or ACR.
+# Registry classification and request construction. Registry-specific modules
+# advertise atomic lookup mechanisms; the policy engine owns their flow.
 
 # Populate registry_kind, registry_repository, and registry_host for a Docker
 # repository reference. registry_repository is normalized for the selected
@@ -64,71 +63,68 @@ function registry_classify {
     esac
 }
 
-# Copy provider-internal direct lookup state into a caller-owned context.
-function registry_export_direct_lookup_context {
-    local -n context_ref="$1"
+# Build the common request consumed by provider capability declarations and the
+# policy engine. Repository normalization remains classification data, not
+# policy.
+function registry_policy_request_init {
+    local repository="$1"
+    local request_name="$2"
+    local -n request_ref="$request_name"
 
-    context_ref=()
-    context_ref[status]="$remote_tag_status"
-    context_ref[digest]="$remote_tag_digest"
-    context_ref[error]="$remote_tag_error"
+    request_ref=()
+    request_ref[registry_kind]="$registry_kind"
+    request_ref[registry]="$registry_host"
+    request_ref[display_repository]="$repository"
+    case "$registry_kind" in
+    docker-hub | ghcr | gcr) request_ref[repository]="$registry_repository" ;;
+    *) request_ref[repository]="${registry_repository#*/}" ;;
+    esac
 }
 
-# Resolve the current digest for a known tag. Provider adapters exchange state
-# with this dispatcher through shared fields; callers receive only the explicit
-# lookup context.
+function registry_register_policy_attempts {
+    local request_name="$1"
+
+    case "$registry_kind" in
+    docker-hub) docker_hub_register_policy_attempts "$request_name" ;;
+    ghcr) ghcr_register_policy_attempts "$request_name" ;;
+    acr) acr_register_policy_attempts "$request_name" ;;
+    gar) gar_register_policy_attempts "$request_name" ;;
+    gcr) gcr_register_policy_attempts "$request_name" ;;
+    ecr) ecr_register_policy_attempts "$request_name" ;;
+    other) oci_register_policy_attempts "$request_name" ;;
+    esac
+}
+
+# Resolve the current digest for a known tag through the common request/result
+# contract. Callers receive only the explicit lookup context.
 function registry_resolve_tag_digest {
     local repository="$1"
     local tag="$2"
     local context_name="$3"
     local remote_tag_reference="$repository:$tag"
-    local oci_repository
+    local status
+    local -A request=() attempt_result=()
+    local -n context_ref="$context_name"
 
-    remote_tag_digest=
-    remote_tag_error=
-    remote_tag_status=$LOOKUP_UNAVAILABLE
-    case "$registry_kind" in
-    docker-hub)
-        docker_hub_resolve_tag "$registry_repository" "$tag" "$remote_tag_reference"
-        ;;
-    ghcr)
-        ghcr_resolve_tag "$registry_repository" "$tag"
-        ;;
-    acr)
-        acr_resolve_tag "$registry_host" "${registry_repository#*/}" \
-            "$tag" "$remote_tag_reference"
-        ;;
-    gar)
-        gar_resolve_tag "$registry_host" "${registry_repository#*/}" \
-            "$tag" "$remote_tag_reference"
-        ;;
-    gcr)
-        gcr_resolve_tag "$registry_host" "$registry_repository" \
-            "$tag" "$remote_tag_reference"
-        ;;
-    ecr)
-        ecr_resolve_tag "$registry_host" "${registry_repository#*/}" \
-            "$tag" "$remote_tag_reference"
-        ;;
-    other)
-        oci_repository="${repository#*/}"
-        oci_resolve_tag "$registry_host" "$oci_repository" \
-            "$tag" "$remote_tag_reference"
-        ;;
-    esac
-
-    registry_export_direct_lookup_context "$context_name"
-}
-
-# Copy provider-internal reverse lookup state into a caller-owned context.
-function registry_export_reverse_lookup_context {
-    local -n context_ref="$1"
+    registry_policy_request_init "$repository" request
+    request[operation]=direct
+    request[tag]="$tag"
+    request[display_reference]="$remote_tag_reference"
+    policy_plan_reset
+    registry_register_policy_attempts request
+    if policy_execute_lookup request attempt_result; then
+        status=$LOOKUP_SUCCEEDED
+    else
+        status=$?
+    fi
+    if (( status == LOOKUP_STOPPED )); then
+        abort "Registry lookup stopped for $remote_tag_reference"
+    fi
 
     context_ref=()
-    context_ref[result]="$registry_lookup_result"
-    context_ref[backend]="$registry_lookup_backend"
-    context_ref[metadata]="$registry_metadata"
-    context_ref[tags]="$registry_tags"
+    context_ref[status]="$status"
+    context_ref[digest]="${attempt_result[digest]-}"
+    context_ref[error]="${attempt_result[error]-}"
 }
 
 # Find tags for a digest and populate the caller-owned lookup context. "any"
@@ -140,7 +136,9 @@ function registry_find_tags_by_digest {
     local tag_scan_mode="$3"
     local direct_tag="$4"
     local context_name="$5"
-    local oci_repository
+    local status
+    local -A request=() attempt_result=()
+    local -n context_ref="$context_name"
 
     registry_tags=
     registry_lookup_result=completed
@@ -153,48 +151,30 @@ function registry_find_tags_by_digest {
     registry_direct_tag=
     [[ "$direct_tag" == '<none>' ]] || registry_direct_tag="$direct_tag"
 
-    if [[ "$registry_tag_scan" == any &&
-            -n "$registry_direct_tag" &&
-            -n "${registry_direct_tag_confirmed-}" ]]; then
-        registry_tags="$registry_direct_tag"
-        registry_lookup_backend=direct-tag-check
-    elif [[ "$registry_tag_scan" == any-durable &&
-            -n "$registry_direct_tag" &&
-            -n "${registry_direct_tag_confirmed-}" ]] &&
-            tag_is_assumed_durable "$registry_direct_tag"; then
-        registry_tags="$registry_direct_tag"
-        registry_lookup_backend=direct-tag-check
+    registry_policy_request_init "$repository" request
+    request[operation]=reverse
+    request[digest]="$digest"
+    request[scan_mode]="$tag_scan_mode"
+    request[direct_tag]="$registry_direct_tag"
+    request[direct_tag_confirmed]="${registry_direct_tag_confirmed-}"
+    policy_plan_reset
+    registry_register_policy_attempts request
+    if policy_execute_lookup request attempt_result; then
+        status=$LOOKUP_SUCCEEDED
     else
-        case "$registry_kind" in
-        ghcr)
-            ghcr_find_tags "$registry_repository" "$digest" "$repository"
-            ;;
-        docker-hub)
-            docker_hub_find_tags "$registry_repository" "$digest" "$repository"
-            ;;
-        acr)
-            acr_find_tags "$registry_host" "${registry_repository#*/}" \
-                "$digest" "$repository"
-            ;;
-        gar)
-            gar_find_tags "$registry_host" "$repository" "$digest"
-            ;;
-        gcr)
-            gcr_find_tags "$registry_host" "$registry_repository" \
-                "$digest" "$repository"
-            ;;
-        ecr)
-            ecr_find_tags "$registry_host" "${registry_repository#*/}" \
-                "$digest" "$repository"
-            ;;
-        other)
-            oci_repository="${repository#*/}"
-            oci_find_tags "$registry_host" "$oci_repository" "$digest" "$repository"
-            ;;
-        esac
+        status=$?
     fi
-
-    registry_export_reverse_lookup_context "$context_name"
+    context_ref=()
+    context_ref[backend]="${attempt_result[backend]-}"
+    context_ref[metadata]="${attempt_result[metadata]-}"
+    context_ref[tags]="${attempt_result[tags]-}"
+    case "$status" in
+    "$LOOKUP_SUCCEEDED") context_ref[result]=completed ;;
+    "$LOOKUP_NOT_FOUND") context_ref[result]=not_found ;;
+    "$LOOKUP_STOPPED") abort "Registry lookup stopped for $repository" ;;
+    "$LOOKUP_DENIED") abort "Registry denied access to $repository after permitted authentication paths" ;;
+    *) abort "Registry lookup failed for $repository" ;;
+    esac
 }
 
 function registry_print_metadata {

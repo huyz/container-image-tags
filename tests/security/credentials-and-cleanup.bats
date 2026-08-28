@@ -228,7 +228,7 @@ EOF
 
     run --separate-stderr docker_hub_tags_by_digest \
         library/app sha256:one app
-    assert_status 1
+    assert_status "$LOOKUP_UNAVAILABLE"
     [[ ${#stderr} -lt 700 ]]
     ! grep -Fxq 'NOTICE: forged-record' <<<"$stderr"
 }

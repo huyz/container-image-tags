@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
 # Google registry access. GAR uses its authenticated DockerImage resource for
 # indexed digest-to-tags lookup when credentials are allowed, the shared OCI
@@ -224,165 +224,99 @@ function gar_debug_denial_detail {
     printf '%s\n' "${docker_error#*denied: }"
 }
 
-function gar_digest_for_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local image_reference="$4"
-    local digest lookup_status token
+function gar_policy_existing_token_is_available {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+    local token
 
-    if credential_policy_allows_public; then
-        if digest=$(oci_digest_for_tag_anonymously "$registry" "$repository" "$tag"); then
-            printf '%s\n' "$digest"
+    [[ -z "${request_ref[provider_token]-}" ]] || return 0
+    if token=$(gar_access_token_if_available); then
+        request_ref[provider_token]="$token"
+        return 0
+    fi
+    return 1
+}
+
+function gar_policy_get_token {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+    local token
+
+    if [[ -n "${request_ref[provider_token]-}" ]]; then
+        return 0
+    fi
+    token=$(gar_access_token "${request_ref[registry]}") || return 1
+    request_ref[provider_token]="$token"
+}
+
+function gar_policy_attempt_oci_token {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    gar_policy_get_token "$request_name" || return "$LOOKUP_UNAVAILABLE"
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(oci_digest_for_tag_with_bearer_token \
+                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "${request_ref[tag]}" "${request_ref[provider_token]}"); then
+            result_ref[digest]="$output"
             return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            return $?
         fi
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
-        esac
-    else
-        lookup_status=$LOOKUP_DENIED
     fi
-
-    if credential_policy_allows_auth_after "$lookup_status"; then
-        if token=$(gar_access_token "$registry") &&
-                digest=$(oci_digest_for_tag_with_bearer_token \
-                    "$registry" "$repository" "$tag" "$token"); then
-            printf '%s\n' "$digest"
-            return "$LOOKUP_SUCCEEDED"
-        else
-            lookup_status=$?
-        fi
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return "$lookup_status" ;;
-        esac
-    fi
-
-    skopeo_is_available || return "$lookup_status"
-    if digest=$(skopeo_digest_for_tag_with_access_policy \
-            "$registry" "$image_reference" gar_authenticate "$lookup_status"); then
-        printf '%s\n' "$digest"
+    if output=$(oci_tags_by_digest_with_bearer_token \
+            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "${request_ref[digest]}" "${request_ref[provider_token]}"); then
+        result_ref[tags]="$output"
         return "$LOOKUP_SUCCEEDED"
     else
-        lookup_status=$?
+        status=$?
     fi
-    if (( lookup_status == LOOKUP_DENIED )); then
-        gar_debug_denial_detail "$image_reference" || true
-    fi
-    return "$lookup_status"
+    return "$status"
 }
 
-function gar_resolve_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local display_reference="$4"
-    local lookup_output
+function gar_policy_attempt_api {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
 
-    if lookup_output=$(gar_digest_for_tag \
-            "$registry" "$repository" "$tag" "$display_reference"); then
-        remote_tag_digest="$lookup_output"
-        remote_tag_status=$LOOKUP_SUCCEEDED
+    [[ -z "${request_ref[gar_api_attempted]-}" ]] ||
+        return "$LOOKUP_UNAVAILABLE"
+    request_ref[gar_api_attempted]=1
+    gar_policy_get_token "$request_name" || return "$LOOKUP_UNAVAILABLE"
+    if output=$(gar_tags_by_digest_api \
+            "${request_ref[registry]}" "${request_ref[display_repository]}" \
+            "${request_ref[digest]}" "${request_ref[provider_token]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
     else
-        remote_tag_status=$?
-        remote_tag_error="$lookup_output"
+        status=$?
     fi
+    return "$status"
 }
 
-function gar_find_tags {
-    local registry="$1"
-    local display_repository="$2"
-    local digest="$3"
+function gar_register_policy_attempts {
+    local request_name="$1"
+    local -n request_ref="$request_name"
 
-    local oci_repository="${display_repository#*/}"
-    local lookup_status=$LOOKUP_UNAVAILABLE
-    local auth_trigger_status=$LOOKUP_UNAVAILABLE
-    local token api_attempted=
-
-    # The digest-addressed DockerImage resource returns all attached tags in
-    # one request. Probe existing gcloud credentials under if-faster; require
-    # emits the normal actionable credential diagnostics.
-    if credential_policy_prefers_fast_credentials; then
-        registry_lookup_backend=gar-api
-        if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
-            token=$(gar_access_token "$registry") || lookup_status=$?
-        else
-            token=$(gar_access_token_if_available) || lookup_status=$?
-        fi
-        if [[ -n "$token" ]]; then
-            api_attempted=1
-            if registry_tags=$(gar_tags_by_digest_api \
-                    "$registry" "$display_repository" "$digest" "$token"); then
-                return
-            else
-                lookup_status=$?
-            fi
-            (( lookup_status == LOOKUP_STOPPED )) &&
-                abort "GAR DockerImage API lookup stopped for $display_repository"
-        fi
+    request_ref[provider_auth_callback]=gar_authenticate
+    if [[ "${request_ref[operation]}" == reverse ]]; then
+        policy_add_attempt gar-api-existing gar_policy_attempt_api \
+            gar-api "$POLICY_ACCESS_FAST_CREDENTIAL" 10 0 \
+            gar_policy_existing_token_is_available
     fi
-
-    if credential_policy_allows_public; then
-        registry_lookup_backend=oci-registry-api
-        if registry_tags=$(oci_tags_by_digest_anonymously \
-                "$registry" "$oci_repository" "$digest"); then
-            return
-        else
-            lookup_status=$?
-        fi
-        auth_trigger_status=$lookup_status
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; return ;;
-        "$LOOKUP_STOPPED") abort "Google registry OCI lookup stopped for $display_repository" ;;
-        esac
-    else
-        lookup_status=$LOOKUP_DENIED
-        auth_trigger_status=$LOOKUP_DENIED
+    policy_add_attempt gar-oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 20
+    if [[ "${request_ref[operation]}" == reverse ]]; then
+        policy_add_attempt gar-api-token gar_policy_attempt_api \
+            gar-api "$POLICY_ACCESS_CREDENTIAL" 25 0
     fi
-
-    # A token acquired for the fast metadata path can also authenticate the
-    # OCI compatibility path. Public-first policies acquire it only after an
-    # explicit registry denial.
-    if [[ -n "$token" ]] ||
-            credential_policy_allows_auth_after "$auth_trigger_status"; then
-        if [[ -z "$token" ]]; then
-            token=$(gar_access_token "$registry") || lookup_status=$?
-        fi
-        if [[ -n "$token" && -z "$api_attempted" ]]; then
-            registry_lookup_backend=gar-api
-            api_attempted=1
-            if registry_tags=$(gar_tags_by_digest_api \
-                    "$registry" "$display_repository" "$digest" "$token"); then
-                return
-            else
-                lookup_status=$?
-            fi
-            (( lookup_status == LOOKUP_STOPPED )) &&
-                abort "GAR DockerImage API lookup stopped for $display_repository"
-        fi
-        if [[ -n "$token" ]]; then
-            registry_lookup_backend=oci-registry-api
-            if registry_tags=$(oci_tags_by_digest_with_bearer_token \
-                    "$registry" "$oci_repository" "$digest" "$token"); then
-                return
-            else
-                lookup_status=$?
-            fi
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; return ;;
-            "$LOOKUP_STOPPED") abort "Google registry OCI lookup stopped for $display_repository" ;;
-            esac
-            if (( auth_trigger_status == LOOKUP_DENIED )); then
-                lookup_status=$LOOKUP_DENIED
-            fi
-        fi
-    fi
-
-    notice "GAR fast paths did not complete for $display_repository; falling back to Skopeo"
-    registry_lookup_backend=skopeo
-    skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-    registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-        "$registry" "$display_repository" "$digest" gar_authenticate \
-        "$lookup_status") || abort "Google registry lookup failed for $display_repository"
+    policy_add_attempt gar-oci-token gar_policy_attempt_oci_token \
+        oci-registry-api "$POLICY_ACCESS_CREDENTIAL" 30
+    skopeo_register_policy_attempts "$request_name" gar 70
 }

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2030,SC2031,SC2034,SC2154,SC2178  # shared fields and namerefs
 
 # Docker Hub API fast path and its authentication flow.
 
@@ -41,7 +41,7 @@ function docker_hub_write_request_headers {
 function docker_hub_digest_for_tag {
     local hub_repository="$1"
     local tag="$2"
-    local tag_encoded response_tmp request_headers='' http_code manifest_digest token
+    local tag_encoded response_tmp request_headers='' http_code manifest_digest
     local -a request_args
 
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
@@ -73,14 +73,6 @@ function docker_hub_digest_for_tag {
         ;;
     401 | 403)
         rm -f "$response_tmp"
-        if [[ -z "$docker_hub_token" ]] &&
-                credential_policy_allows_auth_after "$LOOKUP_DENIED" &&
-                token=$(docker_hub_token_from_environment); then
-            docker_hub_token=$token
-            notice "Docker Hub anonymous tag lookup failed; retrying with the configured username and PAT."
-            docker_hub_digest_for_tag "$hub_repository" "$tag"
-            return $?
-        fi
         debug "Docker Hub tag lookup returned HTTP $http_code for $hub_repository:$tag"
         return "$LOOKUP_DENIED"
         ;;
@@ -94,60 +86,6 @@ function docker_hub_digest_for_tag {
         return "$LOOKUP_UNAVAILABLE"
         ;;
     esac
-}
-
-# Complete Docker Hub direct-lookup policy: fast Hub API first, then the shared
-# Skopeo access sequence when the API does not produce a terminal result.
-function docker_hub_resolve_tag {
-    local hub_repository="$1"
-    local tag="$2"
-    local display_reference="$3"
-
-    local lookup_status auth_trigger_status token
-
-    if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
-        if token=$(docker_hub_token_from_environment); then
-            docker_hub_token=$token
-        else
-            lookup_status=$LOOKUP_DENIED
-        fi
-    fi
-    if [[ "${opt_credential_policy:-if-faster}" != require || -n "$docker_hub_token" ]] &&
-            remote_tag_digest=$(docker_hub_digest_for_tag "$hub_repository" "$tag"); then
-        remote_tag_status=$LOOKUP_SUCCEEDED
-    else
-        lookup_status=${lookup_status:-$?}
-        remote_tag_status=$lookup_status
-    fi
-    case "$remote_tag_status" in
-    "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return ;;
-    esac
-    auth_trigger_status=$remote_tag_status
-    if skopeo_is_available; then
-        if remote_tag_digest=$(skopeo_digest_for_tag_with_access_policy \
-                docker.io "$display_reference" '' "$remote_tag_status"); then
-            notice "Resolved Docker Hub tag with the Skopeo fallback"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
-    fi
-
-    # Configured credentials are automatic. If a private repository still
-    # cannot be reached, let an interactive caller supply the same PAT used by
-    # the fast reverse-lookup recovery path and retry this exact tag once.
-    if (( auth_trigger_status == LOOKUP_DENIED )) &&
-            (( remote_tag_status != LOOKUP_NOT_FOUND &&
-                remote_tag_status != LOOKUP_STOPPED )) &&
-            credential_policy_allows_credentials &&
-            choose_docker_hub_direct_authentication "$display_reference"; then
-        if remote_tag_digest=$(docker_hub_digest_for_tag \
-                "$hub_repository" "$tag"); then
-            remote_tag_status=$LOOKUP_SUCCEEDED
-        else
-            remote_tag_status=$?
-        fi
-    fi
 }
 
 # Exchange a Docker Hub username and PAT for a short-lived API access token.
@@ -351,31 +289,14 @@ function docker_hub_tags_by_digest {
     local hub_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local next_url response_tmp request_headers='' http_code error_message matching_tags token
+    local next_url response_tmp request_headers='' http_code error_message matching_tags
     local page_tags page_matches durable_precision durable_found
-    local authentication_choice
-    local has_skopeo_credentials=''
     local page_started_ms page_finished_ms page_elapsed_ms total_tag_count total_pages
     local remaining_pages
     local pagination_cost_checked=
     local -a request_args
 
     digest="${digest#sha256:}"
-    if [[ "${opt_credential_policy:-if-faster}" == require && -z "$docker_hub_token" ]]; then
-        if token=$(docker_hub_token_from_environment); then
-            docker_hub_token=$token
-        elif skopeo_has_registry_credentials docker.io; then
-            notice "Using configured registry credentials with the Skopeo fallback."
-            registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-                docker.io "$display_repository" "sha256:$digest" '' \
-                "$LOOKUP_DENIED") ||
-                abort "Authenticated Skopeo lookup failed for $display_repository"
-            registry_lookup_backend=skopeo
-            return
-        else
-            abort "Credentialed Docker Hub access requires DOCKER_HUB_USERNAME and DOCKER_HUB_PAT or configured registry credentials"
-        fi
-    fi
     next_url="https://hub.docker.com/v2/repositories/$hub_repository/tags/?page_size=100"
     response_tmp=$(runtime_temp_file docker-hub-response)
     while [[ -n "$next_url" ]]; do
@@ -391,7 +312,7 @@ function docker_hub_tags_by_digest {
                 "$next_url" "$response_tmp" '' "${request_args[@]}"); then
             rm -f "$response_tmp"
             [[ -z "$request_headers" ]] || rm -f "$request_headers"
-            abort "Failed to list tags for $display_repository"
+            return "$LOOKUP_UNAVAILABLE"
         fi
         page_finished_ms=$(registry_now_milliseconds)
         page_elapsed_ms=$(( page_finished_ms - page_started_ms ))
@@ -402,64 +323,18 @@ function docker_hub_tags_by_digest {
         case "$http_code" in
         200) ;;
         401 | 403)
-            if [[ -n "$docker_hub_token" ]]; then
-                rm -f "$response_tmp"
-                abort "Authenticated Docker Hub request failed with HTTP $http_code${error_message:+: $error_message}"
-            fi
-            if [[ "${opt_credential_policy:-if-faster}" == never ]]; then
-                rm -f "$response_tmp"
-                abort "Docker Hub denied public access for $display_repository"
-            fi
-            if token=$(docker_hub_token_from_environment); then
-                docker_hub_token=$token
-                notice "Docker Hub refused anonymous tag pagination; retrying with the configured username and PAT."
-                continue
-            fi
-            if skopeo_has_registry_credentials docker.io; then
-                has_skopeo_credentials=1
-            fi
-            if ! choose_docker_hub_authentication \
-                    "HTTP $http_code${error_message:+: $error_message}" \
-                    "$has_skopeo_credentials" authentication_choice; then
-                authentication_choice=unavailable
-            fi
-            case "$authentication_choice" in
-            authenticated)
-                continue
-                ;;
-            skopeo)
-                notice "Using configured registry credentials with slower Skopeo lookup."
-                ;;
-            skip)
-                notice "Skipping Docker Hub lookup for $display_repository."
-                skip_input=1
-                break
-                ;;
-            unavailable)
-                [[ -n "$has_skopeo_credentials" ]] || {
-                    rm -f "$response_tmp"
-                    abort "Docker Hub authentication requires an interactive terminal"
-                }
-                notice "Docker Hub tags API was refused anonymously; using configured registry credentials with slower Skopeo lookup. Set DOCKER_HUB_USERNAME and DOCKER_HUB_PAT to retry the faster Docker Hub tags API."
-                ;;
-            *)
-                rm -f "$response_tmp"
-                abort "Docker Hub authentication returned an invalid choice"
-                ;;
-            esac
-            if ! registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-                    docker.io "$display_repository" "sha256:$digest" '' \
-                    "$LOOKUP_DENIED"); then
-                rm -f "$response_tmp"
-                abort "Authenticated Skopeo lookup failed for $display_repository"
-            fi
-            registry_lookup_backend=skopeo
-            next_url=
-            break
+            debug "Docker Hub tag listing returned HTTP $http_code for $display_repository${error_message:+: $error_message}"
+            rm -f "$response_tmp"
+            return "$LOOKUP_DENIED"
             ;;
         *)
+            debug "Docker Hub tag listing failed with HTTP $http_code for $display_repository${error_message:+: $error_message}"
             rm -f "$response_tmp"
-            abort "Docker Hub tag listing failed with HTTP $http_code${error_message:+: $error_message}"
+            case "$http_code" in
+            404) return "$LOOKUP_NOT_FOUND" ;;
+            429) return "$LOOKUP_STOPPED" ;;
+            *) return "$LOOKUP_UNAVAILABLE" ;;
+            esac
             ;;
         esac
         if [[ "$registry_tag_scan" == all && -z "$pagination_cost_checked" ]]; then
@@ -535,11 +410,94 @@ function docker_hub_tags_by_digest {
     rm -f "$response_tmp"
 }
 
-function docker_hub_find_tags {
-    local hub_repository="$1"
-    local digest="$2"
-    local display_repository="$3"
+function docker_hub_policy_session_is_available {
+    [[ -n "$docker_hub_token" ]]
+}
 
-    registry_lookup_backend=docker-hub-api
-    docker_hub_tags_by_digest "$hub_repository" "$digest" "$display_repository"
+function docker_hub_policy_environment_is_available {
+    [[ -n ${DOCKER_HUB_USERNAME-} || -n ${DOCKER_HUB_PAT-} ]]
+}
+
+function docker_hub_policy_attempt_api {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(docker_hub_digest_for_tag \
+                "${request_ref[repository]}" "${request_ref[tag]}"); then
+            result_ref[digest]="$output"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            status=$?
+            return "$status"
+        fi
+    fi
+    if docker_hub_tags_by_digest \
+            "${request_ref[repository]}" "${request_ref[digest]}" \
+            "${request_ref[display_repository]}"; then
+        result_ref[tags]="$registry_tags"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+function docker_hub_policy_attempt_environment {
+    local token
+
+    if [[ -z "$docker_hub_token" ]]; then
+        token=$(docker_hub_token_from_environment) || return "$LOOKUP_UNAVAILABLE"
+        docker_hub_token="$token"
+        notice "Docker Hub denied public access; retrying the tags API with the configured username and PAT."
+    fi
+    docker_hub_policy_attempt_api "$1" "$2"
+}
+
+function docker_hub_policy_attempt_interactive {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local authentication_choice
+
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        choose_docker_hub_direct_authentication \
+            "${request_ref[display_reference]}" || return "$LOOKUP_DENIED"
+    else
+        if ! choose_docker_hub_authentication \
+                'Automatic credential paths were not usable.' '' \
+                authentication_choice; then
+            return "$LOOKUP_DENIED"
+        fi
+        if [[ "$authentication_choice" == skip ]]; then
+            notice "Skipping Docker Hub lookup for ${request_ref[display_repository]}."
+            skip_input=1
+            result_ref[tags]=
+            result_ref[skip]=1
+            return "$LOOKUP_SUCCEEDED"
+        fi
+        [[ "$authentication_choice" == authenticated ]] ||
+            return "$LOOKUP_DENIED"
+    fi
+    docker_hub_policy_attempt_api "$request_name" "$result_name"
+}
+
+function docker_hub_register_policy_attempts {
+    local request_name="$1"
+
+    policy_add_attempt docker-hub-session docker_hub_policy_attempt_api \
+        docker-hub-api "$POLICY_ACCESS_SESSION" 5 1 \
+        docker_hub_policy_session_is_available
+    policy_add_attempt docker-hub-public docker_hub_policy_attempt_api \
+        docker-hub-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt docker-hub-environment docker_hub_policy_attempt_environment \
+        docker-hub-api "$POLICY_ACCESS_CREDENTIAL" 20 1 \
+        docker_hub_policy_environment_is_available
+    skopeo_register_policy_attempts "$request_name" docker-hub 70
+    policy_add_attempt docker-hub-interactive docker_hub_policy_attempt_interactive \
+        docker-hub-api "$POLICY_ACCESS_INTERACTIVE" 110
 }

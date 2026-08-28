@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034,SC2154  # standalone module lint: shared input/output fields
+# shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
 # Google Container Registry's tags/list response includes a manifest object
 # keyed by complete digest, with each value carrying its current tags. Use that
@@ -104,55 +104,6 @@ function gcr_digest_for_tag_with_bearer_token {
         "$1" "$2" "$3" gcr_metadata "$4"
 }
 
-function gcr_resolve_tag {
-    local registry="$1"
-    local repository="$2"
-    local tag="$3"
-    local display_reference="$4"
-    local lookup_output lookup_status token
-
-    if credential_policy_allows_public; then
-        if lookup_output=$(gcr_digest_for_tag_anonymously \
-                "$registry" "$repository" "$tag"); then
-            remote_tag_digest="$lookup_output"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-            return
-        else
-            lookup_status=$?
-        fi
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") remote_tag_status="$lookup_status"; return ;;
-        esac
-    else
-        lookup_status=$LOOKUP_DENIED
-    fi
-
-    if credential_policy_allows_auth_after "$lookup_status"; then
-        if token=$(gar_access_token "$registry") &&
-                lookup_output=$(gcr_digest_for_tag_with_bearer_token \
-                    "$registry" "$repository" "$tag" "$token"); then
-            remote_tag_digest="$lookup_output"
-            remote_tag_status=$LOOKUP_SUCCEEDED
-            return
-        else
-            lookup_status=$?
-        fi
-        case "$lookup_status" in
-        "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") remote_tag_status="$lookup_status"; return ;;
-        esac
-    fi
-
-    skopeo_is_available || abort "Install skopeo to check registry tag '$display_reference'"
-    if lookup_output=$(skopeo_digest_for_tag_with_access_policy \
-            "$registry" "$display_reference" gar_authenticate "$lookup_status"); then
-        remote_tag_digest="$lookup_output"
-        remote_tag_status=$LOOKUP_SUCCEEDED
-    else
-        remote_tag_status=$?
-        remote_tag_error="$lookup_output"
-    fi
-}
-
 # Print current tags for one complete digest, applying the shared bounded or
 # exhaustive scan contract.
 function gcr_tags_by_digest_from_metadata {
@@ -181,47 +132,72 @@ function gcr_tags_by_digest_with_bearer_token {
         "$1" "$2" "$3" gcr_metadata "$4"
 }
 
-function gcr_find_tags {
-    local registry="$1"
-    local repository="$2"
-    local digest="$3"
-    local display_repository="$4"
-    local lookup_status token
+function gcr_policy_attempt_public {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output status
 
-    registry_lookup_backend=gcr-api
-    if credential_policy_allows_public; then
-        if registry_tags=$(gcr_tags_by_digest_anonymously \
-                "$registry" "$repository" "$digest"); then
-            return
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(gcr_digest_for_tag_anonymously \
+                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "${request_ref[tag]}"); then
+            result_ref[digest]="$output"
+            return "$LOOKUP_SUCCEEDED"
         else
-            lookup_status=$?
+            return $?
         fi
-    else
-        lookup_status=$LOOKUP_DENIED
     fi
-    case "$lookup_status" in
-    "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found ;;
-    "$LOOKUP_STOPPED") abort "GCR API lookup stopped for $display_repository" ;;
-    *)
-        if credential_policy_allows_auth_after "$lookup_status"; then
-            if token=$(gar_access_token "$registry") &&
-                    registry_tags=$(gcr_tags_by_digest_with_bearer_token \
-                        "$registry" "$repository" "$digest" "$token"); then
-                return
-            else
-                lookup_status=$?
-            fi
-            case "$lookup_status" in
-            "$LOOKUP_NOT_FOUND") registry_lookup_result=not_found; return ;;
-            "$LOOKUP_STOPPED") abort "GCR API lookup stopped for $display_repository" ;;
-            esac
+    if output=$(gcr_tags_by_digest_anonymously \
+            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "${request_ref[digest]}"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+function gcr_policy_attempt_google_token {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+    local output token status
+
+    token=$(gar_access_token "${request_ref[registry]}") ||
+        return "$LOOKUP_UNAVAILABLE"
+    if [[ "${request_ref[operation]}" == direct ]]; then
+        if output=$(gcr_digest_for_tag_with_bearer_token \
+                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "${request_ref[tag]}" "$token"); then
+            result_ref[digest]="$output"
+            return "$LOOKUP_SUCCEEDED"
+        else
+            return $?
         fi
-        registry_lookup_backend=skopeo
-        skopeo_is_available || abort "Install skopeo to query registry '$registry'"
-        registry_tags=$(skopeo_tags_by_digest_with_access_policy \
-            "$registry" "$display_repository" "$digest" gar_authenticate \
-            "$lookup_status") ||
-            abort "Google Container Registry lookup failed for $display_repository"
-        ;;
-    esac
+    fi
+    if output=$(gcr_tags_by_digest_with_bearer_token \
+            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "${request_ref[digest]}" "$token"); then
+        result_ref[tags]="$output"
+        return "$LOOKUP_SUCCEEDED"
+    else
+        status=$?
+    fi
+    return "$status"
+}
+
+function gcr_register_policy_attempts {
+    local request_name="$1"
+    local -n request_ref="$request_name"
+
+    request_ref[provider_auth_callback]=gar_authenticate
+    policy_add_attempt gcr-public gcr_policy_attempt_public \
+        gcr-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt gcr-google-token gcr_policy_attempt_google_token \
+        gcr-api "$POLICY_ACCESS_CREDENTIAL" 20
+    skopeo_register_policy_attempts "$request_name" gcr 70
 }

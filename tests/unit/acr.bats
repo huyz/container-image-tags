@@ -64,44 +64,26 @@ EOF
     assert_output_exact '{"manifest":{"digest":"sha256:a"}}'
 }
 
-@test "ACR-004 anonymous denial permits Azure CLI metadata lookup" {
+@test "ACR-004 anonymous denial remains a normalized atomic outcome" {
     load_acr
     install_acr_curl 401 '{"errors":[{"message":"authorization required"}]}'
-    write_stub az <<'EOF'
-printf '%s\0' "$@" >"$CALLS_DIR/az.args"
-printf '%s\n' '{"digest":"sha256:authenticated"}'
-EOF
-
-    run --separate-stderr acr_metadata vault.azurecr.io team/app tag stable
-    assert_status 0
-    assert_output_exact '{"digest":"sha256:authenticated"}'
-    assert_stderr_contains 'requesting artifact metadata through Azure CLI'
-    assert_file_exists "$CALLS_DIR/az.args"
+    run acr_metadata_anonymously vault.azurecr.io team/app tag stable
+    assert_status "$LOOKUP_DENIED"
 }
 
-@test "ACR-005 HTTP 404 is authoritative and does not invoke Azure" {
+@test "ACR-005 HTTP 404 is normalized as not found" {
     load_acr
     install_acr_curl 404 '{}'
-    write_stub az <<'EOF'
-: >"$CALLS_DIR/az"
-EOF
-
-    run acr_metadata vault.azurecr.io team/app tag absent
+    run acr_metadata_anonymously vault.azurecr.io team/app tag absent
     assert_status "$LOOKUP_NOT_FOUND"
-    refute_file_exists "$CALLS_DIR/az"
 }
 
-@test "ACR-006 HTTP 429 is terminal and does not invoke Azure" {
+@test "ACR-006 HTTP 429 is normalized as stopped" {
     load_acr
     install_acr_curl 429 '{"message":"slow down"}'
-    write_stub az <<'EOF'
-: >"$CALLS_DIR/az"
-EOF
-
-    run --separate-stderr acr_metadata vault.azurecr.io team/app tag stable
+    run --separate-stderr acr_metadata_anonymously vault.azurecr.io team/app tag stable
     assert_status "$LOOKUP_STOPPED"
     assert_stderr_contains 'rate limit reached'
-    refute_file_exists "$CALLS_DIR/az"
 }
 
 @test "ACR-007 transport and server failures are unavailable" {
@@ -154,14 +136,13 @@ EOF
 
 @test "ACR-011 direct metadata accepts both response shapes" {
     load_acr
-    function acr_metadata { printf '%s\n' '{"tag":{"name":"stable","digest":"sha256:one"}}'; }
 
-    run acr_digest_for_tag vault.azurecr.io team/app stable vault.azurecr.io/team/app:stable
+    run acr_digest_from_tag_metadata \
+        '{"tag":{"name":"stable","digest":"sha256:one"}}' stable
     assert_status 0
     assert_output_exact sha256:one
 
-    function acr_metadata { printf '%s\n' '{"digest":"sha256:two"}'; }
-    run acr_digest_for_tag vault.azurecr.io team/app stable vault.azurecr.io/team/app:stable
+    run acr_digest_from_tag_metadata '{"digest":"sha256:two"}' stable
     assert_output_exact sha256:two
 }
 
@@ -169,55 +150,28 @@ EOF
     load_acr
     registry_tag_scan=all
     registry_direct_tag=
-    function acr_metadata { printf '%s\n' '{"manifest":{"digest":"sha256:different","tags":["stable"]}}'; }
-
-    run acr_tags_by_digest_api vault.azurecr.io team/app "$DIGEST"
+    run acr_tags_from_manifest_metadata \
+        '{"manifest":{"digest":"sha256:different","tags":["stable"]}}' \
+        "$DIGEST"
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
 @test "ACR-013 any-durable returns matches through a durable tag and all deduplicates" {
     load_acr
-    function acr_metadata {
-        printf '{"manifest":{"digest":"%s","tags":["stable","1.2","1.2.3","1.2.3"]}}\n' "$DIGEST"
-    }
+    metadata=$(printf \
+        '{"manifest":{"digest":"%s","tags":["stable","1.2","1.2.3","1.2.3"]}}' \
+        "$DIGEST")
     registry_direct_tag=stable
     registry_direct_tag_confirmed=1
     registry_tag_scan=any-durable
 
-    run acr_tags_by_digest_api vault.azurecr.io team/app "$DIGEST"
+    run acr_tags_from_manifest_metadata "$metadata" "$DIGEST"
     assert_status 0
     assert_output_exact $'stable\n1.2\n1.2.3'
 
     registry_tag_scan=all
-    run acr_tags_by_digest_api vault.azurecr.io team/app "$DIGEST"
+    run acr_tags_from_manifest_metadata "$metadata" "$DIGEST"
     assert_output_exact $'1.2\n1.2.3\nstable'
-}
-
-@test "ACR-015 anonymous and configured Skopeo attempts precede Azure login" {
-    load_common
-    # shellcheck source=../../lib/skopeo.sh
-    source "$REPO_ROOT/lib/skopeo.sh"
-    # shellcheck source=../../lib/acr.sh
-    source "$REPO_ROOT/lib/acr.sh"
-    skopeo_anonymous_authfile="$TEST_ROOT/anonymous.json"
-    skopeo_session_authfile="$TEST_ROOT/session.json"
-    function skopeo_session_has_registry { return 1; }
-    function skopeo_has_registry_credentials { return 0; }
-    function skopeo_digest_for_tag_with_status {
-        case "${2-}" in
-        "$skopeo_anonymous_authfile") printf '%s\n' anonymous >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        '') printf '%s\n' configured >>"$CALLS_DIR/order"; return "$LOOKUP_DENIED" ;;
-        "$skopeo_session_authfile") printf '%s\n' session >>"$CALLS_DIR/order"; printf '%s\n' sha256:ok ;;
-        esac
-    }
-    function fake_acr_authenticate { printf '%s\n' azure >>"$CALLS_DIR/order"; }
-
-    run --separate-stderr skopeo_digest_for_tag_with_lazy_auth \
-        vault.azurecr.io vault.azurecr.io/team/app:stable fake_acr_authenticate
-    assert_status 0
-    assert_output_exact sha256:ok
-    assert_stderr_contains 'Using configured registry credentials'
-    [[ $(<"$CALLS_DIR/order") == $'anonymous\nconfigured\nazure\nsession' ]]
 }
 
 @test "ACR-016 Azure login token travels through stdin to a mode-0600 authfile" {

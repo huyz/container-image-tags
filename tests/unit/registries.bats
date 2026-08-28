@@ -22,6 +22,8 @@ function load_registry_dispatch {
     source "$REPO_ROOT/lib/gcr.sh"
     # shellcheck source=../../lib/ecr.sh
     source "$REPO_ROOT/lib/ecr.sh"
+    # shellcheck source=../../lib/policy-engine.sh
+    source "$REPO_ROOT/lib/policy-engine.sh"
     function skopeo_prepare_lazy_auth { :; }
     # shellcheck source=../../lib/registries.sh
     source "$REPO_ROOT/lib/registries.sh"
@@ -111,8 +113,8 @@ function assert_classification {
     load_registry_dispatch
     function oci_digest_for_tag_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_access_policy {
-        printf '%s\n' "$2" >>"$CALLS_DIR/skopeo"
+    function skopeo_digest_for_tag_with_status {
+        printf '%s\n' "$1" >>"$CALLS_DIR/skopeo"
         printf '%s\n' sha256:fallback
     }
     registry_classify registry.example/team/app
@@ -147,7 +149,7 @@ function assert_classification {
 
     run --separate-stderr dispatch_resolve_tag_digest registry.example/team/app stable
     assert_status 1
-    assert_stderr_contains "OCI registry lookup stopped"
+    assert_stderr_contains "Registry lookup stopped"
     refute_file_exists "$CALLS_DIR/skopeo"
 }
 
@@ -159,7 +161,7 @@ function assert_classification {
 
     run --separate-stderr dispatch_resolve_tag_digest registry.example/team/app stable
     assert_status 1
-    assert_stderr_contains 'OCI registry lookup stopped'
+    assert_stderr_contains 'Registry lookup stopped'
     refute_file_exists "$CALLS_DIR/skopeo"
 }
 
@@ -167,7 +169,7 @@ function assert_classification {
     load_registry_dispatch
     function oci_digest_for_tag_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_access_policy {
+    function skopeo_digest_for_tag_with_status {
         printf '%s\n' call >>"$CALLS_DIR/skopeo"
         printf '%s\n' sha256:fallback
     }
@@ -184,7 +186,8 @@ function assert_classification {
     opt_credential_policy=require
     function oci_digest_for_tag_anonymously { : >"$CALLS_DIR/unexpected-oci"; }
     function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_access_policy {
+    function skopeo_has_registry_credentials { return 0; }
+    function skopeo_digest_for_tag_with_status {
         printf '%s\0' "$@" >"$CALLS_DIR/skopeo-policy"
         printf '%s\n' sha256:credentialed
     }
@@ -195,15 +198,17 @@ function assert_classification {
     [[ "${dispatch_lookup[digest]}" == sha256:credentialed ]]
     refute_file_exists "$CALLS_DIR/unexpected-oci"
     assert_call_args "$CALLS_DIR/skopeo-policy" \
-        registry.example registry.example/team/app:stable '' "$LOOKUP_DENIED"
+        registry.example/team/app:stable ''
 }
 
 @test "DISPATCH-008 every reverse lookup resets shared result and metadata fields" {
     load_registry_dispatch
-    function ghcr_tags_by_digest {
-        registry_tags=one
-        registry_metadata='{"name":"sha256:one"}'
-        registry_lookup_backend=github-packages-api
+    function ghcr_policy_gh_is_available { return 0; }
+    function ghcr_policy_attempt_adaptive_probe {
+        local -n result_ref="$2"
+        result_ref[tags]=one
+        result_ref[metadata]='{"name":"sha256:one"}'
+        result_ref[backend]=github-packages-api
     }
     registry_classify ghcr.io/team/app
     dispatch_find_tags_by_digest ghcr.io/team/app sha256:one all '<none>'
@@ -255,9 +260,9 @@ function assert_classification {
 
 @test "DISPATCH-011 ACR unavailable reverse API records Skopeo fallback backend" {
     load_registry_dispatch
-    function acr_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
+    function acr_policy_attempt_public { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function acr_tags_by_digest_with_skopeo { printf '%s\n' fallback-tag; }
+    function skopeo_tags_by_digest { printf '%s\n' fallback-tag; }
     registry_classify vault.azurecr.io/team/app
 
     dispatch_find_tags_by_digest vault.azurecr.io/team/app sha256:one all '<none>'
@@ -267,9 +272,9 @@ function assert_classification {
 
 @test "ACR-014 unavailable ACR metadata falls back once and records Skopeo" {
     load_registry_dispatch
-    function acr_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
+    function acr_policy_attempt_public { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function acr_tags_by_digest_with_skopeo {
+    function skopeo_tags_by_digest {
         printf '%s\n' "$*" >"$CALLS_DIR/acr-fallback"
         printf '%s\n' fallback
     }
@@ -283,7 +288,10 @@ function assert_classification {
 
 @test "ACR-017 successful ACR metadata reverse lookup records acr-api" {
     load_registry_dispatch
-    function acr_tags_by_digest_api { printf '%s\n' stable; }
+    function acr_policy_attempt_public {
+        local -n result_ref="$2"
+        result_ref[tags]=stable
+    }
     registry_classify vault.azurecr.io/team/app
 
     dispatch_find_tags_by_digest vault.azurecr.io/team/app sha256:one all '<none>'
@@ -309,7 +317,7 @@ function assert_classification {
     function ecr_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
     function oci_tags_by_digest_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function ecr_tags_by_digest_with_skopeo { printf '%s\n' fallback; }
+    function skopeo_tags_by_digest { printf '%s\n' fallback; }
     registry_classify 123456789012.dkr.ecr.us-west-2.amazonaws.com/app
 
     dispatch_find_tags_by_digest \
@@ -321,6 +329,7 @@ function assert_classification {
 @test "ECRP-010 successful public metadata and unavailable fallback report actual backends" {
     load_registry_dispatch
     function ecr_public_tags_by_digest_api { printf '%s\n' metadata; }
+    function ecr_policy_fast_api_is_available { return 0; }
     registry_classify public.ecr.aws/alias/app
     dispatch_find_tags_by_digest public.ecr.aws/alias/app sha256:one all '<none>'
     [[ "${dispatch_lookup[backend]}" == ecr-api &&
@@ -329,7 +338,7 @@ function assert_classification {
     function ecr_public_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
     function oci_tags_by_digest_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function ecr_tags_by_digest_with_skopeo { printf '%s\n' fallback; }
+    function skopeo_tags_by_digest { printf '%s\n' fallback; }
     dispatch_find_tags_by_digest public.ecr.aws/alias/app sha256:one all '<none>'
     [[ "${dispatch_lookup[backend]}" == skopeo &&
         "${dispatch_lookup[tags]}" == fallback ]]
@@ -358,7 +367,7 @@ function assert_classification {
 
     function gcr_tags_by_digest_anonymously { return "$LOOKUP_UNAVAILABLE"; }
     function skopeo_is_available { return 0; }
-    function skopeo_tags_by_digest_with_access_policy { printf '%s\n' fallback; }
+    function skopeo_tags_by_digest { printf '%s\n' fallback; }
     dispatch_find_tags_by_digest gcr.io/project/app sha256:one all '<none>'
     [[ "${dispatch_lookup[backend]}" == skopeo &&
         "${dispatch_lookup[tags]}" == fallback ]]
@@ -389,7 +398,7 @@ function assert_classification {
     run --separate-stderr dispatch_find_tags_by_digest \
         gcr.io/project/app sha256:one all '<none>'
     assert_status 1
-    assert_stderr_contains 'GCR API lookup stopped'
+    assert_stderr_contains 'Registry lookup stopped'
     refute_file_exists "$CALLS_DIR/skopeo"
 }
 

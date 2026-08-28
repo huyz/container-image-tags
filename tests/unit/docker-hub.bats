@@ -129,7 +129,7 @@ EOF
     ! grep -aFq 'Authorization' "$CALLS_DIR/curl.args"
 }
 
-@test "HUB-009 environment credentials retry the refused direct tag" {
+@test "HUB-009 environment credential attempt exchanges a token and retries the tag" {
     load_hub
     export DOCKER_HUB_USERNAME=user DOCKER_HUB_PAT=pat
     function docker_hub_token_from_credentials {
@@ -148,11 +148,15 @@ count=$((count + 1)); printf '%d\n' "$count" >"$count_file"
 if ((count == 1)); then printf '{}' >"$output"; printf '403'; else printf '{"digest":"sha256:ok"}' >"$output"; printf '200'; fi
 EOF
 
-    run --separate-stderr docker_hub_digest_for_tag library/app latest
-    assert_status 0
-    assert_output_exact sha256:ok
+    declare -A request=(
+        [operation]=direct [repository]=library/app [tag]=latest
+    ) result=()
+    run docker_hub_policy_attempt_api request result
+    assert_status "$LOOKUP_DENIED"
+    docker_hub_policy_attempt_environment request result
     assert_call_args "$CALLS_DIR/credentials.args" user pat
     [[ $(<"$CALLS_DIR/count") -eq 2 ]]
+    [[ "${result[digest]}" == sha256:ok ]]
 }
 
 @test "HUB-010 credential exchange validates token and keeps PAT off argv" {
@@ -185,35 +189,12 @@ EOF
     [[ "$args" == *'@'* ]]
 }
 
-@test "HUB-012 noninteractive refusal can use configured Skopeo credentials" {
+@test "HUB-013 reverse API refusal is normalized as denied" {
     load_hub
     registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
     install_hub_response 403 '{"message":"pagination refused"}'
-    function skopeo_has_registry_credentials { return 0; }
-    function choose_docker_hub_authentication { return 1; }
-    function skopeo_tags_by_digest { printf '%s\n' fallback; }
-    registry_lookup_backend=docker-hub-api
-
-    function call_hub_fallback {
-        docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
-        printf '%s\n' "$registry_lookup_backend"
-    }
-    run --separate-stderr call_hub_fallback
-    assert_status 0
-    assert_output_exact skopeo
-    assert_stderr_contains 'using configured registry credentials'
-}
-
-@test "HUB-013 noninteractive refusal without credentials fails clearly" {
-    load_hub
-    registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
-    install_hub_response 403 '{"message":"pagination refused"}'
-    function skopeo_has_registry_credentials { return 1; }
-    function choose_docker_hub_authentication { return 1; }
-
-    run --separate-stderr docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
-    assert_status 1
-    assert_stderr_contains 'authentication requires an interactive terminal'
+    run docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
+    assert_status "$LOOKUP_DENIED"
 }
 
 @test "HUB-014 interactive choice spellings map to authenticated Skopeo or skip actions" {
@@ -232,50 +213,25 @@ EOF
     assert_status 1
 }
 
-@test "HUB-015 skip state is scoped to the current lookup" {
-    load_hub
-    registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
-    install_hub_response 403 '{"message":"denied"}'
-    function skopeo_has_registry_credentials { return 1; }
-    function choose_docker_hub_authentication {
-        local -n result_ref="$3"
-        result_ref=skip
-    }
-    docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
-    [[ -n "$skip_input" ]]
-
-    skip_input=; registry_tags=
-    install_hub_response 200 \
-        "{\"results\":[{\"name\":\"next\",\"digest\":\"sha256:$DIGEST\"}],\"next\":null}"
-    docker_hub_tags_by_digest library/next "sha256:$DIGEST" next
-    [[ -z "$skip_input" && "$registry_tags" == next ]]
-}
-
-@test "HUB-016 registry error bodies are single-line and length bounded" {
+@test "HUB-016 registry errors are normalized without rendering untrusted bodies" {
     load_hub
     registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
     long_message=$(printf '%0600d' 0)
     install_hub_response 500 \
         "{\"message\":\"${long_message}\\nNOTICE: forged-record\"}"
 
-    run --separate-stderr docker_hub_tags_by_digest \
+    run docker_hub_tags_by_digest \
         library/app "sha256:$DIGEST" app
-    assert_status 1
-    assert_stderr_contains 'Docker Hub tag listing failed with HTTP 500'
-    [[ ${#stderr} -lt 700 ]]
-    ! grep -Fxq 'NOTICE: forged-record' <<<"$stderr"
+    assert_status "$LOOKUP_UNAVAILABLE"
+    assert_output_exact ''
 }
 
-@test "HUB-017 HTTP 429 aborts without Skopeo fallback" {
+@test "HUB-017 HTTP 429 is normalized as stopped" {
     load_hub
     registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
     install_hub_response 429 '{"message":"slow down"}'
-    function skopeo_tags_by_digest { : >"$CALLS_DIR/skopeo"; }
-
-    run --separate-stderr docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
-    assert_status 1
-    assert_stderr_contains 'HTTP 429'
-    refute_file_exists "$CALLS_DIR/skopeo"
+    run docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
+    assert_status "$LOOKUP_STOPPED"
 }
 
 @test "HUB-018 any stops at the first matching floating tag" {
@@ -286,43 +242,6 @@ EOF
 
     docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
     [[ "$registry_tags" == stable ]]
-}
-
-@test "HUB-019 denied direct lookup offers interactive PAT after automatic fallbacks" {
-    load_hub
-    function docker_hub_digest_for_tag {
-        printf 'hub:%s\n' "${docker_hub_token:-public}" >>"$CALLS_DIR/order"
-        if [[ -z "$docker_hub_token" ]]; then
-            return "$LOOKUP_DENIED"
-        fi
-        printf 'sha256:%s\n' "$DIGEST"
-    }
-    function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_access_policy {
-        printf 'skopeo\n' >>"$CALLS_DIR/order"
-        return "$LOOKUP_DENIED"
-    }
-    function choose_docker_hub_direct_authentication {
-        printf 'prompt:%s\n' "$1" >>"$CALLS_DIR/order"
-        docker_hub_token=interactive-token
-    }
-
-    docker_hub_resolve_tag library/app stable docker.io/library/app:stable
-    [[ "$remote_tag_status" == "$LOOKUP_SUCCEEDED" ]]
-    [[ "$remote_tag_digest" == "sha256:$DIGEST" ]]
-    [[ $(<"$CALLS_DIR/order") == $'hub:public\nskopeo\nprompt:docker.io/library/app:stable\nhub:interactive-token' ]]
-}
-
-@test "HUB-020 terminal direct fallback result does not prompt for another credential" {
-    load_hub
-    function docker_hub_digest_for_tag { return "$LOOKUP_DENIED"; }
-    function skopeo_is_available { return 0; }
-    function skopeo_digest_for_tag_with_access_policy { return "$LOOKUP_NOT_FOUND"; }
-    function choose_docker_hub_direct_authentication { : >"$CALLS_DIR/prompt"; }
-
-    docker_hub_resolve_tag library/app absent docker.io/library/app:absent
-    [[ "$remote_tag_status" == "$LOOKUP_NOT_FOUND" ]]
-    refute_file_exists "$CALLS_DIR/prompt"
 }
 
 @test "HUB-021 exhaustive pagination uses the shared cost guard" {

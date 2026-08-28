@@ -216,12 +216,13 @@ EOF
     source "$REPO_ROOT/lib/oci.sh"
     # shellcheck source=../../lib/ghcr.sh
     source "$REPO_ROOT/lib/ghcr.sh"
-    registry_tag_scan=all; registry_direct_tag=
-    function ghcr_package_version_by_digest { return "$LOOKUP_UNAVAILABLE"; }
-    function skopeo_is_available { return 1; }
     function choose_ghcr_fallback { printf '%s\n' skip; }
-    skip_input=; registry_tags=; registry_metadata=; registry_lookup_backend=; registry_lookup_result=completed
-    ghcr_tags_by_digest owner/first "sha256:$DIGEST_A" ghcr.io/owner/first
+    declare -A request=(
+        [operation]=reverse
+        [display_repository]=ghcr.io/owner/first
+    ) result=()
+    skip_input=
+    ghcr_policy_attempt_interactive request result
     [[ -n "$skip_input" ]]
 
     skip_input=

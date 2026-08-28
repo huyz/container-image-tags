@@ -3,7 +3,7 @@
 
 # CLI orchestration pipeline:
 #   input syntax -> one or more subjects -> remote check -> tag scan -> render
-# Provider modules own registry policy; this file owns user-visible sequencing.
+# The policy engine owns registry flow; this file owns user-visible sequencing.
 
 function require_supported_digest_algorithm {
     local digest_reference="$1"

@@ -19,8 +19,10 @@ Each positional argument passes through these stages:
    one associative result record.
 4. `check_subject_remote_tag` verifies a known tag or records the remote tag
    resolution that established the resolved repository digest.
-5. The selected provider adapter performs the reverse-lookup scan, including its
-   complete authentication and fallback policy.
+5. The selected provider advertises atomic attempts and capabilities to the
+   central policy engine. The engine performs the direct or reverse lookup,
+   including credential eligibility, ordering, fallback, terminal outcomes,
+   and whether interactive recovery may run.
 6. The provider lookup context is copied into the canonical result record.
 7. Human and JSON renderers consume that same record.
 
@@ -37,12 +39,52 @@ The canonical result is an associative array with four groups of fields:
 - registry classification and direct-tag check;
 - scan mode, status, backend, provider metadata, and ordered tags.
 
-Registry dispatch requires a caller-owned associative lookup context. Legacy
-module globals remain the internal provider protocol because Bash command
-substitutions and existing focused module tests depend on their shell scope.
-Every nonfatal dispatch path copies that internal state into the context before
-returning. The pipeline does not read lookup globals; it consumes the context,
-which is then copied into the canonical result record.
+Registry dispatch requires a caller-owned associative lookup context. The same
+request/result contract is used for direct and reverse operations. Provider
+callbacks receive the request plus an associative result and return a named
+lookup status. Legacy module globals remain inside a few transport mechanisms
+whose Bash command substitutions depend on shell scope; the policy engine does
+not use them as its protocol. The pipeline consumes only the completed lookup
+context, which is copied into the canonical result record.
+
+## Central registry policy engine
+
+`lib/policy-engine.sh` is the complete registry-independent flowchart. A
+provider does not call another provider or fallback mechanism. Instead, its
+`*_register_policy_attempts` function advertises atomic attempts with this
+universal declaration:
+
+| Field | Meaning |
+| --- | --- |
+| ID and callback | Stable plan identity and the atomic operation to invoke |
+| Backend | Backend reported if the attempt answers |
+| Access class | `local`, `public`, `session`, `fast-credential`, `credential`, or `interactive` |
+| Cost | Relative ordering among currently eligible attempts |
+| Authoritative | Whether `LOOKUP_NOT_FOUND` terminates the whole lookup |
+| Availability callback | Lazy check for an optional CLI, token, or configured credential |
+
+The engine applies one algorithm to both user operations:
+
+1. Add built-in local shortcuts and the selected provider's declarations.
+2. Remove attempts forbidden by `--credential-policy` or current state.
+3. Select the lowest-cost remaining attempt, using declaration order only to
+   break equal-cost ties, and then check its availability lazily.
+4. On success, return its result and actual backend. On authoritative absence
+   or `LOOKUP_STOPPED`, terminate.
+5. On `LOOKUP_UNAVAILABLE`, try another permitted mechanism without unlocking
+   credentials. On `LOOKUP_DENIED`, unlock conditional credential attempts,
+   stop retrying public access, and permit interactive recovery only in a real
+   terminal.
+6. Repeat until a terminal result is reached or no attempt remains.
+
+An adaptive probe may return `POLICY_DEFERRED` after advertising measured
+continuations. This is how GHCR compares its remaining Packages pages with an
+OCI scan without selecting the backend inside the provider. The engine simply
+repeats step 2 and chooses the cheapest newly advertised continuation.
+
+Provider modules consequently own mechanisms and provider-specific prompt
+content. The engine owns when a prompt is eligible and every transition into
+or away from that interactive attempt.
 
 ## Lookup outcomes
 
@@ -53,11 +95,13 @@ Every backend uses the same status contract:
 | `LOOKUP_SUCCEEDED`   | Complete usable result                    | No                |
 | `LOOKUP_NOT_FOUND`   | Authoritative absence                     | No                |
 | `LOOKUP_UNAVAILABLE` | Backend could not answer                  | Yes               |
-| `LOOKUP_DENIED`      | Intended authentication path may be tried | Provider-specific |
+| `LOOKUP_DENIED`      | Conditional credential paths become eligible | Yes, by engine |
 | `LOOKUP_STOPPED`     | Terminal limit or refused expensive scan  | No                |
 
-Provider modules own the interpretation of these statuses. `lib/registries.sh`
-only classifies a repository and selects the matching adapter entry point.
+`lib/policy-engine.sh` owns the interpretation of these statuses.
+`lib/registries.sh` classifies a repository, builds the common request, asks the
+matching provider to advertise attempts, and copies the engine result into the
+caller-owned context.
 
 ## Registry access matrix
 
@@ -152,7 +196,7 @@ to the sequence in that row's Skopeo column.
 | Registry | Direct tag lookup order | Reverse digest lookup order | Provider credential path | Skopeo fallback | Reverse-scan cost |
 | --- | --- | --- | --- | --- | --- |
 | Docker Hub | 1. Public Hub tag API<br>2. Environment PAT retry after access denial<br>3. Skopeo fallback<br>4. Interactive PAT retry after denied automatic paths | 1. Public paginated Hub API with bounded early exit and exhaustive page-cost guard<br>2. Environment PAT retry after access denial<br>3. Interactive PAT or Skopeo fallback | 1. Exchange an environment or interactive PAT for a short-lived Hub token after access denial | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Hub API: one digest-bearing record per tag; page cost guarded<br>Skopeo: one request per tag |
-| GHCR | 1. Public native OCI manifest request<br>2. Incremental GitHub Packages pages after access denial<br>3. Skopeo fallback<br>4. Interactive `gh` scope refresh after denied automatic paths | 1. Public native OCI tag sample may satisfy `any-durable`<br>2. Search the first Packages page<br>3. For unresolved multi-page histories, compare measured Packages pagination with the current OCI tag catalog and select the cheaper remaining path<br>4. Skopeo or interactive fallback when neither path can complete | 1. Use existing `gh` credentials for the Packages API<br>2. Refresh `gh` credentials interactively when selected | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Packages API: one to many serial pages, searched incrementally<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
+| GHCR | 1. Public native OCI manifest request<br>2. Incremental GitHub Packages pages after access denial<br>3. Skopeo fallback<br>4. Interactive `gh` scope refresh after denied automatic paths | 1. Probe the first Packages page when `gh` is available<br>2. For unresolved multi-page histories, inventory current OCI tags and advertise both measured continuations<br>3. Execute the cheaper continuation selected by the engine<br>4. Try ordinary public OCI and Skopeo compatibility paths when a probe is unavailable<br>5. Offer interactive recovery only after denied automatic paths | 1. Use existing `gh` credentials for the Packages API<br>2. Refresh `gh` credentials interactively when selected | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Packages API: one to many serial pages, searched incrementally<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
 | ACR | 1. Public ACR tag metadata API<br>2. Azure CLI metadata after access denial<br>3. Skopeo fallback | 1. Public ACR manifest metadata API<br>2. Azure CLI metadata after access denial<br>3. Skopeo fallback | 1. Query metadata through Azure CLI after access denial<br>2. Obtain a short-lived Azure token if Skopeo is denied | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Azure token after access denial | Metadata API: **fast**<br>Skopeo: one request per tag |
 | GCR | 1. Public GCR manifest map<br>2. Token-authenticated GCR manifest map after access denial<br>3. Skopeo fallback | 1. Public GCR manifest map<br>2. Token-authenticated GCR manifest map after access denial<br>3. Skopeo fallback | 1. Obtain a short-lived Google token after access denial<br>2. Reuse the token with the GCR manifest map | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Google token after access denial | Manifest map: **fast**<br>Skopeo: one request per tag |
 | GAR | 1. Public native OCI manifest request<br>2. Token-authenticated native OCI manifest request after access denial<br>3. Skopeo fallback | 1. Authenticated GAR DockerImage API when configured Google credentials are available<br>2. Public native OCI tag listing and parallel manifest `HEAD` requests<br>3. Authenticated GAR DockerImage API after access denial, if not already tried<br>4. Token-authenticated native OCI listing and parallel manifest `HEAD` requests<br>5. Skopeo fallback | 1. Probe an existing Google Cloud CLI token for the faster DockerImage API under `if-faster`<br>2. Obtain a short-lived Google token after access denial or under `require`<br>3. Reuse the token with the GAR API and native OCI paths | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Google token after access denial | DockerImage API: **fast**<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
