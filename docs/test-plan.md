@@ -198,7 +198,7 @@ For every test:
 - Set isolated values for `HOME`, `XDG_CONFIG_HOME`, `DOCKER_CONFIG`, and any
   tool-specific state directories.
 - Put a per-test fake executable directory first on `PATH`.
-- Set explicit `GETOPT`, `REALPATH`, `CURL`, `JQ`, `DOCKER`, `SKOPEO`, `GH`,
+- Set explicit `GETOPT`, `REALPATH`, `TIMEOUT`, `CURL`, `JQ`, `DOCKER`, `SKOPEO`, `GH`,
   `GCLOUD`, `AZ`, and `AWS` paths as applicable.
 - Clear Docker Hub credentials and known cloud credential environment variables
   unless the case sets them intentionally.

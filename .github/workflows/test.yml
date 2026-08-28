@@ -61,4 +61,5 @@ jobs:
           SYSTEM_BASH: /opt/homebrew/bin/bash
           GETOPT: /opt/homebrew/opt/gnu-getopt/bin/getopt
           REALPATH: /opt/homebrew/bin/grealpath
+          TIMEOUT: /opt/homebrew/bin/gtimeout
         run: tests/run

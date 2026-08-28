@@ -70,10 +70,12 @@ if [[ $OSTYPE == darwin* ]]; then
         { echo "$0: ERROR: \`$_install_cmd gnu-getopt\` to install $GETOPT." >&2; exit 1; }
     [[ -x "${REALPATH:="$HOMEBREW_PREFIX/bin/grealpath"}" ]] || \
         { echo "$0: ERROR: \`$_install_cmd coreutils\` to install $REALPATH." >&2; exit 1; }
+    TIMEOUT=${TIMEOUT:=gtimeout}  # Also part of coreutils
 else
     _install_cmd="sudo apt install"
     GETOPT=${GETOPT:-getopt}
     REALPATH=${REALPATH:-realpath}
+    TIMEOUT=${TIMEOUT:=timeout}
 fi
 command -v "${CURL:=curl}" &>/dev/null ||
     { echo "$0: ERROR: \`$_install_cmd curl\` to install $CURL." >&2; exit 1; }

@@ -95,49 +95,12 @@ function runtime_cleanup {
     runtime_tmp_dir=
 }
 
-# Run one external operation with a portable wall-clock deadline. Perl is
-# already a runtime dependency and lets us avoid relying on GNU timeout, which
-# is not installed by default on macOS. The child owns a process group so a
-# timed-out CLI cannot leave helpers behind. Standard streams are inherited.
+# Run one external operation with a portable wall-clock deadline. TIMEOUT is
+# selected by the entrypoint as GNU timeout on macOS and timeout elsewhere.
+# Standard streams are inherited, and the default process-group behavior keeps
+# a timed-out CLI from leaving helpers behind.
 function run_network_command {
-    perl -MPOSIX=setpgid -e '
-        use strict;
-        use warnings;
-
-        my $seconds = shift @ARGV;
-        my $pid = fork();
-        die "fork failed: $!\n" unless defined $pid;
-        if ($pid == 0) {
-            setpgid(0, 0);
-            exec @ARGV;
-            exit 127;
-        }
-        setpgid($pid, $pid);
-
-        my $timed_out = 0;
-        my %signal_status = (HUP => 129, INT => 130, TERM => 143);
-        for my $signal (keys %signal_status) {
-            $SIG{$signal} = sub {
-                kill $signal, -$pid;
-                select undef, undef, undef, 0.25;
-                kill "KILL", -$pid;
-                waitpid($pid, 0);
-                exit $signal_status{$signal};
-            };
-        }
-        local $SIG{ALRM} = sub {
-            $timed_out = 1;
-            kill "TERM", -$pid;
-            select undef, undef, undef, 0.25;
-            kill "KILL", -$pid;
-        };
-        alarm $seconds;
-        waitpid($pid, 0);
-        alarm 0;
-        exit 124 if $timed_out;
-        exit 128 + ($? & 127) if $? & 127;
-        exit $? >> 8;
-    ' "$NETWORK_OPERATION_TIMEOUT_SECONDS" "$@"
+    "$TIMEOUT" --kill-after=0.25s "$NETWORK_OPERATION_TIMEOUT_SECONDS" "$@"
 }
 
 # Execute one registry HTTP request while keeping response capture mechanics

@@ -18,6 +18,7 @@ function setup_test_environment {
     export SCRIPT_NAME=container-image-tags
     export JQ="$SYSTEM_JQ"
     export GETOPT="$SYSTEM_GETOPT"
+    export TIMEOUT="$SYSTEM_TIMEOUT"
     export REALPATH="$SYSTEM_REALPATH"
     export DOCKER="$STUB_BIN/docker"
     export CURL="$STUB_BIN/curl"

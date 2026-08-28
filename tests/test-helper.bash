@@ -22,6 +22,11 @@ if [[ -x /opt/local/bin/grealpath ]]; then
 else
     SYSTEM_REALPATH=${REALPATH:-$(command -v grealpath || command -v realpath)}
 fi
+if [[ -x /opt/local/bin/gtimeout ]]; then
+    SYSTEM_TIMEOUT=/opt/local/bin/gtimeout
+else
+    SYSTEM_TIMEOUT=${TIMEOUT:-$(command -v gtimeout || command -v timeout)}
+fi
 if [[ -x /opt/local/bin/bash ]]; then
     SYSTEM_BASH=/opt/local/bin/bash
 else
