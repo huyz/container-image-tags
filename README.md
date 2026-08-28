@@ -54,6 +54,10 @@ Optional:
   `aws` (Elastic Container Registry) can provide optional authenticated fast
   paths or short-lived credentials.
 
+Registry-facing commands have a 600-second wall-clock deadline by default,
+including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
+`CIT_NETWORK_TIMEOUT_SECONDS` to a positive integer to choose another limit.
+
 On macOS and Linux, Homebrew users can install all with:
 
 ```sh

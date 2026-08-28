@@ -31,7 +31,7 @@ function ecr_aws_credentials_may_be_available {
         -n ${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI-} ||
         -n ${AWS_CONTAINER_CREDENTIALS_FULL_URI-} ]] && return 0
 
-    "$AWS" configure list-profiles 2>/dev/null | grep -q .
+    run_network_command "$AWS" configure list-profiles 2>/dev/null | grep -q .
 }
 
 # Query the signed ECR service API for one private-registry image identifier.
@@ -52,7 +52,7 @@ function ecr_private_image_details {
 
     error_tmp=$(runtime_temp_file ecr-error)
     if response=$(
-        "$AWS" ecr describe-images \
+        run_network_command "$AWS" ecr describe-images \
             --registry-id "$account" \
             --repository-name "$repository" \
             --image-ids "$image_id" \
@@ -95,7 +95,7 @@ function ecr_public_registry_id_for_alias {
     ecr_aws_credentials_may_be_available || return "$LOOKUP_UNAVAILABLE"
     error_tmp=$(runtime_temp_file ecr-public-alias-error)
     if response=$(
-        "$AWS" ecr-public describe-registries \
+        run_network_command "$AWS" ecr-public describe-registries \
             --region us-east-1 \
             --page-size 1000 \
             --no-paginate \
@@ -143,7 +143,7 @@ function ecr_public_image_details {
 
     error_tmp=$(runtime_temp_file ecr-public-error)
     if response=$(
-        "$AWS" ecr-public describe-images \
+        run_network_command "$AWS" ecr-public describe-images \
             --registry-id "$registry_id" \
             --repository-name "$repository" \
             --image-ids "$image_id" \
@@ -282,8 +282,10 @@ function ecr_authenticate {
 
     if [[ "$registry" == public.ecr.aws ]]; then
         notice "ECR Public requires authentication for this request; requesting a short-lived token from AWS CLI."
-        if ! "$AWS" ecr-public get-login-password --region us-east-1 --no-cli-pager |
-                "$SKOPEO" login --authfile "$skopeo_session_authfile" \
+        if ! run_network_command "$AWS" ecr-public get-login-password \
+                --region us-east-1 --no-cli-pager |
+                run_network_command "$SKOPEO" login \
+                    --authfile "$skopeo_session_authfile" \
                     --username AWS --password-stdin public.ecr.aws >/dev/null; then
             warn "AWS CLI authentication failed for Amazon ECR Public"
             return 1
@@ -296,8 +298,10 @@ function ecr_authenticate {
         return 1
     }
     notice "ECR requires authentication; requesting a short-lived token from AWS CLI."
-    if ! "$AWS" ecr get-login-password --region "$region" --no-cli-pager |
-            "$SKOPEO" login --authfile "$skopeo_session_authfile" \
+    if ! run_network_command "$AWS" ecr get-login-password \
+            --region "$region" --no-cli-pager |
+            run_network_command "$SKOPEO" login \
+                --authfile "$skopeo_session_authfile" \
                 --username AWS --password-stdin "$registry" >/dev/null; then
         warn "AWS CLI authentication failed for ECR registry '$registry'"
         return 1

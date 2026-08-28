@@ -13,28 +13,29 @@ function inspect_local_image {
     local repo_digests repo_tags candidate candidate_repository
 
     if ! image_id=$(
-        $DOCKER image inspect "$image_ref" --format '{{.Id}}' 2>/dev/null
+        run_network_command "$DOCKER" image inspect \
+            "$image_ref" --format '{{.Id}}' 2>/dev/null
     ); then
         return 1
     fi
     repo_digests=$(
-        $DOCKER image inspect "$image_id" \
+        run_network_command "$DOCKER" image inspect "$image_id" \
             --format='{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null
     ) || return 1
     repo_tags=$(
-        $DOCKER image inspect "$image_id" \
+        run_network_command "$DOCKER" image inspect "$image_id" \
             --format='{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null
     ) || return 1
     local_image_version=$(
-        $DOCKER image inspect "$image_id" \
+        run_network_command "$DOCKER" image inspect "$image_id" \
             --format='{{with index .Config.Labels "org.opencontainers.image.version"}}{{.}}{{end}}' 2>/dev/null
     ) || return 1
     local_image_revision=$(
-        $DOCKER image inspect "$image_id" \
+        run_network_command "$DOCKER" image inspect "$image_id" \
             --format='{{with index .Config.Labels "org.opencontainers.image.revision"}}{{.}}{{end}}' 2>/dev/null
     ) || return 1
     local_image_refname=$(
-        $DOCKER image inspect "$image_id" \
+        run_network_command "$DOCKER" image inspect "$image_id" \
             --format='{{with index .Config.Labels "org.opencontainers.image.ref.name"}}{{.}}{{end}}' 2>/dev/null
     ) || return 1
 
@@ -74,7 +75,8 @@ function image_ids_for_repository {
     local matches=
 
     image_rows=$(
-        $DOCKER image ls --no-trunc --format '{{.Repository}}\t{{.ID}}' 2>/dev/null
+        run_network_command "$DOCKER" image ls --no-trunc \
+            --format '{{.Repository}}\t{{.ID}}' 2>/dev/null
     ) || return 1
     while IFS=$'\t' read -r repository image_id_candidate; do
         if [[ "$repository" == "$wanted_repository" && -n "$image_id_candidate" ]]; then
@@ -108,11 +110,12 @@ function repo_digests_for_sha {
     local image_ids candidate_repo_digests image candidate digest
     local matches=
 
-    image_ids=$($DOCKER image ls --no-trunc --quiet 2>/dev/null) || return 1
+    image_ids=$(run_network_command "$DOCKER" image ls \
+        --no-trunc --quiet 2>/dev/null) || return 1
     while IFS= read -r image; do
         [[ -n "$image" ]] || continue
         candidate_repo_digests=$(
-            $DOCKER image inspect "$image" \
+            run_network_command "$DOCKER" image inspect "$image" \
                 --format='{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null
         ) || continue
         while IFS= read -r candidate; do

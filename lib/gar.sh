@@ -16,7 +16,7 @@ function gar_access_token {
         return "$LOOKUP_UNAVAILABLE"
     }
     notice "Requesting a short-lived token from Google Cloud CLI for '$registry'."
-    token=$("$GCLOUD" auth print-access-token --quiet) || {
+    token=$(run_network_command "$GCLOUD" auth print-access-token --quiet) || {
         warn "Google Cloud CLI authentication failed for registry '$registry'"
         return "$LOOKUP_UNAVAILABLE"
     }
@@ -32,7 +32,8 @@ function gar_access_token_if_available {
 
     command -v "${GCLOUD:=gcloud}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
     error_tmp=$(runtime_temp_file gar-token-error)
-    if token=$("$GCLOUD" auth print-access-token --quiet 2>"$error_tmp") &&
+    if token=$(run_network_command "$GCLOUD" \
+            auth print-access-token --quiet 2>"$error_tmp") &&
             [[ -n "$token" ]]; then
         rm -f "$error_tmp"
         printf '%s\n' "$token"
@@ -194,8 +195,9 @@ function gar_authenticate {
     }
 
     notice "Google registry denied anonymous access; retrying with a short-lived token from Google Cloud CLI."
-    if ! "$GCLOUD" auth print-access-token --quiet |
-            "$SKOPEO" login --authfile "$skopeo_session_authfile" \
+    if ! run_network_command "$GCLOUD" auth print-access-token --quiet |
+            run_network_command "$SKOPEO" login \
+                --authfile "$skopeo_session_authfile" \
                 --username oauth2accesstoken --password-stdin "$registry" >/dev/null; then
         warn "Google Cloud CLI authentication failed for registry '$registry'"
         return 1
@@ -215,7 +217,8 @@ function gar_debug_denial_detail {
 
     debug "Requesting a Docker manifest diagnostic for $image_reference after the authenticated Skopeo request was denied"
     error_tmp=$(runtime_temp_file gar-debug-error)
-    if "$DOCKER" manifest inspect "$image_reference" >/dev/null 2>"$error_tmp"; then
+    if run_network_command "$DOCKER" manifest inspect \
+            "$image_reference" >/dev/null 2>"$error_tmp"; then
         rm -f "$error_tmp"
         debug "Docker manifest inspection succeeded for $image_reference but provided no denial detail"
         return 1

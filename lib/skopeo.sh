@@ -57,7 +57,8 @@ function skopeo_has_registry_credentials {
     local registry="$1"
 
     skopeo_is_available &&
-        "$SKOPEO" login --get-login "$registry" >/dev/null 2>&1
+        run_network_command "$SKOPEO" login --get-login "$registry" \
+            >/dev/null 2>&1
 }
 
 function skopeo_digest_for_tag {
@@ -67,9 +68,9 @@ function skopeo_digest_for_tag {
 
     skopeo_is_available || return 127
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
-    "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
+    run_network_command "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
         "${auth_args[@]}" --raw "docker://$image_reference" 2>/dev/null |
-        "$SKOPEO" manifest-digest /dev/stdin 2>/dev/null
+        run_network_command "$SKOPEO" manifest-digest /dev/stdin 2>/dev/null
 }
 
 function skopeo_digest_for_tag_worker {
@@ -103,7 +104,8 @@ function skopeo_tags_by_digest {
     verbose "Listing registry tags with skopeo for $repository"
     error_tmp=$(runtime_temp_file skopeo-error)
     if tags=$(
-        "$SKOPEO" list-tags "${auth_args[@]}" "docker://$repository" 2>"$error_tmp" |
+        run_network_command "$SKOPEO" list-tags \
+            "${auth_args[@]}" "docker://$repository" 2>"$error_tmp" |
             $JQ -r '.Tags[]?'
     ); then
         rm -f "$error_tmp"
@@ -169,9 +171,11 @@ function skopeo_digest_for_tag_with_status {
     [[ -z "$authfile" ]] || auth_args=(--authfile "$authfile")
     error_tmp=$(runtime_temp_file skopeo-error)
     if manifest_digest=$(
-        "$SKOPEO" "${skopeo_inspect_platform_args[@]}" inspect \
+        run_network_command "$SKOPEO" \
+            "${skopeo_inspect_platform_args[@]}" inspect \
             "${auth_args[@]}" --raw "docker://$image_reference" 2>"$error_tmp" |
-            "$SKOPEO" manifest-digest /dev/stdin 2>>"$error_tmp"
+            run_network_command "$SKOPEO" manifest-digest \
+                /dev/stdin 2>>"$error_tmp"
     ); then
         rm -f "$error_tmp"
         printf '%s\n' "$manifest_digest"
@@ -198,7 +202,8 @@ function skopeo_session_has_registry {
     local registry="$1"
 
     skopeo_is_available || return 1
-    "$SKOPEO" login --authfile "$skopeo_session_authfile" --get-login \
+    run_network_command "$SKOPEO" login \
+        --authfile "$skopeo_session_authfile" --get-login \
         "$registry" >/dev/null 2>&1
 }
 

@@ -99,7 +99,7 @@ function docker_hub_token_from_credentials {
     if ! response=$(
         printf '%s\n%s\n' "$identifier" "$secret" |
             $JQ -Rnc '{identifier: input, secret: input}' |
-            $CURL -sS -w $'\n%{http_code}' \
+            run_network_command "$CURL" -sS -w $'\n%{http_code}' \
                 -H 'Content-Type: application/json' \
                 --data-binary @- \
                 'https://hub.docker.com/v2/auth/token'

@@ -110,7 +110,8 @@ function resolve_input_subjects {
         if [[ "$opt_tag_resolution" == remote ]]; then
             abort "Cannot resolve SHA-like '$input' remotely without a repository; pass repository@sha256:<64 lowercase hex characters>"
         elif resolved_image_id=$(
-            "$DOCKER" container inspect "$input" --format '{{.Image}}' 2>/dev/null
+            run_network_command "$DOCKER" container inspect \
+                "$input" --format '{{.Image}}' 2>/dev/null
         ); then
             container="$input"
             inspect_local_image "$resolved_image_id" ||
@@ -163,7 +164,8 @@ function resolve_input_subjects {
             resolve_untagged_repository_subject "$input" "$preferred_repository"
         fi
     elif [[ "$opt_tag_resolution" != remote ]] && resolved_image_id=$(
-        "$DOCKER" container inspect "$input" --format '{{.Image}}' 2>/dev/null
+        run_network_command "$DOCKER" container inspect \
+            "$input" --format '{{.Image}}' 2>/dev/null
     ); then
         container="$input"
         inspect_local_image "$resolved_image_id" ||

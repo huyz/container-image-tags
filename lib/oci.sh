@@ -89,7 +89,7 @@ function oci_token_from_bearer_challenge {
     token_args=(-sS -G -o "$response_tmp" -w '%{http_code}')
     [[ -z "$service" ]] || token_args+=(--data-urlencode "service=$service")
     token_args+=(--data-urlencode "scope=$scope")
-    if ! http_code=$("$CURL" "${token_args[@]}" "$realm"); then
+    if ! http_code=$(run_network_command "$CURL" "${token_args[@]}" "$realm"); then
         rm -f "$response_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
@@ -345,7 +345,8 @@ function oci_tags_by_digest_with_curl_parallel {
         printf 'Searching OCI registry tags with parallel HEAD... %s (0 checked)' \
             "${spinner[0]}" >&2
     fi
-    "$CURL" --config "$config_tmp" >/dev/null 2>"$error_tmp" &
+    run_network_command "$CURL" --config "$config_tmp" \
+        >/dev/null 2>"$error_tmp" &
     curl_pid=$!
     while kill -0 "$curl_pid" 2>/dev/null; do
         for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do

@@ -44,3 +44,32 @@ load ../test-helper.bash
     assert_status 0
     assert_output_exact 'first second '
 }
+
+@test "RUNTIME-005 network command preserves streams and exit status" {
+    load_common
+    write_stub network-command <<'EOF'
+read -r value
+printf 'out:%s\n' "$value"
+printf 'err:%s\n' "$value" >&2
+exit 7
+EOF
+
+    run --separate-stderr run_network_command network-command <<<payload
+    assert_status 7
+    assert_output_exact 'out:payload'
+    assert_stderr_exact 'err:payload'
+}
+
+@test "RUNTIME-006 network command deadline terminates the child process group" {
+    export CIT_NETWORK_TIMEOUT_SECONDS=1
+    load_common
+    write_stub slow-network-command <<'EOF'
+printf '%s\n' "$BASHPID" >"$CALLS_DIR/network-child.pid"
+sleep 30
+EOF
+
+    run run_network_command slow-network-command
+    assert_status 124
+    child_pid=$(<"$CALLS_DIR/network-child.pid")
+    ! kill -0 "$child_pid" 2>/dev/null
+}

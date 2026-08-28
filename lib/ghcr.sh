@@ -77,7 +77,8 @@ function ghcr_package_version_page {
     body_tmp=$(runtime_temp_file ghcr-body)
     error_tmp=$(runtime_temp_file ghcr-error)
     started_ms=$(registry_now_milliseconds)
-    if "$GH" api --include "$endpoint" >"$response_tmp" 2>"$error_tmp"; then
+    if run_network_command "$GH" api --include \
+            "$endpoint" >"$response_tmp" 2>"$error_tmp"; then
         finished_ms=$(registry_now_milliseconds)
     else
         api_status=$?
@@ -376,7 +377,8 @@ function ghcr_policy_attempt_oci_inventory {
 # Keep the terminal attachment in one helper so both direct and reverse
 # recovery use the same interactive gh authentication flow.
 function ghcr_refresh_authentication {
-    "$GH" auth refresh -s read:packages </dev/tty >/dev/tty
+    run_network_command "$GH" auth refresh -s read:packages \
+        </dev/tty >/dev/tty
 }
 
 # Offer the one interactive action that can make an existing gh installation

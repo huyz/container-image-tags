@@ -96,7 +96,8 @@ function acr_metadata_with_azure_cli {
 
     notice "ACR requires authentication; requesting artifact metadata through Azure CLI."
     error_tmp=$(runtime_temp_file acr-error)
-    if response=$("$AZ" "${azure_args[@]}" 2>"$error_tmp"); then
+    if response=$(run_network_command "$AZ" \
+            "${azure_args[@]}" 2>"$error_tmp"); then
         rm -f "$error_tmp"
     else
         if grep -Eqi 'not found|manifest unknown|tag.*unknown' "$error_tmp"; then
@@ -128,8 +129,9 @@ function acr_authenticate {
     [[ -z "$registry_suffix" ]] || azure_login_args+=(--suffix "$registry_suffix")
 
     notice "ACR requires authentication; requesting a short-lived token from Azure CLI."
-    if ! "$AZ" "${azure_login_args[@]}" |
-            "$SKOPEO" login --authfile "$skopeo_session_authfile" \
+    if ! run_network_command "$AZ" "${azure_login_args[@]}" |
+            run_network_command "$SKOPEO" login \
+                --authfile "$skopeo_session_authfile" \
                 --username 00000000-0000-0000-0000-000000000000 \
                 --password-stdin "$registry" >/dev/null; then
         warn "Azure CLI authentication failed for ACR registry '$registry'"

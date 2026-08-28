@@ -5,6 +5,10 @@
 # final safety net for interrupts and handled early exits.
 
 runtime_tmp_dir=
+readonly NETWORK_OPERATION_TIMEOUT_SECONDS=${CIT_NETWORK_TIMEOUT_SECONDS:-600}
+
+[[ "$NETWORK_OPERATION_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
+    abort "CIT_NETWORK_TIMEOUT_SECONDS must be a positive integer"
 
 function runtime_init {
     [[ -n "$runtime_tmp_dir" ]] && return
@@ -48,6 +52,41 @@ function runtime_cleanup {
     runtime_tmp_dir=
 }
 
+# Run one external operation with a portable wall-clock deadline. Perl is
+# already a runtime dependency and lets us avoid relying on GNU timeout, which
+# is not installed by default on macOS. The child owns a process group so a
+# timed-out CLI cannot leave helpers behind. Standard streams are inherited.
+function run_network_command {
+    perl -MPOSIX=setpgid -e '
+        use strict;
+        use warnings;
+
+        my $seconds = shift @ARGV;
+        my $pid = fork();
+        die "fork failed: $!\n" unless defined $pid;
+        if ($pid == 0) {
+            setpgid(0, 0);
+            exec @ARGV;
+            exit 127;
+        }
+        setpgid($pid, $pid);
+
+        my $timed_out = 0;
+        local $SIG{ALRM} = sub {
+            $timed_out = 1;
+            kill "TERM", -$pid;
+            select undef, undef, undef, 0.25;
+            kill "KILL", -$pid;
+        };
+        alarm $seconds;
+        waitpid($pid, 0);
+        alarm 0;
+        exit 124 if $timed_out;
+        exit 128 + ($? & 127) if $? & 127;
+        exit $? >> 8;
+    ' "$NETWORK_OPERATION_TIMEOUT_SECONDS" "$@"
+}
+
 # Execute one registry HTTP request while keeping response capture mechanics
 # out of provider modules. Print only the HTTP status. The provider supplies
 # optional curl request arguments and remains responsible for interpreting the
@@ -68,7 +107,7 @@ function registry_http_request {
     request_args+=("$@")
     [[ -z "$response_headers" ]] || request_args+=(-D "$response_headers")
     request_args+=(-o "$response_body" -w '%{http_code}')
-    "$CURL" "${request_args[@]}" "$url"
+    run_network_command "$CURL" "${request_args[@]}" "$url"
 }
 
 # Extract and bound the common JSON error shapes returned by registry APIs.
