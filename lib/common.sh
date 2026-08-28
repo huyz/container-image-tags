@@ -253,7 +253,7 @@ function tags_by_digest_with_rolling_pool {
     local -a matching_indices=()
     local -a spinner=('|' '/' '-' $'\\')
 
-    if is_interactive_session; then
+    if is_interactive_session && [[ -z $opt_verbose ]]; then
         printf '%s... %s (0 checked)' "$progress_label" "${spinner[0]}" >&2
     fi
     worker_tmp=$(runtime_temp_dir workers)
@@ -324,7 +324,7 @@ function tags_by_digest_with_rolling_pool {
                 esac
             fi
             ((++checked))
-            if is_interactive_session; then
+            if is_interactive_session && [[ -z $opt_verbose ]]; then
                 printf '\r%s... %s (%d checked)' \
                     "$progress_label" "${spinner[checked % 4]}" "$checked" >&2
             fi

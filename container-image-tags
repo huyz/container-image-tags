@@ -149,62 +149,78 @@ json_results=
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-expensive-scan]
-                    [--tag-resolution mode] [--tag-scan mode] [--credential-policy policy]
+Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json]
+                    [--tag-resolution mode] [--tag-scan mode]
+                    [--allow-expensive-scan] [--credential-policy policy]
                     <container-or-image-or-digest> [...]
         -h|--help: get help
         -v|--verbose: turn on verbose mode
-        -d|--debug: turn on debug mode; could trigger more requests
-            to find get more error details from registries
+        -d|--debug: turn on debug mode; could trigger more requests to find
+            get more error details from registries
         --json: write one JSON array containing all results to stdout
-        --allow-expensive-scan: permit an expensive non-interactive bulk registry lookup
-        --tag-resolution: select how to resolve an image tag (default: $opt_tag_resolution):
-            auto: use a local image when present; otherwise resolve the tag remotely
+        --tag-resolution: select how to resolve an image tag
+                (default: $opt_tag_resolution):
+            auto: use a local image when present; otherwise resolve the tag
+                remotely
             local: require a local image to resolve the repository digest
-            remote: ignore local Docker state and resolve the tag through the registry
-        --tag-scan: control the reverse lookup after resolving the repository digest:
+            remote: ignore local Docker state and resolve the tag through the
+                registry
+        --tag-scan: control the reverse lookup after resolving the repository
+                digest:
             ask: prompt to choose a bounded or exhaustive scan
             never: do not perform a reverse tag lookup
-            any: stop after finding the first matching tag, even if it is floating
-            any-durable: stop after finding one matching tag heuristically assumed durable;
+            any: stop after finding the first matching tag, even if it is
+                floating
+            any-durable: stop after finding one matching tag heuristically
+                assumed durable;
                 a directly confirmed durable tag satisfies this without a scan
             all: scan for every matching remote tag
-            The default is 'ask' with an interactive terminal; 'any-durable' otherwise or with --json
+            The default is 'ask' with an interactive terminal; 'any-durable'
+                otherwise or with --json
+        --allow-expensive-scan: permit an expensive non-interactive bulk
+                registry lookup
         --credential-policy: control when registry credentials may be used
-                    (default: $opt_credential_policy):
+                (default: $opt_credential_policy):
             never: use only public/anonymous access
-            if-required: start public; use credentials only after an explicit access denial
-            if-faster: use credentials proactively only for a materially faster or more complete
-                native path; otherwise authenticate only after an explicit access denial
-            require: use only credentialed access; do not make public/anonymous requests
+            if-required: start public; use credentials only after an explicit
+                access denial
+            if-faster: use credentials proactively only for a materially faster
+                or more complete native path; otherwise authenticate only after
+                an explicit access denial
+            require: use only credentialed access; do not make
+                public/anonymous requests
 
-For a locally resolved repository digest, its known tag is checked first. Interactive runs then ask
-whether to stop at any matching tag, stop at a durable match, or find all matching tags;
-non-interactive runs stop after a durable match unless another mode is specified.
+For a locally resolved repository digest, its known tag is checked first.
+Interactive runs then ask whether to stop at any matching tag, stop at a
+durable match, or find all matching tags; non-interactive runs stop after a
+durable match unless another mode is specified.
 Expensive interactive bulk registry lookups print an advisory and continue.
 Expensive non-interactive lookups fail fast unless '--allow-expensive-scan' is
-specified. Public generic OCI registries use parallel manifest HEAD requests;
-Skopeo remains the fallback for private or incompatible registries.
-Docker Hub scans start anonymously. Set environment variables 'DOCKER_HUB_USERNAME'
-and 'DOCKER_HUB_PAT' to exchange a Hub PAT for an in-memory access token without
+specified.
+
+Docker Hub scans start anonymously, but they may be limited by the server.
+Set environment variables 'DOCKER_HUB_USERNAME' and 'DOCKER_HUB_PAT' to avoid
 prompting; these credentials keep the fast Hub API ahead of any Skopeo fallback.
-If deeper pagination requires sign-in, an interactive run offers that fast retry
-and any available slower Skopeo fallback together.
+Skopeo remains the fallback for private or incompatible registries.
+
 Private registry access reuses credentials configured by docker login, skopeo
 login, or podman login. Conditional modes request short-lived tokens from az,
 gcloud, or aws only after access denial, except when 'if-faster' selects a
-materially faster credentialed provider API. Credential values are never passed
-on this command line.
+materially faster credentialed provider API.
 
 Arguments are interpreted as follows:
     - repository@sha256:... → use this registry digest exactly
-    - repository:* → check every local tag for that repository (not supported in remote mode)
-    - repository:tag → resolve this exact tag using the selected tag-resolution mode
+    - repository:* → check every local tag for that repository (not supported
+        in remote mode)
+    - repository:tag → resolve this exact tag using the selected
+        tag-resolution mode
     - repository → use the selected mode with an implicit ':latest';
         auto/local can broaden a missing ':latest' to local 'repository:*'
-    - SHA-like value → try a local container ID, then a local image ID, then a registry digest
-    - any other value → in auto/local mode, try a container name before treating
-        it as a repository; remote mode always treats it as a repository
+    - SHA-like value → try a local container ID, then a local image ID, then a
+        registry digest
+    - any other value → in auto/local mode, try a container name before
+        treating it as a repository; remote mode always treats it as a
+        repository
 END
 }
 

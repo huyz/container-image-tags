@@ -85,8 +85,8 @@ function run_cli_with_tty_input {
     run_cli --help
     assert_status 0
     assert_output_contains '--tag-resolution'
-    assert_output_contains 'any: stop after finding the first matching tag, even if it is floating'
-    assert_output_contains 'any-durable: stop after finding one matching tag heuristically assumed durable'
+    assert_output_contains 'any: stop after finding the first matching tag, even if it is'
+    assert_output_contains 'any-durable: stop after finding one matching tag heuristically'
 
     run_cli -h
     assert_status 0
