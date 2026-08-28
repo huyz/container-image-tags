@@ -5,6 +5,7 @@
 # final safety net for interrupts and handled early exits.
 
 runtime_tmp_dir=
+declare -ga runtime_child_pids=()
 readonly NETWORK_OPERATION_TIMEOUT_SECONDS=${CIT_NETWORK_TIMEOUT_SECONDS:-600}
 
 [[ "$NETWORK_OPERATION_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
@@ -44,7 +45,49 @@ function runtime_remove {
     done
 }
 
+function runtime_register_child {
+    runtime_child_pids+=("$1")
+}
+
+function runtime_unregister_child {
+    local completed_pid="$1"
+    local pid
+    local -a remaining_pids=()
+
+    for pid in "${runtime_child_pids[@]}"; do
+        [[ "$pid" == "$completed_pid" ]] || remaining_pids+=("$pid")
+    done
+    runtime_child_pids=("${remaining_pids[@]}")
+}
+
+function runtime_terminate_children {
+    local pid attempt any_alive
+
+    for pid in "${runtime_child_pids[@]}"; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for (( attempt = 0; attempt < 25; ++attempt )); do
+        any_alive=
+        for pid in "${runtime_child_pids[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                any_alive=1
+                break
+            fi
+        done
+        [[ -n "$any_alive" ]] || break
+        sleep 0.01
+    done
+    for pid in "${runtime_child_pids[@]}"; do
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    for pid in "${runtime_child_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+    runtime_child_pids=()
+}
+
 function runtime_cleanup {
+    runtime_terminate_children
     [[ -n "$runtime_tmp_dir" && -d "$runtime_tmp_dir" ]] || return 0
     # Every path here was created beneath the validated runtime directory.
     find "$runtime_tmp_dir" -type f -delete 2>/dev/null || true
@@ -72,6 +115,16 @@ function run_network_command {
         setpgid($pid, $pid);
 
         my $timed_out = 0;
+        my %signal_status = (HUP => 129, INT => 130, TERM => 143);
+        for my $signal (keys %signal_status) {
+            $SIG{$signal} = sub {
+                kill $signal, -$pid;
+                select undef, undef, undef, 0.25;
+                kill "KILL", -$pid;
+                waitpid($pid, 0);
+                exit $signal_status{$signal};
+            };
+        }
         local $SIG{ALRM} = sub {
             $timed_out = 1;
             kill "TERM", -$pid;

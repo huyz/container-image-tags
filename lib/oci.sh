@@ -348,6 +348,7 @@ function oci_tags_by_digest_with_curl_parallel {
     run_network_command "$CURL" --config "$config_tmp" \
         >/dev/null 2>"$error_tmp" &
     curl_pid=$!
+    runtime_register_child "$curl_pid"
     while kill -0 "$curl_pid" 2>/dev/null; do
         for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do
             [[ -z ${observed[tag_index]-} ]] || continue
@@ -374,6 +375,7 @@ function oci_tags_by_digest_with_curl_parallel {
     else
         curl_status=$?
     fi
+    runtime_unregister_child "$curl_pid"
 
     for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do
         header_file="$result_dir/$tag_index.headers"

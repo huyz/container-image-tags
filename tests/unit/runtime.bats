@@ -73,3 +73,25 @@ EOF
     child_pid=$(<"$CALLS_DIR/network-child.pid")
     ! kill -0 "$child_pid" 2>/dev/null
 }
+
+@test "RUNTIME-007 cleanup terminates registered child processes" {
+    load_common
+    write_stub stubborn-child <<'EOF'
+trap '' TERM
+: >"$CALLS_DIR/stubborn-child.ready"
+sleep 30
+EOF
+    stubborn-child &
+    child_pid=$!
+    runtime_register_child "$child_pid"
+    for _ in {1..100}; do
+        [[ -e "$CALLS_DIR/stubborn-child.ready" ]] && break
+        sleep 0.01
+    done
+
+    start=$SECONDS
+    runtime_cleanup
+    (( SECONDS - start < 2 ))
+    ! kill -0 "$child_pid" 2>/dev/null
+    [[ ${#runtime_child_pids[@]} -eq 0 ]]
+}

@@ -278,12 +278,29 @@ function tags_by_digest_with_rolling_pool {
                 : >"$done_tmp"
             ) &
             active_pids[tag_index]=$!
+            runtime_register_child "${active_pids[$tag_index]}"
             ((++next_tag_index))
             ((++active_jobs))
         done
 
         (( active_jobs > 0 )) || break
         wait -n || true
+
+        # A worker can be killed before it publishes its completion marker.
+        # Detect that state after wait -n and convert it into an ordinary
+        # unavailable result so active_jobs cannot remain nonzero forever.
+        for tag_index in "${!active_pids[@]}"; do
+            done_tmp="$worker_tmp/$tag_index.done"
+            [[ -e "$done_tmp" ]] && continue
+            worker_pid=${active_pids[$tag_index]}
+            if ! kill -0 "$worker_pid" 2>/dev/null; then
+                wait "$worker_pid" 2>/dev/null || true
+                status_tmp="$worker_tmp/$tag_index.status"
+                [[ -e "$status_tmp" ]] ||
+                    printf '%d\n' "$LOOKUP_UNAVAILABLE" >"$status_tmp"
+                : >"$done_tmp"
+            fi
+        done
 
         for tag_index in "${!active_pids[@]}"; do
             done_tmp="$worker_tmp/$tag_index.done"
@@ -295,6 +312,7 @@ function tags_by_digest_with_rolling_pool {
             # wait -n may already have reaped this PID. The status file is the
             # authoritative result; this exact wait only finishes cleanup.
             wait "$worker_pid" 2>/dev/null || true
+            runtime_unregister_child "$worker_pid"
             lookup_status=$(<"$status_tmp")
             manifest_digest=
             if (( lookup_status == LOOKUP_SUCCEEDED )); then

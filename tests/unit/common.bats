@@ -374,3 +374,16 @@ function lookup_pool_terminal {
     assert_output_exact 1.2
     ! grep -Fxq never "$CALLS_DIR/lookups"
 }
+
+@test "POOL-015 worker death before completion is detected without hanging" {
+    load_common
+    registry_tag_scan=all
+    candidates=(one)
+    function killed_lookup {
+        kill -KILL "$BASHPID"
+    }
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 1 \
+        progress worker killed_lookup 1
+    assert_status "$LOOKUP_UNAVAILABLE"
+}
