@@ -657,6 +657,13 @@ Implement in `tests/unit/oci.bats`:
   makes the subsequent manifest scan too expensive.
 - `OCI-026` P0: comparison-only tag inventory stops once its lower-bound scan
   cost exceeds the competing backend estimate.
+- `OCI-027` P0: candidate manifest HEAD maps 404 to benign not-found churn,
+  401/403 to denied, 429 to stopped, and transport/server failures to
+  unavailable.
+- `OCI-028` P0: the first tag-list page can establish a confirmed two-part
+  direct tag as durable.
+- `OCI-029` P0: parallel candidate churn does not invalidate an exhaustive
+  result, while candidate denial remains distinguishable.
 
 ## Central policy engine
 

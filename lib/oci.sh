@@ -286,6 +286,8 @@ function oci_digest_for_tag_with_headers {
     fi
     case "$http_code" in
     200) lookup_status=$LOOKUP_SUCCEEDED ;;
+    404) lookup_status=$LOOKUP_NOT_FOUND ;;
+    401 | 403) lookup_status=$LOOKUP_DENIED ;;
     429) lookup_status=$LOOKUP_STOPPED ;;
     *) lookup_status=$LOOKUP_UNAVAILABLE ;;
     esac
@@ -316,6 +318,7 @@ function oci_tags_by_digest_with_curl_parallel {
     local checked=0
     local failed=0
     local rate_limited=
+    local denied=
     local matches=
     local -a observed=()
     local -a spinner=('|' '/' '-' $'\\')
@@ -389,8 +392,12 @@ function oci_tags_by_digest_with_curl_parallel {
         http_status=$(oci_http_status "$header_file")
         manifest_digest=$(oci_header_value "$header_file" Docker-Content-Digest)
         if [[ "$http_status" != 200 || -z "$manifest_digest" ]]; then
-            ((++failed))
-            [[ "$http_status" == 429 ]] && rate_limited=1
+            case "$http_status" in
+            404) ;;
+            401 | 403) denied=1 ;;
+            429) rate_limited=1 ;;
+            *) ((++failed)) ;;
+            esac
             continue
         fi
         if [[ "$manifest_digest" == "$digest" ]]; then
@@ -416,6 +423,7 @@ function oci_tags_by_digest_with_curl_parallel {
         notice "OCI registry rate limited manifest HEAD requests for $registry/$repository; not falling back to the more request-intensive Skopeo scan."
         return "$LOOKUP_STOPPED"
     fi
+    [[ -z "$denied" ]] || return "$LOOKUP_DENIED"
     (( failed == 0 )) || return "$LOOKUP_UNAVAILABLE"
 }
 

@@ -387,3 +387,27 @@ function lookup_pool_terminal {
         progress worker killed_lookup 1
     assert_status "$LOOKUP_UNAVAILABLE"
 }
+
+@test "POOL-016 exhaustive scans ignore vanished candidates and preserve denial" {
+    load_common
+    registry_tag_scan=all
+    candidates=(vanished match)
+    function classified_lookup {
+        case "$2" in
+        vanished) return "$LOOKUP_NOT_FOUND" ;;
+        denied) return "$LOOKUP_DENIED" ;;
+        match) printf '%s\n' sha256:wanted ;;
+        esac
+    }
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
+        progress worker classified_lookup 1
+    assert_status 0
+    assert_output_exact match
+
+    candidates=(denied match)
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
+        progress worker classified_lookup 1
+    assert_status "$LOOKUP_DENIED"
+    assert_output_exact match
+}

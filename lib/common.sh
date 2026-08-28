@@ -317,12 +317,17 @@ function tags_by_digest_with_rolling_pool {
             manifest_digest=
             if (( lookup_status == LOOKUP_SUCCEEDED )); then
                 manifest_digest=$(<"$result_tmp")
-            else
+            elif (( lookup_status != LOOKUP_NOT_FOUND )); then
                 ((++failed))
-                if [[ -n "$require_complete" &&
-                        "$lookup_status" == "$LOOKUP_STOPPED" ]]; then
-                    terminal_status=$LOOKUP_STOPPED
-                    stop_scheduling=1
+                if [[ -n "$require_complete" ]]; then
+                    case "$lookup_status" in
+                    "$LOOKUP_STOPPED") terminal_status=$LOOKUP_STOPPED; stop_scheduling=1 ;;
+                    "$LOOKUP_DENIED")
+                        (( terminal_status == LOOKUP_STOPPED )) ||
+                            terminal_status=$LOOKUP_DENIED
+                        stop_scheduling=1
+                        ;;
+                    esac
                 fi
             fi
             rm -f "$result_tmp" "$status_tmp" "$done_tmp"
@@ -370,10 +375,11 @@ function tags_by_digest_with_rolling_pool {
     fi
 
     printf '%s' "$matches"
-    if (( terminal_status == LOOKUP_STOPPED )) &&
+    if (( terminal_status == LOOKUP_STOPPED ||
+            terminal_status == LOOKUP_DENIED )) &&
             [[ "$registry_tag_scan" != any &&
                 "$registry_tag_scan" != any-durable || -z "$matches" ]]; then
-        return "$LOOKUP_STOPPED"
+        return "$terminal_status"
     fi
     if [[ -n "$require_complete" && "$failed" -gt 0 ]] &&
             [[ "$registry_tag_scan" != any &&

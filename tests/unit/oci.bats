@@ -283,6 +283,32 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
+@test "OCI-027 candidate HEAD distinguishes churn denial and rate limiting" {
+    load_oci
+    header="$TEST_ROOT/request"; oci_write_request_headers "$header"
+    write_stub curl <<'EOF'
+headers=
+for ((index = 1; index <= $#; ++index)); do
+    if [[ "${!index}" == -D ]]; then index=$((index + 1)); headers="${!index}"; fi
+done
+printf 'HTTP/1.1 %s Result\r\n' "$CANDIDATE_HTTP_CODE" >"$headers"
+printf '%s' "$CANDIDATE_HTTP_CODE"
+EOF
+
+    for pair in \
+            "404 $LOOKUP_NOT_FOUND" \
+            "401 $LOOKUP_DENIED" \
+            "403 $LOOKUP_DENIED" \
+            "429 $LOOKUP_STOPPED" \
+            "500 $LOOKUP_UNAVAILABLE"; do
+        set -- $pair
+        export CANDIDATE_HTTP_CODE="$1"
+        run oci_digest_for_tag_with_headers \
+            registry.example vanished team/app "$header"
+        assert_status "$2"
+    done
+}
+
 @test "OCI-016 exhaustive multi-tag lookup selects curl parallel engine" {
     load_oci
     registry_tag_scan=all; registry_direct_tag=
@@ -388,6 +414,42 @@ EOF
     elapsed=$((SECONDS - start))
     assert_status "$LOOKUP_STOPPED"
     ((elapsed < 3))
+}
+
+@test "OCI-029 parallel candidate churn is benign while denial is preserved" {
+    load_oci
+    function is_interactive_session { return 1; }
+    candidates=(vanished match)
+    headers="$TEST_ROOT/request"; oci_write_request_headers "$headers"
+    export PARALLEL_DIGEST="$DIGEST"
+    write_stub curl <<'EOF'
+config="$2"; index=0
+while IFS= read -r line; do
+    case "$line" in
+    'dump-header = '* )
+        path="${line#*\"}"; path="${path%\"}"
+        if [[ "$index" == 0 ]]; then
+            printf 'HTTP/1.1 %s Result\r\n' "${PARALLEL_FIRST_STATUS:-404}" >"$path"
+        else
+            printf 'HTTP/1.1 200 OK\r\nDocker-Content-Digest: %s\r\n' \
+                "$PARALLEL_DIGEST" >"$path"
+        fi
+        index=$((index + 1))
+        ;;
+    esac
+done <"$config"
+EOF
+
+    run oci_tags_by_digest_with_curl_parallel registry.example team/app "$DIGEST" \
+        candidates 2 "$headers"
+    assert_status 0
+    assert_output_exact match
+
+    export PARALLEL_FIRST_STATUS=403
+    run oci_tags_by_digest_with_curl_parallel registry.example team/app "$DIGEST" \
+        candidates 2 "$headers"
+    assert_status "$LOOKUP_DENIED"
+    assert_output_exact match
 }
 
 @test "OCI-023 bearer token is never present in curl argv" {
