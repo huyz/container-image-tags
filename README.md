@@ -59,7 +59,8 @@ Optional:
 
 Registry-facing commands have a 600-second wall-clock deadline by default,
 including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
-`CIT_NETWORK_TIMEOUT_SECONDS` to a positive integer to choose another limit.
+Set `CIT_NETWORK_TIMEOUT_SECONDS` to a non-negative integer to choose another
+limit, or to `0` to disable the deadline.
 
 On macOS and Linux, Homebrew users can install all with:
 

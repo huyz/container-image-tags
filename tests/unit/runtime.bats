@@ -74,7 +74,19 @@ EOF
     ! kill -0 "$child_pid" 2>/dev/null
 }
 
-@test "RUNTIME-007 cleanup terminates registered child processes" {
+@test "RUNTIME-007 zero network timeout runs without a deadline wrapper" {
+    export CIT_NETWORK_TIMEOUT_SECONDS=0
+    load_common
+    write_stub no-timeout-network-command <<'EOF'
+printf 'completed\n'
+EOF
+
+    run run_network_command no-timeout-network-command
+    assert_status 0
+    assert_output_exact 'completed'
+}
+
+@test "RUNTIME-008 cleanup terminates registered child processes" {
     load_common
     write_stub stubborn-child <<'EOF'
 trap '' TERM

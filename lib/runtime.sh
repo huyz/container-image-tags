@@ -6,10 +6,10 @@
 
 runtime_tmp_dir=
 declare -ga runtime_child_pids=()
-readonly NETWORK_OPERATION_TIMEOUT_SECONDS=${CIT_NETWORK_TIMEOUT_SECONDS:-600}
+readonly NETWORK_OPERATION_TIMEOUT_SECONDS=${CIT_NETWORK_TIMEOUT_SECONDS-600}
 
-[[ "$NETWORK_OPERATION_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] ||
-    abort "CIT_NETWORK_TIMEOUT_SECONDS must be a positive integer"
+[[ "$NETWORK_OPERATION_TIMEOUT_SECONDS" =~ ^(0|[1-9][0-9]*)$ ]] ||
+    abort "CIT_NETWORK_TIMEOUT_SECONDS must be a non-negative integer"
 
 function runtime_init {
     [[ -n "$runtime_tmp_dir" ]] && return
@@ -100,6 +100,10 @@ function runtime_cleanup {
 # Standard streams are inherited, and the default process-group behavior keeps
 # a timed-out CLI from leaving helpers behind.
 function run_network_command {
+    [[ "$NETWORK_OPERATION_TIMEOUT_SECONDS" == 0 ]] && {
+        "$@"
+        return
+    }
     "$TIMEOUT" --kill-after=0.25s "$NETWORK_OPERATION_TIMEOUT_SECONDS" "$@"
 }
 
