@@ -37,11 +37,12 @@ The canonical result is an associative array with four groups of fields:
 - registry classification and direct-tag check;
 - scan mode, status, backend, provider metadata, and ordered tags.
 
-Registry dispatch also accepts an optional associative lookup context. Legacy
+Registry dispatch requires a caller-owned associative lookup context. Legacy
 module globals remain the internal provider protocol because Bash command
 substitutions and existing focused module tests depend on their shell scope.
-The pipeline does not read those globals: dispatch copies them into the lookup
-context, which is then copied into the result record.
+Every nonfatal dispatch path copies that internal state into the context before
+returning. The pipeline does not read lookup globals; it consumes the context,
+which is then copied into the canonical result record.
 
 ## Lookup outcomes
 

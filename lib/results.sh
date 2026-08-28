@@ -38,20 +38,13 @@ function result_capture_subject {
 
 function result_capture_scan {
     local -n result_ref="$1"
-    local context_name="${2-}"
+    local context_name="$2"
+    local -n context_ref="$context_name"
 
-    if [[ -n "$context_name" ]]; then
-        local -n context_ref="$context_name"
-        result_ref[scan_status]="${context_ref[result]:-completed}"
-        result_ref[scan_backend]="${context_ref[backend]-}"
-        result_ref[provider_metadata]="${context_ref[metadata]-}"
-        result_ref[tags]="${context_ref[tags]-}"
-    else
-        result_ref[scan_status]="${registry_lookup_result:-completed}"
-        result_ref[scan_backend]="${registry_lookup_backend-}"
-        result_ref[provider_metadata]="${registry_metadata-}"
-        result_ref[tags]="${registry_tags-}"
-    fi
+    result_ref[scan_status]="${context_ref[result]:-completed}"
+    result_ref[scan_backend]="${context_ref[backend]-}"
+    result_ref[provider_metadata]="${context_ref[metadata]-}"
+    result_ref[tags]="${context_ref[tags]-}"
 }
 
 function render_result_header_human {

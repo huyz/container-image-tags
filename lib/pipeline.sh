@@ -40,26 +40,27 @@ function resolve_remote_tag_subject {
     local tag="$2"
     local resolution_notice="$3"
     local remote_reference="$repository:$tag"
+    local -A remote_lookup=()
 
     notice "$resolution_notice"
     registry_classify "$repository"
-    registry_resolve_tag_digest "$repository" "$tag"
-    case "$remote_tag_status" in
+    registry_resolve_tag_digest "$repository" "$tag" remote_lookup
+    case "${remote_lookup[status]}" in
     "$LOOKUP_SUCCEEDED") ;;
     "$LOOKUP_NOT_FOUND") abort "Cannot resolve remote tag '$remote_reference': the tag was not found" ;;
     "$LOOKUP_DENIED")
-        if [[ -n "$remote_tag_error" ]]; then
-            abort "Google registry denied access to '$remote_reference': $remote_tag_error"
+        if [[ -n "${remote_lookup[error]}" ]]; then
+            abort "Google registry denied access to '$remote_reference': ${remote_lookup[error]}"
         fi
         abort "Registry denied access to '$remote_reference' after authentication; the repository may be unavailable or the authenticated account may lack permission"
         ;;
     *) abort "Failed to resolve remote tag '$remote_reference'" ;;
     esac
 
-    require_supported_digest_algorithm "$remote_reference@$remote_tag_digest"
-    [[ "$remote_tag_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-        abort "Registry returned an invalid digest for '$remote_reference': '$remote_tag_digest'"
-    repo_digest="$repository@$remote_tag_digest"
+    require_supported_digest_algorithm "$remote_reference@${remote_lookup[digest]}"
+    [[ "${remote_lookup[digest]}" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+        abort "Registry returned an invalid digest for '$remote_reference': '${remote_lookup[digest]}'"
+    repo_digest="$repository@${remote_lookup[digest]}"
     local_tag="$remote_reference"
     subject_source=remote
 }

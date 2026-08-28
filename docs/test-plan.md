@@ -412,10 +412,10 @@ Classification inputs must include:
 | DISPATCH-006 | P0 | `LOOKUP_DENIED` | Intended auth path only |
 | DISPATCH-007 | P0 | `LOOKUP_STOPPED` | Immediate abort; no fallback |
 | DISPATCH-008 | P0 | New lookup begins after a prior result | Shared result, metadata, and error fields reset |
-| DISPATCH-009 | P0 | `any-durable` with a confirmed durable direct tag | Direct tag satisfies the lookup without invoking a reverse backend |
+| DISPATCH-009 | P0 | `any-durable` with a confirmed durable direct tag | Context contains the direct tag and backend without invoking a reverse backend |
 | DISPATCH-014 | P0 | Direct adapter returns through an explicit context | Status, digest, and error are copied exactly |
 | DISPATCH-015 | P0 | Reverse adapter returns through an explicit context | Result, backend, metadata, and ordered tags are copied exactly |
-| DISPATCH-016 | P0 | `any` with a confirmed floating direct tag | Direct tag satisfies the lookup without invoking a reverse backend |
+| DISPATCH-016 | P0 | `any` with a confirmed floating direct tag | Context contains the direct tag and backend without invoking a reverse backend |
 | DISPATCH-010 | P1 | Provider metadata unsupported | Metadata remains empty/null |
 
 ## Docker Hub
@@ -708,6 +708,8 @@ all prose:
 - `OUTPUT-007` P0: warning, notice, error, verbose, and debug messages use their
   intended stream and gating.
 - `OUTPUT-008` P0: one skipped provider does not suppress later inputs.
+- `OUTPUT-009` P0: a confirmed durable direct tag produces the same complete
+  scan record in human and JSON output without invoking a reverse scan.
 
 JSON tests must parse stdout with jq and assert fields semantically:
 

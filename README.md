@@ -247,11 +247,11 @@ classify its repository host in `registry_classify`, and add it to the direct
 tag and reverse-lookup dispatch functions. Lookup helpers use the named status
 contract in `common.sh`: `LOOKUP_SUCCEEDED` (0), `LOOKUP_NOT_FOUND` (1),
 `LOOKUP_UNAVAILABLE` (2), `LOOKUP_DENIED` (3), and terminal
-`LOOKUP_STOPPED` (4). Successful direct lookups write a digest to stdout;
-successful exhaustive lookups populate `registry_tags` plus
-`registry_lookup_result`, `registry_lookup_backend`, and optional
-`registry_metadata`. User-choice helpers produce string actions so nonzero
-exit statuses remain reserved for actual failures.
+`LOOKUP_STOPPED` (4). Adapter helpers exchange provider-internal state with the
+central dispatcher. Each dispatch caller supplies a lightweight associative
+lookup context that receives status, digest, errors, tags, backend, and optional
+provider metadata as applicable. User-choice helpers produce string actions so
+nonzero exit statuses remain reserved for actual failures.
 
 ### Tests
 

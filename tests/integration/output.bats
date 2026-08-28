@@ -167,6 +167,12 @@ EOF
     assert_output_contains 'Remote tags (partial scan):'
     assert_output_contains '1.2.3'
     ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
+
+    run_cli --json --tag-resolution=local --tag-scan=any-durable \
+        registry.example/app:1.2.3
+    assert_status 0
+    assert_json '.[0].tag_scan == {"mode":"any-durable","status":"completed","backend":"direct-tag-check","provider_metadata":null,"tags":["1.2.3"]}'
+    ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 }
 
 @test "OUTPUT-006 provider metadata prints only for supported GHCR package results" {

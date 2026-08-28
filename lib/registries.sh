@@ -64,13 +64,23 @@ function registry_classify {
     esac
 }
 
-# Resolve the current digest for a known tag. Results are returned through the
-# shared remote_tag_digest and remote_tag_status fields so dispatch runs in the
-# current shell and can preserve the existing fatal-error behavior.
+# Copy provider-internal direct lookup state into a caller-owned context.
+function registry_export_direct_lookup_context {
+    local -n context_ref="$1"
+
+    context_ref=()
+    context_ref[status]="$remote_tag_status"
+    context_ref[digest]="$remote_tag_digest"
+    context_ref[error]="$remote_tag_error"
+}
+
+# Resolve the current digest for a known tag. Provider adapters exchange state
+# with this dispatcher through shared fields; callers receive only the explicit
+# lookup context.
 function registry_resolve_tag_digest {
     local repository="$1"
     local tag="$2"
-    local context_name="${3-}"
+    local context_name="$3"
     local remote_tag_reference="$repository:$tag"
     local oci_repository
 
@@ -107,23 +117,29 @@ function registry_resolve_tag_digest {
         ;;
     esac
 
-    if [[ -n "$context_name" ]]; then
-        local -n context_ref="$context_name"
-        context_ref[status]="$remote_tag_status"
-        context_ref[digest]="$remote_tag_digest"
-        context_ref[error]="$remote_tag_error"
-    fi
+    registry_export_direct_lookup_context "$context_name"
 }
 
-# Populate registry_tags plus the reverse lookup result, backend, and optional
-# provider metadata. "any" stops at the first match. "any-durable" retains
-# matching tags through the first one heuristically assumed durable.
+# Copy provider-internal reverse lookup state into a caller-owned context.
+function registry_export_reverse_lookup_context {
+    local -n context_ref="$1"
+
+    context_ref=()
+    context_ref[result]="$registry_lookup_result"
+    context_ref[backend]="$registry_lookup_backend"
+    context_ref[metadata]="$registry_metadata"
+    context_ref[tags]="$registry_tags"
+}
+
+# Find tags for a digest and populate the caller-owned lookup context. "any"
+# stops at the first match. "any-durable" retains matching tags through the
+# first one heuristically assumed durable.
 function registry_find_tags_by_digest {
     local repository="$1"
     local digest="$2"
     local tag_scan_mode="$3"
     local direct_tag="$4"
-    local context_name="${5-}"
+    local context_name="$5"
     local oci_repository
 
     registry_tags=
@@ -142,52 +158,43 @@ function registry_find_tags_by_digest {
             -n "${registry_direct_tag_confirmed-}" ]]; then
         registry_tags="$registry_direct_tag"
         registry_lookup_backend=direct-tag-check
-        return
-    fi
-    if [[ "$registry_tag_scan" == any-durable &&
+    elif [[ "$registry_tag_scan" == any-durable &&
             -n "$registry_direct_tag" &&
             -n "${registry_direct_tag_confirmed-}" ]] &&
             tag_is_assumed_durable "$registry_direct_tag"; then
         registry_tags="$registry_direct_tag"
         registry_lookup_backend=direct-tag-check
-        return
+    else
+        case "$registry_kind" in
+        ghcr)
+            ghcr_find_tags "$registry_repository" "$digest" "$repository"
+            ;;
+        docker-hub)
+            docker_hub_find_tags "$registry_repository" "$digest" "$repository"
+            ;;
+        acr)
+            acr_find_tags "$registry_host" "${registry_repository#*/}" \
+                "$digest" "$repository"
+            ;;
+        gar)
+            gar_find_tags "$registry_host" "$repository" "$digest"
+            ;;
+        gcr)
+            gcr_find_tags "$registry_host" "$registry_repository" \
+                "$digest" "$repository"
+            ;;
+        ecr)
+            ecr_find_tags "$registry_host" "${registry_repository#*/}" \
+                "$digest" "$repository"
+            ;;
+        other)
+            oci_repository="${repository#*/}"
+            oci_find_tags "$registry_host" "$oci_repository" "$digest" "$repository"
+            ;;
+        esac
     fi
 
-    case "$registry_kind" in
-    ghcr)
-        ghcr_find_tags "$registry_repository" "$digest" "$repository"
-        ;;
-    docker-hub)
-        docker_hub_find_tags "$registry_repository" "$digest" "$repository"
-        ;;
-    acr)
-        acr_find_tags "$registry_host" "${registry_repository#*/}" \
-            "$digest" "$repository"
-        ;;
-    gar)
-        gar_find_tags "$registry_host" "$repository" "$digest"
-        ;;
-    gcr)
-        gcr_find_tags "$registry_host" "$registry_repository" \
-            "$digest" "$repository"
-        ;;
-    ecr)
-        ecr_find_tags "$registry_host" "${registry_repository#*/}" \
-            "$digest" "$repository"
-        ;;
-    other)
-        oci_repository="${repository#*/}"
-        oci_find_tags "$registry_host" "$oci_repository" "$digest" "$repository"
-        ;;
-    esac
-
-    if [[ -n "$context_name" ]]; then
-        local -n context_ref="$context_name"
-        context_ref[result]="$registry_lookup_result"
-        context_ref[backend]="$registry_lookup_backend"
-        context_ref[metadata]="$registry_metadata"
-        context_ref[tags]="$registry_tags"
-    fi
+    registry_export_reverse_lookup_context "$context_name"
 }
 
 function registry_print_metadata {
