@@ -92,6 +92,12 @@ function ghcr_package_version_by_tag {
     ghcr_package_version "$1" tag "$2"
 }
 
+# Keep the terminal attachment in one helper so both direct and reverse
+# recovery use the same interactive gh authentication flow.
+function ghcr_refresh_authentication {
+    "$GH" auth refresh -s read:packages </dev/tty >/dev/tty
+}
+
 # Prefer the inexpensive public manifest check for direct lookups. The Packages
 # API supports private packages after an explicit denial, while Skopeo remains
 # the compatibility fallback selected by the registry-wide credential policy.
@@ -99,6 +105,7 @@ function ghcr_digest_for_tag {
     local ghcr_repository="$1"
     local tag="$2"
     local manifest_digest package_version lookup_status auth_trigger_status
+    local can_refresh
 
     if credential_policy_allows_public; then
         if manifest_digest=$(oci_digest_for_tag_anonymously \
@@ -140,6 +147,34 @@ function ghcr_digest_for_tag {
             lookup_status=$?
         fi
     fi
+
+    # Existing gh and registry credentials are automatic. If public access was
+    # explicitly denied and neither credentialed path worked, an interactive
+    # caller can grant gh the missing Packages scope and retry this exact tag.
+    if (( auth_trigger_status == LOOKUP_DENIED )) &&
+            (( lookup_status != LOOKUP_NOT_FOUND &&
+                lookup_status != LOOKUP_STOPPED )) &&
+            credential_policy_allows_credentials; then
+        if command -v "${GH:=gh}" &>/dev/null; then
+            can_refresh=1
+        else
+            can_refresh=
+        fi
+        if choose_ghcr_direct_authentication "$can_refresh"; then
+            if ! ghcr_refresh_authentication; then
+                warn "gh authentication refresh failed"
+            fi
+            if package_version=$(ghcr_package_version_by_tag \
+                    "$ghcr_repository" "$tag"); then
+                manifest_digest=$($JQ -r '.name // empty' <<<"$package_version")
+                [[ -n "$manifest_digest" ]] || return "$LOOKUP_UNAVAILABLE"
+                printf '%s\n' "$manifest_digest"
+                return "$LOOKUP_SUCCEEDED"
+            else
+                lookup_status=$?
+            fi
+        fi
+    fi
     return "$lookup_status"
 }
 
@@ -152,6 +187,29 @@ function ghcr_resolve_tag {
     else
         remote_tag_status=$?
     fi
+}
+
+# Offer the one interactive action that can make an existing gh installation
+# usable for a denied direct lookup. Declining leaves the original denial
+# intact; there is no useful anonymous fallback for a private package.
+function choose_ghcr_direct_authentication {
+    local can_refresh="$1"
+    local choice
+
+    if ! is_interactive_session || [[ -z "$can_refresh" ]]; then
+        return 1
+    fi
+    echo "$SCRIPT_NAME: GHCR denied the direct tag lookup and existing credentials were not usable." >&2
+    echo "  [r] Run 'gh auth refresh -s read:packages', then retry" >&2
+    echo "  [s] Stop without refreshing authentication" >&2
+    while true; do
+        printf 'Choose [r/s]: ' >&2
+        IFS= read -r choice </dev/tty || return 1
+        case "$choice" in
+        r | R) return ;;
+        s | S) return 1 ;;
+        esac
+    done
 }
 
 # Ask how to proceed when the Packages API cannot be used. The selected action
@@ -312,7 +370,7 @@ function ghcr_tags_by_digest {
 
         case "$ghcr_choice" in
         refresh)
-            if ! "$GH" auth refresh -s read:packages </dev/tty >/dev/tty; then
+            if ! ghcr_refresh_authentication; then
                 warn "gh authentication refresh failed"
             fi
             # Retry the Packages API whether refresh succeeded or failed: the

@@ -287,3 +287,40 @@ EOF
     docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
     [[ "$registry_tags" == stable ]]
 }
+
+@test "HUB-019 denied direct lookup offers interactive PAT after automatic fallbacks" {
+    load_hub
+    function docker_hub_digest_for_tag {
+        printf 'hub:%s\n' "${docker_hub_token:-public}" >>"$CALLS_DIR/order"
+        if [[ -z "$docker_hub_token" ]]; then
+            return "$LOOKUP_DENIED"
+        fi
+        printf 'sha256:%s\n' "$DIGEST"
+    }
+    function skopeo_is_available { return 0; }
+    function skopeo_digest_for_tag_with_access_policy {
+        printf 'skopeo\n' >>"$CALLS_DIR/order"
+        return "$LOOKUP_DENIED"
+    }
+    function choose_docker_hub_direct_authentication {
+        printf 'prompt:%s\n' "$1" >>"$CALLS_DIR/order"
+        docker_hub_token=interactive-token
+    }
+
+    docker_hub_resolve_tag library/app stable docker.io/library/app:stable
+    [[ "$remote_tag_status" == "$LOOKUP_SUCCEEDED" ]]
+    [[ "$remote_tag_digest" == "sha256:$DIGEST" ]]
+    [[ $(<"$CALLS_DIR/order") == $'hub:public\nskopeo\nprompt:docker.io/library/app:stable\nhub:interactive-token' ]]
+}
+
+@test "HUB-020 terminal direct fallback result does not prompt for another credential" {
+    load_hub
+    function docker_hub_digest_for_tag { return "$LOOKUP_DENIED"; }
+    function skopeo_is_available { return 0; }
+    function skopeo_digest_for_tag_with_access_policy { return "$LOOKUP_NOT_FOUND"; }
+    function choose_docker_hub_direct_authentication { : >"$CALLS_DIR/prompt"; }
+
+    docker_hub_resolve_tag library/app absent docker.io/library/app:absent
+    [[ "$remote_tag_status" == "$LOOKUP_NOT_FOUND" ]]
+    refute_file_exists "$CALLS_DIR/prompt"
+}

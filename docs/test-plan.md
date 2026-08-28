@@ -445,6 +445,10 @@ Implement in `tests/unit/docker-hub.bats`:
   fallback.
 - `HUB-018` P0: `any` returns the first matching floating tag without
   requesting another page.
+- `HUB-019` P0: denied direct lookup exhausts automatic paths before an
+  interactive PAT retry of the exact tag.
+- `HUB-020` P0: an authoritative not-found or stopped direct fallback never
+  prompts for another credential.
 
 ## GHCR
 
@@ -468,10 +472,14 @@ Implement in `tests/unit/ghcr.bats`:
 - `GHCR-012` P0: anonymous and skip string choices dispatch correctly.
 - `GHCR-013` P0: skip affects only the current input.
 - `GHCR-014` P0: a stopped anonymous lookup never invokes Packages or Skopeo.
+- `GHCR-015` P0: denied direct lookup exhausts existing `gh` and registry
+  credentials before offering scope refresh and retrying the exact tag.
 - `GHCR-016` P0: Packages `any-durable` returns matching tags through the first durable
   tag.
 - `GHCR-017` P0: `if-faster` `any-durable` lets a one-page OCI sample satisfy a
   confirmed two-component direct tag before Packages pagination.
+- `GHCR-018` P0: an authoritative not-found or stopped direct fallback never
+  prompts for scope refresh.
 
 ## ACR
 

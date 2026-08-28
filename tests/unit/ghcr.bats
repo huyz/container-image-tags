@@ -236,3 +236,54 @@ EOF
     ghcr_tags_by_digest owner/next "$DIGEST" ghcr.io/owner/next
     [[ -z "$skip_input" && "$registry_tags" == next-result ]]
 }
+
+@test "GHCR-015 denied direct lookup offers scope refresh after automatic fallbacks" {
+    load_ghcr
+    write_stub gh <<'EOF'
+printf '%s\0' "$@" >"$CALLS_DIR/gh.args"
+EOF
+    function oci_digest_for_tag_anonymously {
+        printf 'oci\n' >>"$CALLS_DIR/order"
+        return "$LOOKUP_DENIED"
+    }
+    function ghcr_package_version_by_tag {
+        printf 'packages\n' >>"$CALLS_DIR/order"
+        count=0
+        [[ ! -f "$CALLS_DIR/packages.count" ]] || count=$(<"$CALLS_DIR/packages.count")
+        count=$((count + 1))
+        printf '%d\n' "$count" >"$CALLS_DIR/packages.count"
+        (( count > 1 )) || return "$LOOKUP_UNAVAILABLE"
+        printf '{"name":"%s"}\n' "$DIGEST"
+    }
+    function skopeo_is_available { return 0; }
+    function skopeo_digest_for_tag_with_access_policy {
+        printf 'skopeo\n' >>"$CALLS_DIR/order"
+        return "$LOOKUP_DENIED"
+    }
+    function choose_ghcr_direct_authentication {
+        printf 'prompt:%s\n' "$1" >>"$CALLS_DIR/order"
+    }
+    function ghcr_refresh_authentication {
+        printf '%s\0' auth refresh -s read:packages >"$CALLS_DIR/gh.args"
+    }
+
+    run ghcr_digest_for_tag owner/app stable
+    assert_status 0
+    assert_output_exact "$DIGEST"
+    [[ $(<"$CALLS_DIR/order") == $'oci\npackages\nskopeo\nprompt:1\npackages' ]]
+    assert_call_args "$CALLS_DIR/gh.args" auth refresh -s read:packages
+}
+
+@test "GHCR-018 terminal direct fallback result does not prompt for scope refresh" {
+    load_ghcr
+    write_static_stub gh '' 0
+    function oci_digest_for_tag_anonymously { return "$LOOKUP_DENIED"; }
+    function ghcr_package_version_by_tag { return "$LOOKUP_NOT_FOUND"; }
+    function skopeo_is_available { return 0; }
+    function skopeo_digest_for_tag_with_access_policy { return "$LOOKUP_NOT_FOUND"; }
+    function choose_ghcr_direct_authentication { : >"$CALLS_DIR/prompt"; }
+
+    run ghcr_digest_for_tag owner/app absent
+    assert_status "$LOOKUP_NOT_FOUND"
+    refute_file_exists "$CALLS_DIR/prompt"
+}

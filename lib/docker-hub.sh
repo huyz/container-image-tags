@@ -103,7 +103,7 @@ function docker_hub_resolve_tag {
     local tag="$2"
     local display_reference="$3"
 
-    local lookup_status token
+    local lookup_status auth_trigger_status token
 
     if [[ "${opt_credential_policy:-if-faster}" == require ]]; then
         if token=$(docker_hub_token_from_environment); then
@@ -122,10 +122,27 @@ function docker_hub_resolve_tag {
     case "$remote_tag_status" in
     "$LOOKUP_NOT_FOUND" | "$LOOKUP_STOPPED") return ;;
     esac
+    auth_trigger_status=$remote_tag_status
     if skopeo_is_available; then
         if remote_tag_digest=$(skopeo_digest_for_tag_with_access_policy \
                 docker.io "$display_reference" '' "$remote_tag_status"); then
             notice "Resolved Docker Hub tag with the Skopeo fallback"
+            remote_tag_status=$LOOKUP_SUCCEEDED
+        else
+            remote_tag_status=$?
+        fi
+    fi
+
+    # Configured credentials are automatic. If a private repository still
+    # cannot be reached, let an interactive caller supply the same PAT used by
+    # the fast reverse-lookup recovery path and retry this exact tag once.
+    if (( auth_trigger_status == LOOKUP_DENIED )) &&
+            (( remote_tag_status != LOOKUP_NOT_FOUND &&
+                remote_tag_status != LOOKUP_STOPPED )) &&
+            credential_policy_allows_credentials &&
+            choose_docker_hub_direct_authentication "$display_reference"; then
+        if remote_tag_digest=$(docker_hub_digest_for_tag \
+                "$hub_repository" "$tag"); then
             remote_tag_status=$LOOKUP_SUCCEEDED
         else
             remote_tag_status=$?
@@ -237,6 +254,38 @@ function docker_hub_authentication_action {
     s | S) printf 'skip\n' ;;
     *) return 1 ;;
     esac
+}
+
+# Recover a denied direct tag lookup by collecting a Hub PAT from the
+# controlling terminal. Return success only after exchanging the credentials
+# for an in-session API token; declining leaves the original denial intact.
+function choose_docker_hub_direct_authentication {
+    local display_reference="$1"
+    local user_choice action token auth_status
+
+    if ! is_interactive_session; then
+        return 1
+    fi
+    echo "$SCRIPT_NAME: Docker Hub denied access to '$display_reference'." >&2
+    echo "  [a] Authenticate with a Docker Hub username and PAT" >&2
+    echo "  [s] Stop without authenticating" >&2
+    while true; do
+        printf 'Choose [a/s]: ' >&2
+        IFS= read -r user_choice </dev/tty || return 1
+        action=$(docker_hub_authentication_action "$user_choice" '') || continue
+        case "$action" in
+        authenticate)
+            if token=$(docker_hub_token_interactively); then
+                docker_hub_token=$token
+                return
+            else
+                auth_status=$?
+            fi
+            (( auth_status == DOCKER_HUB_TOKEN_UNAVAILABLE )) && return 1
+            ;;
+        skip) return 1 ;;
+        esac
+    done
 }
 
 # Explain why anonymous pagination stopped and offer the fast API retry, the

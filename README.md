@@ -54,20 +54,18 @@ Optional:
   `aws` (Elastic Container Registry) can provide optional authenticated fast
   paths or short-lived credentials.
 
-### Docker Hub authentication
-
-Docker Hub scans start anonymously. When Hub refuses anonymous tag pagination,
-set environment variables `DOCKER_HUB_USERNAME` and `DOCKER_HUB_PAT` (a Public Repo Read-only PAT is
-sufficient) to retry its fast paginated tags API without a prompt. These
-variables take precedence over the slower Skopeo fallback, including in
-non-interactive runs. Interactive runs without them offer both choices when
-Docker/Skopeo registry credentials are configured.
-
 On macOS and Linux, Homebrew users can install all with:
 
 ```sh
 brew install bash coreutils gnu-getopt curl jq docker skopeo gh gcloud-cli azure-cli awscli
 ```
+
+### Docker Hub authentication
+
+Docker Hub scans start anonymously. If Hub refuses further anonymous tag pagination (around 10
+successive requests), you will be prompted for a Hub username and PAT before a retry. To avoid the
+prompt and avoid the slower Skopeo fallback, set the environment variables `DOCKER_HUB_USERNAME` and
+`DOCKER_HUB_PAT` (a Public Repo Read-only PAT is sufficient) before running this app.
 
 ## Installation
 
