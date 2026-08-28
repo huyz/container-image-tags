@@ -112,6 +112,7 @@ function render_scan_human {
 function result_to_json {
     local -n result_ref="$1"
 
+    # shellcheck disable=SC2016  # jq filter uses literal jq variables
     "$JQ" -cn \
         --arg input "${result_ref[input]}" \
         --arg container "${result_ref[container]}" \

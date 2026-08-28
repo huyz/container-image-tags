@@ -142,6 +142,7 @@ function acr_digest_from_tag_metadata {
     local tag="$2"
     local digest
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     digest=$(
         "$JQ" -r --arg tag "$tag" '
             if .tag? then

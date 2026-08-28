@@ -26,7 +26,7 @@ static)
     "$bash_bin" -n container-image-tags lib/*.sh tests/run tests/helpers/*.bash tests/test-helper.bash
     # STATIC-003 checks both the integrated executable and every standalone
     # shell module/helper so context-sensitive findings cannot be hidden.
-    shellcheck -x container-image-tags tests/run lib/*.sh \
+    shellcheck --norc -x container-image-tags tests/run lib/*.sh \
         tests/helpers/*.bash tests/test-helper.bash
     # STATIC-004 intentionally gates trailing whitespace, not repository-wide formatting.
     if rg -n '[[:blank:]]+$' --glob '*.sh' --glob '*.bash' --glob '*.bats' \

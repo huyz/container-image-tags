@@ -76,6 +76,7 @@ function registry_json_error_message {
     local response_file="$1"
     local maximum_length="${2:-512}"
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     "$JQ" -r --argjson maximum_length "$maximum_length" '
         (.errors[0].message // .message // .detail // .error // empty)
         | if type == "string" then gsub("[\\r\\n]+"; " ") else tostring end

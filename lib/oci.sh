@@ -275,6 +275,7 @@ function oci_digest_for_tag_with_headers {
     local request_headers="$4"
     local tag_encoded manifest_digest response_headers http_code lookup_status
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
     response_headers=$(runtime_temp_file oci-response-headers)
     if ! http_code=$(registry_http_request HEAD \
@@ -325,6 +326,7 @@ function oci_tags_by_digest_with_curl_parallel {
     printf 'parallel\nparallel-max = %d\n' "$parallel_jobs" >"$config_tmp"
     for (( tag_index = 0; tag_index < ${#parallel_candidate_tags[@]}; ++tag_index )); do
         tag=${parallel_candidate_tags[$tag_index]}
+        # shellcheck disable=SC2016  # jq filter uses a literal jq variable
         tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
         header_file="$result_dir/$tag_index.headers"
         (( tag_index == 0 )) || printf 'next\n' >>"$config_tmp"
@@ -428,6 +430,7 @@ function oci_digest_for_tag {
     response_headers=$(runtime_temp_file oci-response-headers)
     token="$initial_token"
     oci_write_request_headers "$request_headers" "$token"
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     tag_encoded=$("$JQ" -rn --arg value "$tag" '$value | @uri')
     while true; do
         : >"$response_headers"

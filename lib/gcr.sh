@@ -78,6 +78,7 @@ function gcr_digest_for_tag_from_metadata {
 
     metadata=$("$metadata_function" \
         "$registry" "$repository" "$bearer_token") || return $?
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     digests=$(
         "$JQ" -r --arg tag "$tag" '
             .manifest
@@ -116,6 +117,7 @@ function gcr_tags_by_digest_from_metadata {
 
     metadata=$("$metadata_function" \
         "$registry" "$repository" "$bearer_token") || return $?
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_tags=$("$JQ" -r --arg digest "$digest" \
         '.manifest[$digest].tag[]?' <<<"$metadata")
     observed_tags=$("$JQ" -r '.manifest[].tag[]?' <<<"$metadata")

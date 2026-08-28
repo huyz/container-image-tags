@@ -98,9 +98,13 @@ function gar_docker_image_metadata {
     project="${resource_parts[1]}"
     repository="${resource_parts[2]}"
     image="${resource_parts[3]}@$digest"
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     location_encoded=$("$JQ" -rn --arg value "$location" '$value | @uri')
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     project_encoded=$("$JQ" -rn --arg value "$project" '$value | @uri')
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     repository_encoded=$("$JQ" -rn --arg value "$repository" '$value | @uri')
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     image_encoded=$("$JQ" -rn --arg value "$image" '$value | @uri')
 
     request_headers=$(runtime_temp_file gar-api-headers)
@@ -119,6 +123,7 @@ function gar_docker_image_metadata {
     case "$http_code" in
     200)
         expected_uri="$display_repository@$digest"
+        # shellcheck disable=SC2016  # jq filter uses a literal jq variable
         if ! "$JQ" -e --arg expected_uri "$expected_uri" '
                 .uri == $expected_uri and
                 ((.tags // []) | type == "array") and
@@ -164,12 +169,14 @@ function gar_tags_by_digest_api {
     metadata=$(gar_docker_image_metadata \
         "$registry" "$display_repository" "$digest" "$token") || return $?
     tag_prefix="$display_repository:"
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     if ! "$JQ" -e --arg prefix "$tag_prefix" '
             all((.tags // [])[]; startswith($prefix))
         ' >/dev/null <<<"$metadata"; then
         debug "GAR DockerImage metadata returned a tag outside $display_repository"
         return "$LOOKUP_UNAVAILABLE"
     fi
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_tags=$("$JQ" -r --arg prefix "$tag_prefix" '
         [(.tags // [])[] | .[($prefix | length):]]
         | reduce .[] as $tag ([]; if index($tag) then . else . + [$tag] end)

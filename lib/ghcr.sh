@@ -213,6 +213,7 @@ function ghcr_probe_package_version_by_digest {
     [[ "$ghcr_repository" == */* && -n "$owner" && -n "$package_name" ]] ||
         return "$LOOKUP_UNAVAILABLE"
     command -v "${GH:=gh}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     package_encoded=$("$JQ" -rn --arg value "$package_name" '$value | @uri')
 
     for owner_kind in orgs users; do

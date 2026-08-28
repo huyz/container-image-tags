@@ -44,6 +44,7 @@ function docker_hub_digest_for_tag {
     local tag_encoded response_tmp request_headers='' http_code manifest_digest
     local -a request_args
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     tag_encoded=$($JQ -rn --arg value "$tag" '$value | @uri')
     response_tmp=$(runtime_temp_file docker-hub-response)
     request_args=()
@@ -368,6 +369,7 @@ function docker_hub_tags_by_digest {
                 registry_tags="$registry_direct_tag"
             fi
         fi
+        # shellcheck disable=SC2016  # jq filter uses a literal jq variable
         matching_tags=$($JQ -r --arg digest "$digest" '
             .results[]
             | select(((.digest // "") | ltrimstr("sha256:")) == $digest)

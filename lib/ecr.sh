@@ -113,6 +113,7 @@ function ecr_public_registry_id_for_alias {
         debug "ECR Public DescribeRegistries returned an invalid response"
         return "$LOOKUP_UNAVAILABLE"
     fi
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     registry_ids=$(
         "$JQ" -r --arg alias "$alias" '
             [
@@ -181,6 +182,7 @@ function ecr_digest_for_tag_api {
 
     response=$(ecr_private_image_details \
         "$registry" "$repository" "imageTag=$tag") || return $?
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     digests=$(
         "$JQ" -r --arg tag "$tag" '
             .imageDetails[]
@@ -204,6 +206,7 @@ function ecr_tags_by_digest_api {
 
     response=$(ecr_private_image_details \
         "$registry" "$repository" "imageDigest=$digest") || return $?
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_images=$(
         "$JQ" -r --arg digest "$digest" '
             [.imageDetails[] | select(.imageDigest == $digest)] | length
@@ -218,6 +221,7 @@ function ecr_tags_by_digest_api {
         ;;
     esac
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_tags=$("$JQ" -r \
         --arg digest "$digest" '
             [
@@ -238,6 +242,7 @@ function ecr_public_tags_by_digest_api {
 
     response=$(ecr_public_image_details \
         "$repository_path" "imageDigest=$digest") || return $?
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_images=$(
         "$JQ" -r --arg digest "$digest" '
             [.imageDetails[] | select(.imageDigest == $digest)] | length
@@ -252,6 +257,7 @@ function ecr_public_tags_by_digest_api {
         ;;
     esac
 
+    # shellcheck disable=SC2016  # jq filter uses a literal jq variable
     matching_tags=$("$JQ" -r \
         --arg digest "$digest" '
             [
