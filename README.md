@@ -34,14 +34,16 @@ Please report any issues.
 
 ## Requirements
 
+Generally, this script supports macOS and Linux, maybe other systems if you
+can install the more common GNU tools.
+
 The required tools are:
 
 - Bash 4.4 or newer
-- GNU `realpath` (coreutils)
-- GNU `getopt`
-- `curl`
+- GNU `realpath` (coreutils), `timeout`, `getopt`
+- `curl` 7.66.0 or later
 - `jq`
-- Perl 5 (for portable command deadlines and registry response parsing)
+- Perl 5
 
 Recommended:
 - Docker CLI (for `auto` and `local` tag resolution) is required unless you

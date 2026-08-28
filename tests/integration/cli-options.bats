@@ -243,7 +243,7 @@ EOF
 
     run_cli --tag-scan=never "registry.example/team/app@sha256:$DIGEST"
     assert_status 1
-    assert_stderr_contains 'docker` to install'
+    assert_stderr_contains 'missing package'
 }
 
 @test "CLI-013 remote resolution does not require Docker" {
@@ -262,7 +262,7 @@ EOF
 
     run_cli --help
     assert_status 1
-    assert_stderr_contains 'curl` to install'
+    assert_stderr_contains 'missing package'
 }
 
 @test "CLI-015 Bash older than 4.4 is rejected before dependency checks" {

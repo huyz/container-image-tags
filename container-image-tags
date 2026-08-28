@@ -65,22 +65,24 @@ PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
 
 if [[ $OSTYPE == darwin* ]]; then
     HOMEBREW_PREFIX=$( (/opt/homebrew/bin/brew --prefix || /usr/local/bin/brew --prefix || brew --prefix) 2>/dev/null )
-    _install_cmd="brew install"
+    _install_hint="Install the missing package and retry: brew install"
     [[ -x "${GETOPT:="$HOMEBREW_PREFIX/opt/gnu-getopt/bin/getopt"}" ]] || \
-        { echo "$0: ERROR: \`$_install_cmd gnu-getopt\` to install $GETOPT." >&2; exit 1; }
+        { echo "$0: ERROR: $_install_hint gnu-getopt, to install $GETOPT." >&2; exit 1; }
     [[ -x "${REALPATH:="$HOMEBREW_PREFIX/bin/grealpath"}" ]] || \
-        { echo "$0: ERROR: \`$_install_cmd coreutils\` to install $REALPATH." >&2; exit 1; }
-    TIMEOUT=${TIMEOUT:=gtimeout}  # Also part of coreutils
+        { echo "$0: ERROR: $_install_hint coreutils, to install $REALPATH." >&2; exit 1; }
+    TIMEOUT=${TIMEOUT:=gtimeout}  # Also part of coreutils, already checked above
 else
-    _install_cmd="sudo apt install"
+    _install_hint="Install the missing package "
     GETOPT=${GETOPT:-getopt}
     REALPATH=${REALPATH:-realpath}
     TIMEOUT=${TIMEOUT:=timeout}
 fi
+command -v "${PERL:=perl}" &>/dev/null ||
+    { echo "$0: ERROR: $_install_hint perl to install $PERL." >&2; exit 1; }
 command -v "${CURL:=curl}" &>/dev/null ||
-    { echo "$0: ERROR: \`$_install_cmd curl\` to install $CURL." >&2; exit 1; }
+    { echo "$0: ERROR: $_install_hint curl to install $CURL." >&2; exit 1; }
 command -v "${JQ:=jq}" &>/dev/null || \
-    { echo "$0: ERROR: \`$_install_cmd jq\` to install $JQ." >&2; exit 1; }
+    { echo "$0: ERROR: $_install_hint jq to install $JQ." >&2; exit 1; }
 DOCKER=${DOCKER:-docker}
 
 SOURCE_SCRIPT=$("$REALPATH" "${BASH_SOURCE[0]}")
@@ -267,7 +269,7 @@ auto | local | remote) ;;
 esac
 
 if [[ "$opt_tag_resolution" != remote ]] && ! command -v "$DOCKER" &>/dev/null; then
-    echo "$0: ERROR: \`$_install_cmd docker\` to install $DOCKER." >&2
+    echo "$0: ERROR: $_install_hint docker." >&2
     exit 1
 fi
 
