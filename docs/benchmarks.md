@@ -6,13 +6,13 @@ On 2026-08-27, the two exhaustive OCI scan implementations were compared
 against Codeberg's public Forgejo repository:
 
 - Repository: `codeberg.org/forgejo/forgejo`
-- Baseline: `11.0.16`
+- Selected tag: `11.0.16`
 - Immutable digest: `sha256:946243edbab116d5bb78b73ea68af6f3d69229ba1b1ed958dd82c3481167f3e0`
 - Scan: `--tag-resolution=remote --tag-scan=all --json`
 - Two timed runs per implementation
 - Skopeo fallback disabled so both measurements exercised the OCI path
 
-The baseline digest was held constant for every run. Both implementations
+The resolved repository digest was held constant for every run. Both implementations
 completed through the `oci-registry-api` backend and returned the same matching
 tags: `11`, `11.0`, and `11.0.16`.
 

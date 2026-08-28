@@ -1,14 +1,14 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2154,SC2178  # associative nameref keys and pipeline-owned fields
 
-# Canonical per-baseline result records and their human/JSON renderers. The
+# Canonical per-subject result records and their human/JSON renderers. The
 # processing pipeline owns the record; renderers never consult lookup globals.
 
 function result_init {
     local -n result_ref="$1"
 
     result_ref=()
-    result_ref[baseline_source]=local
+    result_ref[subject_source]=local
     result_ref[remote_check_status]=
     result_ref[remote_check_reference]=
     result_ref[remote_check_digest]=
@@ -19,7 +19,7 @@ function result_init {
     result_ref[tags]=
 }
 
-function result_capture_baseline {
+function result_capture_subject {
     local -n result_ref="$1"
 
     result_ref[input]="$input"
@@ -31,7 +31,7 @@ function result_capture_baseline {
     result_ref[local_tag]="$local_tag"
     result_ref[repository]="$repo"
     result_ref[digest]="sha256:$repo_sha"
-    result_ref[baseline_source]="${baseline_source:-local}"
+    result_ref[subject_source]="${subject_source:-local}"
     result_ref[registry_kind]="$registry_kind"
     result_ref[registry_host]="$registry_host"
 }
@@ -129,7 +129,7 @@ function result_to_json {
         --arg local_tag "${result_ref[local_tag]}" \
         --arg repository "${result_ref[repository]}" \
         --arg digest "${result_ref[digest]}" \
-        --arg baseline_source "${result_ref[baseline_source]}" \
+        --arg subject_source "${result_ref[subject_source]}" \
         --arg registry_kind "${result_ref[registry_kind]}" \
         --arg registry_host "${result_ref[registry_host]}" \
         --arg remote_check_status "${result_ref[remote_check_status]}" \
@@ -157,7 +157,7 @@ function result_to_json {
                 ),
                 repository: $repository,
                 digest: $digest,
-                baseline_source: $baseline_source,
+                subject_source: $subject_source,
                 registry: {kind: $registry_kind, host: $registry_host},
                 remote_tag_check: {
                     status: $remote_check_status,

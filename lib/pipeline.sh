@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034,SC2154,SC2178  # pipeline stages exchange documented state
 
 # CLI orchestration pipeline:
-#   input syntax -> one or more baselines -> remote check -> tag scan -> render
+#   input syntax -> one or more subjects -> remote check -> tag scan -> render
 # Provider modules own registry policy; this file owns user-visible sequencing.
 
 function require_supported_digest_algorithm {
@@ -29,13 +29,13 @@ function reset_input_resolution {
     wildcard_image_ids=
     wildcard_reference=
     wildcard_repository=
-    baseline_source=
+    subject_source=
 }
 
-# Resolve one registry tag as the baseline without consulting Docker. The
+# Resolve one registry tag to its subject digest without consulting Docker. The
 # caller supplies the notice so automatic fallback and explicit remote mode
 # can explain their different intent before network work starts.
-function resolve_remote_tag_baseline {
+function resolve_remote_tag_subject {
     local repository="$1"
     local tag="$2"
     local resolution_notice="$3"
@@ -61,16 +61,16 @@ function resolve_remote_tag_baseline {
         abort "Registry returned an invalid digest for '$remote_reference': '$remote_tag_digest'"
     repo_digest="$repository@$remote_tag_digest"
     local_tag="$remote_reference"
-    baseline_source=remote
+    subject_source=remote
 }
 
-function resolve_untagged_repository_baseline {
+function resolve_untagged_repository_subject {
     local input_reference="$1"
     local repository="$2"
     local wildcard_count=0 wildcard_image_id
 
     if [[ "$opt_tag_resolution" == remote ]]; then
-        resolve_remote_tag_baseline "$repository" latest \
+        resolve_remote_tag_subject "$repository" latest \
             "Resolving '$repository:latest' through the registry and ignoring local Docker state."
     elif inspect_local_image "$input_reference" "$repository" "$repository:latest"; then
         notice "Resolved '$input_reference' as an image using its implicit ':latest' tag; not scanning other local tags."
@@ -82,14 +82,14 @@ function resolve_untagged_repository_baseline {
         done <<<"$wildcard_image_ids"
         notice "No local '$repository:latest' image was found; interpreting '$input_reference' as '$repository:*' and checking $wildcard_count distinct local image(s)."
     elif [[ "$opt_tag_resolution" == auto ]]; then
-        resolve_remote_tag_baseline "$repository" latest \
+        resolve_remote_tag_subject "$repository" latest \
             "No local image in repository '$repository' was found; falling back to remote tag resolution for '$repository:latest'."
     else
         abort "Cannot resolve '$input_reference' to a local image"
     fi
 }
 
-function resolve_input_baselines {
+function resolve_input_subjects {
     local input_reference="$1"
     local preferred_repository final_component resolved_image_id registry_sha
     local matching_repo_digests wildcard_count=0 wildcard_image_id
@@ -100,7 +100,7 @@ function resolve_input_baselines {
         require_supported_digest_algorithm "$input"
         if [[ "$input" =~ ^.+@sha256:[0-9a-f]{64}$ ]]; then
             repo_digest="$input"
-            baseline_source=input
+            subject_source=input
             notice "Interpreting '$input' as a complete registry digest reference."
         else
             abort "'$input' looks like a registry digest reference, but expected repository@sha256:<64 lowercase hex characters>"
@@ -148,18 +148,18 @@ function resolve_input_baselines {
             notice "Explicit wildcard '$input' requested; immediately checking $wildcard_count distinct local image(s)."
         elif [[ "$final_component" == *:* ]]; then
             if [[ "$opt_tag_resolution" == remote ]]; then
-                resolve_remote_tag_baseline "$preferred_repository" "${final_component##*:}" \
+                resolve_remote_tag_subject "$preferred_repository" "${final_component##*:}" \
                     "Resolving '$input' through the registry and ignoring local Docker state."
             elif inspect_local_image "$input" "$preferred_repository" "$input"; then
                 notice "Interpreting '$input' as a tagged local image reference."
             elif [[ "$opt_tag_resolution" == auto ]]; then
-                resolve_remote_tag_baseline "$preferred_repository" "${final_component##*:}" \
+                resolve_remote_tag_subject "$preferred_repository" "${final_component##*:}" \
                     "No local image '$input' was found; falling back to remote tag resolution."
             else
                 abort "Cannot inspect local image '$input'"
             fi
         else
-            resolve_untagged_repository_baseline "$input" "$preferred_repository"
+            resolve_untagged_repository_subject "$input" "$preferred_repository"
         fi
     elif [[ "$opt_tag_resolution" != remote ]] && resolved_image_id=$(
         "$DOCKER" container inspect "$input" --format '{{.Image}}' 2>/dev/null
@@ -169,17 +169,17 @@ function resolve_input_baselines {
             abort "Container '$container' refers to image '$resolved_image_id', but that image cannot be inspected"
         notice "Resolved '$input' as a local container name (image $image_id)."
     else
-        resolve_untagged_repository_baseline "$input" "$input"
+        resolve_untagged_repository_subject "$input" "$input"
     fi
 }
 
-function check_baseline_remote_tag {
+function check_subject_remote_tag {
     local result_name="$1"
     local -n result_ref="$result_name"
     local remote_tag_reference
     local -A direct_lookup=()
 
-    if [[ "${result_ref[baseline_source]}" == remote ]]; then
+    if [[ "${result_ref[subject_source]}" == remote ]]; then
         result_ref[remote_check_status]=resolved
         result_ref[remote_check_reference]="${result_ref[repository]}:${result_ref[local_tag]}"
         result_ref[remote_check_digest]="${result_ref[digest]}"
@@ -211,7 +211,7 @@ function check_baseline_remote_tag {
     fi
 }
 
-function process_resolved_baseline {
+function process_resolved_subject {
     local result_name="$1"
     local -n result_ref="$result_name"
     local tag_scan_mode
@@ -230,9 +230,9 @@ function process_resolved_baseline {
     registry_classify "$repo"
 
     result_init "$result_name"
-    result_capture_baseline "$result_name"
+    result_capture_subject "$result_name"
     [[ -n "$opt_json" ]] || render_result_header_human "$result_name"
-    check_baseline_remote_tag "$result_name"
+    check_subject_remote_tag "$result_name"
     [[ -n "$opt_json" ]] || render_remote_check_human "$result_name"
 
     tag_scan_mode="$opt_tag_scan"
@@ -288,7 +288,7 @@ function process_input {
     if [[ -z "$opt_json" ]] && (( input_position > 1 )); then
         print_result_separator
     fi
-    resolve_input_baselines "$input_reference"
+    resolve_input_subjects "$input_reference"
     readarray -t images_to_process <<<"${wildcard_image_ids:-__current_resolution__}"
     for image_to_process in "${images_to_process[@]}"; do
         skip_input=
@@ -322,6 +322,6 @@ function process_input {
             ((++wildcard_output_index))
             notice "Resolved '$wildcard_reference' to local image $image_id."
         fi
-        process_resolved_baseline result
+        process_resolved_subject result
     done
 }

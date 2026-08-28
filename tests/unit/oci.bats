@@ -300,7 +300,7 @@ EOF
     refute_file_exists "$CALLS_DIR/pool"
 }
 
-@test "OCI-017 any-durable retains a confirmed baseline and schedules until durable" {
+@test "OCI-017 any-durable retains a directly confirmed tag and schedules until durable" {
     load_oci
     registry_tag_scan=any-durable; registry_direct_tag=latest; registry_direct_tag_confirmed=1
     function oci_list_tags_anonymously { oci_listed_tags=$'latest\n1.2\n1.2.0\n1.3\n1.3.0'; oci_bearer_token=; }

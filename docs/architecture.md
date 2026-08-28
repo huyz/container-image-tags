@@ -10,15 +10,15 @@ different correctness constraints.
 
 Each positional argument passes through these stages:
 
-1. `resolve_input_baselines` classifies the syntax and resolves a container,
+1. `resolve_input_subjects` classifies the syntax and resolves a container,
    local image, remote tag, complete digest, or local repository wildcard
-   to the relevant manifest digest(s).
-2. A wildcard may expand into several local image baselines. Duplicate
+   to the relevant repository digest(s).
+2. A wildcard may expand into several locally resolved repository digests. Duplicate
    repository digests are removed before registry query.
-3. `process_resolved_baseline` normalizes the repository and digest and creates
+3. `process_resolved_subject` normalizes the repository and digest and creates
    one associative result record.
-4. `check_baseline_remote_tag` verifies a known tag or records the remote tag
-   resolution that established the baseline.
+4. `check_subject_remote_tag` verifies a known tag or records the remote tag
+   resolution that established the resolved repository digest.
 5. The selected provider adapter performs the reverse-lookup scan, including its
    complete authentication and fallback policy.
 6. The provider lookup context is copied into the canonical result record.
@@ -33,7 +33,7 @@ in `lib/results.sh`.
 The canonical result is an associative array with four groups of fields:
 
 - input and local-image identity;
-- normalized repository, digest, and baseline source;
+- normalized repository, digest, and subject source;
 - registry classification and direct-tag check;
 - scan mode, status, backend, provider metadata, and ordered tags.
 
@@ -66,7 +66,7 @@ slow, or an anonymous path as necessarily fast.
 
 | Axis            | Question                                                | Current control                                        |
 | --------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| Baseline source | Is the comparison digest local or resolved remotely?    | `--tag-resolution`                                     |
+| Subject source  | Was the repository digest resolved locally or remotely? | `--tag-resolution`                                     |
 | Scan breadth    | Is reverse lookup skipped, bounded, or exhaustive?      | `--tag-scan`                                           |
 | Credential use  | May a lookup identify the caller, and when?             | `--credential-policy`                                  |
 | Backend         | Which provider, OCI, or Skopeo API performs the lookup? | Selected automatically                                 |
@@ -212,12 +212,12 @@ selection should stay automatic within those constraints because "fast" and
 
 ## Bounded scan contracts
 
-`any` stops at the first matching tag in provider order. A baseline tag whose
+`any` stops at the first matching tag in provider order. A directly confirmed tag whose
 direct check matched satisfies the scan immediately, even when it is floating.
 
 `any-durable` means the first matching tag heuristically classified as durable.
 All matching floating tags encountered before that
-durable tag are retained. A baseline tag whose direct check matched is seeded
+durable tag are retained. A directly confirmed tag whose direct check matched is seeded
 as the first result—including a local tag—and is not probed again. If that tag
 is floating, scanning continues; if it is durable under the observed repository
 convention, it satisfies the scan immediately.

@@ -12,7 +12,7 @@ deterministic, offline-first, and safe to run without Docker, cloud accounts, or
 registry credentials. Optional live tests supplement the offline suite; they do
 not replace it and must not gate ordinary pull requests.
 
-## Authority and baseline
+## Authority and resolved repository digest
 
 Before implementing a phase:
 
@@ -349,7 +349,7 @@ Implement unit cases in `tests/unit/local-images.bats` and end-to-end cases in
 
 | ID | Priority | Case | Expected result |
 | --- | --- | --- | --- |
-| INPUT-001 | P0 | Complete `repository@sha256:<64 lowercase hex>` | Accepted without Docker; baseline source `input` |
+| INPUT-001 | P0 | Complete `repository@sha256:<64 lowercase hex>` | Accepted without Docker; subject source `input` |
 | INPUT-002 | P0 | Unsupported digest algorithm | Explicit rejection before registry work |
 | INPUT-003 | P0 | Short, uppercase, or malformed repository digest | Exact grammar rejection |
 | INPUT-004 | P0 | SHA-like value matches a container | Container wins; referenced image is inspected |
@@ -358,10 +358,10 @@ Implement unit cases in `tests/unit/local-images.bats` and end-to-end cases in
 | INPUT-007 | P1 | Digest maps to multiple repositories | Deterministic first result plus warning |
 | INPUT-008 | P0 | Short SHA cannot be recovered | Requires complete digest/reference; no prefix lookup |
 | INPUT-009 | P0 | SHA-like input in remote mode | Rejected without registry repository |
-| INPUT-010 | P0 | Explicit tagged input in `local` mode | Local image required; no remote baseline fallback |
-| INPUT-011 | P0 | Explicit tagged input in `auto` mode, local hit | Local baseline; no remote resolution |
-| INPUT-012 | P0 | Explicit tagged input in `auto` mode, local miss | Notice precedes remote work; remote baseline used |
-| INPUT-013 | P0 | Explicit tagged input in `remote` mode | Docker ignored; remote baseline used |
+| INPUT-010 | P0 | Explicit tagged input in `local` mode | Local image required; no remote resolution fallback |
+| INPUT-011 | P0 | Explicit tagged input in `auto` mode, local hit | Locally resolved repository digest; no remote resolution |
+| INPUT-012 | P0 | Explicit tagged input in `auto` mode, local miss | Notice precedes remote work; remotely resolved repository digest used |
+| INPUT-013 | P0 | Explicit tagged input in `remote` mode | Docker ignored; remotely resolved repository digest used |
 | INPUT-014 | P0 | Untagged repository with local `:latest` | `:latest` wins; no wildcard broadening |
 | INPUT-015 | P0 | Untagged repository without `:latest` but with local tags | Expands to local `repository:*` |
 | INPUT-016 | P0 | Untagged repository with no local match in `auto` | Falls back to remote `:latest` |
@@ -698,9 +698,9 @@ Human output tests should use focused exact sections rather than snapshotting
 all prose:
 
 - `OUTPUT-001` P0: interpretation notice appears before registry work.
-- `OUTPUT-002` P0: local baseline reports image/container fields and direct tag
+- `OUTPUT-002` P0: locally resolved repository digest reports image/container fields and direct tag
   match, mismatch, not-found, or unavailable state correctly.
-- `OUTPUT-003` P0: remote baseline reports resolution without repeating a local
+- `OUTPUT-003` P0: remotely resolved repository digest reports resolution without repeating a local
   check.
 - `OUTPUT-004` P0: bounded and `all` headings are distinct.
 - `OUTPUT-005` P1: no-match output is explicit.
@@ -713,7 +713,7 @@ JSON tests must parse stdout with jq and assert fields semantically:
 
 - `JSON-001` P0: stdout is one valid array and stderr remains separate.
 - `JSON-002` P0: one object per resolved image in input/expansion order.
-- `JSON-003` P0: local and remote baseline fields have correct nullability.
+- `JSON-003` P0: local and remote subject fields have correct nullability.
 - `JSON-004` P0: direct check statuses cover resolved, match, mismatch,
   not-found, and unavailable.
 - `JSON-005` P0: scan statuses cover completed, not-found, not-requested,

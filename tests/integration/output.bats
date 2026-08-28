@@ -89,7 +89,7 @@ function run_cli {
     assert_output_contains 'Repository:      registry.example/app'
 }
 
-@test "OUTPUT-002 local baseline prints metadata and exact direct-tag states" {
+@test "OUTPUT-002 locally resolved repository digest prints metadata and exact direct-tag states" {
     install_local_output_fixtures
 
     run_cli --tag-resolution=local --tag-scan=never registry.example/app:stable
@@ -110,7 +110,7 @@ function run_cli {
     assert_output_contains 'Remote tag check: ❌ NOT FOUND'
 }
 
-@test "OUTPUT-003 remote baseline prints resolution without a local check" {
+@test "OUTPUT-003 remotely resolved repository digest prints resolution without a local check" {
     install_local_output_fixtures
 
     run_cli --tag-resolution=remote --tag-scan=never registry.example/app:stable
@@ -247,14 +247,14 @@ EOF
     assert_json '.[0].repository == "registry.example/a" and .[1].repository == "registry.example/b"'
 }
 
-@test "JSON-003 complete digest input has null local fields and input baseline" {
+@test "JSON-003 complete digest input has null local fields and input subject" {
     install_required_tools
 
     run_cli --json --tag-resolution=remote --tag-scan=never \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
     assert_json '.[0].local_image == null and .[0].container == null'
-    assert_json '.[0].baseline_source == "input"'
+    assert_json '.[0].subject_source == "input"'
 }
 
 @test "JSON-004 direct check statuses cover resolved match mismatch not-found and unavailable" {

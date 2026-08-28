@@ -190,8 +190,8 @@ function matching_tags_through_first_durable {
 }
 
 # Apply the public scan-mode contract to one complete provider tag set. In
-# "any" mode returns the first match, including a confirmed baseline tag.
-# "any-durable" retains a confirmed baseline tag and floating matches in
+# "any" mode returns the first match, including a directly confirmed tag.
+# "any-durable" retains a directly confirmed tag and floating matches in
 # provider order through the first durable match. "all" returns every match.
 function select_matching_tags_for_scan {
     local matching_tags="$1"

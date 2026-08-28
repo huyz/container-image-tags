@@ -1,9 +1,9 @@
 # container-image-tags
 
-`container-image-tags` resolves a local image or remote tag to a baseline
-registry digest. For local images, it checks the registry whether the known tag
+`container-image-tags` resolves a local image or remote tag to a resolved
+repository digest. For local images, it checks the registry whether the known tag
 still points to that digest. It can then find other current registry tags
-that point to the baseline digest.
+that point to that digest.
 
 Arguments can be local Docker container names or IDs, local image names or IDs,
 or fully qualified `repository@sha256:...` digests.
@@ -116,9 +116,9 @@ container-image-tags --json --tag-scan=any postgres redis:7
 
 Tag resolution defaults to `auto`: use a matching local image when present, or
 announce a fallback and resolve the tag through the registry. Use
-`--tag-resolution local` to require a local baseline, or `--tag-resolution
+`--tag-resolution local` to require local resolution, or `--tag-resolution
 remote` to ignore Docker's local state. Remote registry queries used to compare
-or find tags are still available with a local baseline.
+or find tags are still available after local resolution.
 
 Use `--tag-scan ask|never|any|any-durable|all` to control reverse tag lookup. Use
 `--credential-policy never|if-required|if-faster|require` to control when user
@@ -143,7 +143,7 @@ registry guarantee. `all` remains exhaustive and returns every matching tag.
 
 While searching, `any-durable` retains every matching tag encountered in candidate
 order, including floating tags, and stops after the first durable match. A
-confirmed floating baseline tag is included without probing it again. Thus a
+confirmed floating tag is included without probing it again. Thus a
 result may contain `latest`, `1.796`, and `1.796.0`; the final tag is the durable
 match that satisfied the scan.
 
@@ -178,7 +178,7 @@ object per resolved image; wildcard inputs may therefore add multiple objects.
 Diagnostics continue to use standard error. JSON mode defaults to
 `--tag-scan=any-durable` even on an interactive terminal, while an explicit
 `--tag-scan` value takes precedence. Each result includes the original input,
-baseline source, local image and container details, repository digest, registry
+subject source, local image and container details, repository digest, registry
 classification, direct remote-tag check, and reverse-scan status and tags.
 
 For example, the standard output from
@@ -196,7 +196,7 @@ For example, the standard output from
     },
     "repository": "postgres",
     "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-    "baseline_source": "local",
+    "subject_source": "local",
     "registry": {
       "kind": "docker-hub",
       "host": "docker.io"

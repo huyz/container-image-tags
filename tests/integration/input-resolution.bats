@@ -162,13 +162,13 @@ function run_cli {
     refute_file_exists "$CALLS_DIR/curl.args"
 }
 
-@test "INPUT-012 auto tagged local miss announces and uses the remote baseline" {
+@test "INPUT-012 auto tagged local miss announces and uses the remotely resolved repository digest" {
     install_resolution_stubs
 
     run_cli --json --tag-scan=never registry.example/app:stable
     assert_status 0
     assert_stderr_contains "No local image 'registry.example/app:stable' was found"
-    assert_json '.[0].baseline_source == "remote" and .[0].local_image == null'
+    assert_json '.[0].subject_source == "remote" and .[0].local_image == null'
     assert_json '.[0].local_image == null and .[0].remote_tag_check.status == "resolved"'
     assert_file_exists "$CALLS_DIR/curl.args"
 }
@@ -181,7 +181,7 @@ function run_cli {
 
     run_cli --json --tag-resolution=remote --tag-scan=never registry.example/app:stable
     assert_status 0
-    assert_json '.[0].baseline_source == "remote" and .[0].digest == "sha256:'"$DIGEST_A"'"'
+    assert_json '.[0].subject_source == "remote" and .[0].digest == "sha256:'"$DIGEST_A"'"'
     refute_file_exists "$CALLS_DIR/docker.args"
 }
 
@@ -191,7 +191,7 @@ function run_cli {
     run_cli --json --tag-scan=never registry.example/app
     assert_status 0
     assert_stderr_contains "falling back to remote tag resolution for 'registry.example/app:latest'"
-    assert_json '.[0].baseline_source == "remote" and .[0].remote_tag_check.reference == "registry.example/app:latest"'
+    assert_json '.[0].subject_source == "remote" and .[0].remote_tag_check.reference == "registry.example/app:latest"'
 }
 
 @test "INPUT-018 explicit wildcard in remote mode is rejected before network work" {
@@ -208,7 +208,7 @@ function run_cli {
 
     run_cli --json --tag-resolution=remote --tag-scan=never alpine
     assert_status 0
-    assert_json '.[0].baseline_source == "remote" and .[0].repository == "alpine"'
+    assert_json '.[0].subject_source == "remote" and .[0].repository == "alpine"'
     assert_json '.[0].remote_tag_check.reference == "alpine:latest"'
     refute_file_exists "$CALLS_DIR/docker.args"
 }

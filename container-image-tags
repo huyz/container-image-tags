@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Given a Docker container, local image, registry tag, or registry digest, this
-# resolves a baseline digest and can then find every current remote registry
+# resolves a repository digest and can then find every current remote registry
 # tag for that digest. By default, tagged references use local Docker metadata
 # when available and fall back to resolving the tag through the registry.
 #
@@ -22,7 +22,7 @@
 #   1. Resolve each argument as a container, local image, registry tag, or
 #      registry digest.
 #   2. Find the associated repository digest.
-#   3. For local baselines, check whether the known local tag still points to
+#   3. For locally resolved digests, check whether the known local tag still points to
 #      that remote digest.
 #   4. Optionally find and print every current registry tag for that digest.
 #
@@ -155,16 +155,16 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
             to find get more error details from registries
         --json: write one JSON array containing all results to stdout
         --allow-expensive-scan: permit an expensive non-interactive bulk registry lookup
-        --tag-resolution: select the baseline for an image tag (default: $opt_tag_resolution):
+        --tag-resolution: select how to resolve an image tag (default: $opt_tag_resolution):
             auto: use a local image when present; otherwise resolve the tag remotely
-            local: require a local image as the baseline
+            local: require a local image to resolve the repository digest
             remote: ignore local Docker state and resolve the tag through the registry
-        --tag-scan: control the reverse lookup after resolving the baseline digest:
+        --tag-scan: control the reverse lookup after resolving the repository digest:
             ask: prompt to choose a bounded or exhaustive scan
             never: do not perform a reverse tag lookup
             any: stop after finding the first matching tag, even if it is floating
             any-durable: stop after finding one matching tag heuristically assumed durable;
-                a directly confirmed durable baseline tag satisfies this without a scan
+                a directly confirmed durable tag satisfies this without a scan
             all: scan for every matching remote tag
             The default is 'ask' with an interactive terminal; 'any-durable' otherwise or with --json
         --credential-policy: control when registry credentials may be used
@@ -175,7 +175,7 @@ Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json] [--allow-ex
                 native path; otherwise authenticate only after an explicit access denial
             require: use only credentialed access; do not make public/anonymous requests
 
-For a local baseline, its known tag is checked first. Interactive runs then ask
+For a locally resolved repository digest, its known tag is checked first. Interactive runs then ask
 whether to stop at any matching tag, stop at a durable match, or find all matching tags;
 non-interactive runs stop after a durable match unless another mode is specified.
 Expensive interactive bulk registry lookups print an advisory and continue.

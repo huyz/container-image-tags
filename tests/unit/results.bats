@@ -21,7 +21,7 @@ function load_results {
     result[local_tag]=latest
     result[repository]='registry.example/app'
     result[digest]='sha256:full'
-    result[baseline_source]=remote
+    result[subject_source]=remote
     result[registry_kind]=other
     result[registry_host]='registry.example'
     result[remote_check_status]=resolved
@@ -36,7 +36,7 @@ function load_results {
     run result_to_json result
     assert_status 0
     assert_valid_json
-    assert_json '.tag_scan.tags == ["latest", "1.2.3"] and .baseline_source == "remote"'
+    assert_json '.tag_scan.tags == ["latest", "1.2.3"] and .subject_source == "remote"'
 }
 
 @test "RESULT-002 scan context is copied into the canonical result" {
