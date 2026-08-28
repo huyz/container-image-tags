@@ -15,8 +15,9 @@ or fully qualified `repository@sha256:...` digests.
   GitHub Packages API path
 - **Google Container Registry**: direct digest/tag metadata lookup, with configured
   credentials or an on-demand Google Cloud CLI token as fallbacks
-- **Google Artifact Registry**: public and token-authenticated OCI fast paths,
-  with Skopeo as a compatibility fallback
+- **Google Artifact Registry**: authenticated digest/tag metadata lookup plus
+  public and token-authenticated OCI paths, with Skopeo as a compatibility
+  fallback
 - **Azure Container Registry**: digest/tag metadata API, with configured
   credentials or an on-demand Azure CLI token as fallbacks
 - **Amazon ECR**: signed digest/tag metadata API, with configured registry
@@ -211,7 +212,7 @@ For example, the standard output from
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
 `skipped`. `tag_scan.backend` identifies the implementation used for a scan:
-`acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`,
+`acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`, `gar-api`,
 `github-packages-api`, `gcr-api`, `oci-registry-api`, or `skopeo`; it is `null`
 when no scan ran.
 `tag_scan.provider_metadata` contains

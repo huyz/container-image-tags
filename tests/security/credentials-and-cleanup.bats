@@ -93,6 +93,44 @@ EOF
     [[ $(<"$CALLS_DIR/skopeo.stdin") == "$AWS_CANARY" ]]
 }
 
+@test "SEC-006 GAR API token uses a private header file and never argv or output" {
+    load_module gar
+    export GAR_API_CANARY=gar-api-security-canary
+    export GAR_API_DIGEST=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    write_stub curl <<'EOF'
+printf '%s\0' "$@" >"$CALLS_DIR/curl.args"
+output=
+for ((index = 1; index <= $#; ++index)); do
+    case "${!index}" in
+    -o)
+        index=$((index + 1)); output="${!index}"
+        ;;
+    @*)
+        header="${!index#@}"
+        if stat -c '%a' "$header" >"$CALLS_DIR/header.mode" 2>/dev/null; then
+            :
+        else
+            stat -f '%Lp' "$header" >"$CALLS_DIR/header.mode"
+        fi
+        cp "$header" "$CALLS_DIR/header.content"
+        ;;
+    esac
+done
+printf '{"uri":"us-docker.pkg.dev/project/repo/app@%s","tags":[]}' \
+    "$GAR_API_DIGEST" >"$output"
+printf '200'
+EOF
+
+    run --separate-stderr gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$GAR_API_DIGEST" "$GAR_API_CANARY"
+    assert_status 0
+    refute_output_contains "$GAR_API_CANARY"
+    refute_stderr_contains "$GAR_API_CANARY"
+    ! grep -aFq "$GAR_API_CANARY" "$CALLS_DIR/curl.args"
+    [[ $(<"$CALLS_DIR/header.mode") == 600 ]]
+    [[ $(<"$CALLS_DIR/header.content") == "Authorization: Bearer $GAR_API_CANARY" ]]
+}
+
 @test "SEC-007 Skopeo lazy authfiles are private and isolated" {
     load_module skopeo
     skopeo_prepare_lazy_auth

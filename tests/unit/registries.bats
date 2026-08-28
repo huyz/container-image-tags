@@ -349,6 +349,22 @@ function assert_classification {
     [[ "$registry_lookup_backend" == skopeo && "$registry_tags" == fallback ]]
 }
 
+@test "GAR-016 GAR metadata reverse lookup reports its actual backend" {
+    load_registry_dispatch
+    function gar_access_token_if_available { printf '%s\n' token; }
+    function gar_tags_by_digest_api { printf '%s\n' metadata; }
+    function oci_tags_by_digest_anonymously {
+        : >"$CALLS_DIR/unexpected-oci"
+    }
+    registry_classify us-docker.pkg.dev/project/repo/app
+
+    registry_find_tags_by_digest \
+        us-docker.pkg.dev/project/repo/app sha256:one all '<none>'
+    [[ "$registry_lookup_backend" == gar-api ]]
+    [[ "$registry_tags" == metadata ]]
+    refute_file_exists "$CALLS_DIR/unexpected-oci"
+}
+
 @test "DISPATCH-013 stopped GCR reverse lookup never invokes Skopeo" {
     load_registry_dispatch
     function gcr_tags_by_digest_anonymously { return "$LOOKUP_STOPPED"; }

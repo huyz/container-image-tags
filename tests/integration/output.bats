@@ -299,7 +299,7 @@ EOF
     run_cli --json --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_json '.[0].tag_scan.backend as $b | ["acr-api","direct-tag-check","docker-hub-api","ecr-api","github-packages-api","gcr-api","oci-registry-api","skopeo",null] | index($b) != null'
+    assert_json '.[0].tag_scan.backend as $b | ["acr-api","direct-tag-check","docker-hub-api","ecr-api","gar-api","github-packages-api","gcr-api","oci-registry-api","skopeo",null] | index($b) != null'
 }
 
 @test "JSON-007 fallback reports Skopeo as the backend that produced tags" {

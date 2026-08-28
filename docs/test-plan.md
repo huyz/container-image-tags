@@ -528,6 +528,25 @@ Implement in `tests/unit/gcr-gar.bats`:
   fallback.
 - `GAR-007` P0: access denial obtains one Google token and reuses it with the
   OCI fast path before Skopeo.
+- `GAR-008` P0: the DockerImage API request encodes the exact location, project,
+  repository, nested image path, and complete digest; its token uses a mode-0600
+  header file rather than process arguments.
+- `GAR-009` P0: domain-scoped project paths are restored to the API project ID
+  without confusing nested image paths.
+- `GAR-010` P0: malformed success, denial, rate limiting, and metadata 404 map
+  to safe statuses; metadata 404 remains eligible for OCI verification.
+- `GAR-011` P0: DockerImage tags require the exact repository prefix, preserve
+  provider order, deduplicate, and apply bounded scan semantics.
+- `GAR-012` P0: `if-faster` uses available Google credentials for the indexed
+  reverse API before public OCI.
+- `GAR-013` P0: `if-faster` without configured Google credentials quietly
+  retains public OCI behavior.
+- `GAR-014` P0: `if-required` attempts public OCI before obtaining a Google
+  token and querying DockerImage metadata.
+- `GAR-015` P0: unavailable or absent metadata falls back to public OCI without
+  claiming an authoritative not-found result.
+- `GAR-016` P0: successful GAR metadata reverse lookup reports backend
+  `gar-api`.
 
 ## Private ECR and ECR Public
 
@@ -677,7 +696,7 @@ JSON tests must parse stdout with jq and assert fields semantically:
 - `JSON-005` P0: scan statuses cover completed, not-found, not-requested,
   declined, and skipped.
 - `JSON-006` P0: backend is one of `acr-api`, `direct-tag-check`,
-  `docker-hub-api`, `ecr-api`, `github-packages-api`, `gcr-api`,
+  `docker-hub-api`, `ecr-api`, `gar-api`, `github-packages-api`, `gcr-api`,
   `oci-registry-api`, `skopeo`, or null where no scan ran.
 - `JSON-007` P0: backend changes to the actual fallback backend.
 - `JSON-008` P0: tags are an array with exact values and order.
@@ -699,6 +718,7 @@ values for every credential type and fail if any appears unexpectedly.
 | SEC-003 | P0 | Azure access token | Passed via stdin to Skopeo, never argv/output |
 | SEC-004 | P0 | Google access token | Passed via stdin/authfile, never argv/output |
 | SEC-005 | P0 | AWS login password | Passed via stdin, never argv/output |
+| SEC-006 | P0 | GAR API bearer token | Absent from argv/output; header file mode 0600 |
 | SEC-007 | P0 | Lazy Skopeo authfiles | Mode 0600 and contain only isolated session data |
 | SEC-008 | P0 | Normal success and handled failures | Temporary credential/header files removed |
 | SEC-009 | P0 | SIGINT during active workers | Status 130, children terminate, authfiles removed |

@@ -18,6 +18,8 @@ output=
 for ((index = 1; index <= $#; ++index)); do
     if [[ "${!index}" == -o ]]; then
         index=$((index + 1)); output="${!index}"
+    elif [[ "${!index}" == @* ]]; then
+        cp "${!index#@}" "$CALLS_DIR/curl.headers"
     fi
 done
 [[ -z "$output" ]] || printf '%s' "$GCR_BODY" >"$output"
@@ -230,4 +232,132 @@ EOF
     assert_output_exact sha256:authenticated
     [[ $(<"$CALLS_DIR/order") == $'public\ntoken\nauthenticated:short-lived-token' ]]
     refute_file_exists "$CALLS_DIR/unexpected-skopeo"
+}
+
+@test "GAR-008 DockerImage metadata uses the exact digest resource and a header file" {
+    load_module gar
+    export GCR_BODY='{"uri":"us-docker.pkg.dev/project/repo/team/app@'"$DIGEST"'","tags":["us-docker.pkg.dev/project/repo/team/app:stable"]}'
+    install_gcr_curl 200 "$GCR_BODY"
+
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/team/app "$DIGEST" google-token-canary
+    assert_status 0
+    assert_output_exact "$GCR_BODY"
+    args=$(tr '\0' '\n' <"$CALLS_DIR/curl.args")
+    [[ "$args" == *"https://artifactregistry.googleapis.com/v1/projects/project/locations/us/repositories/repo/dockerImages/team%2Fapp%40sha256%3A"* ]]
+    [[ "$args" != *google-token-canary* ]]
+    [[ $(<"$CALLS_DIR/curl.headers") == 'Authorization: Bearer google-token-canary' ]]
+}
+
+@test "GAR-009 API resource parsing restores domain-scoped project IDs" {
+    load_module gar
+
+    run gar_api_resource_parts us-west1-docker.pkg.dev \
+        us-west1-docker.pkg.dev/example.com/my-project/my-repo/team/app
+    assert_status 0
+    assert_output_exact $'us-west1\nexample.com:my-project\nmy-repo\nteam/app'
+}
+
+@test "GAR-010 DockerImage response validation and HTTP statuses preserve safe fallback" {
+    load_module gar
+
+    install_gcr_curl 200 '{"uri":"us-docker.pkg.dev/project/repo/app@sha256:wrong","tags":[]}'
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" token
+    assert_status "$LOOKUP_UNAVAILABLE"
+
+    install_gcr_curl 403 '{"error":{"message":"denied"}}'
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" token
+    assert_status "$LOOKUP_DENIED"
+
+    # A remote or virtual repository may resolve an image that is absent from
+    # its metadata index, so an API 404 must still be verified through OCI.
+    install_gcr_curl 404 '{"error":{"message":"missing"}}'
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" token
+    assert_status "$LOOKUP_UNAVAILABLE"
+
+    install_gcr_curl 429 '{"error":{"message":"slow down"}}'
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" token
+    assert_status "$LOOKUP_STOPPED"
+}
+
+@test "GAR-011 DockerImage tags preserve provider order and bounded scan semantics" {
+    load_module gar
+    function gar_docker_image_metadata {
+        printf '{"uri":"unused","tags":["us-docker.pkg.dev/project/repo/app:latest","us-docker.pkg.dev/project/repo/app:1.2.3","us-docker.pkg.dev/project/repo/app:latest"]}\n'
+    }
+    registry_tag_scan=any-durable
+
+    run gar_tags_by_digest_api us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" token
+    assert_status 0
+    assert_output_exact $'latest\n1.2.3'
+}
+
+@test "GAR-012 if-faster uses available DockerImage metadata before public OCI" {
+    load_module gar
+    function gar_access_token_if_available { printf '%s\n' token; }
+    function gar_tags_by_digest_api {
+        printf '%s\n' metadata >>"$CALLS_DIR/order"
+        printf '%s\n' stable
+    }
+    function oci_tags_by_digest_anonymously {
+        : >"$CALLS_DIR/unexpected-oci"
+    }
+
+    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
+    [[ "$registry_lookup_backend" == gar-api ]]
+    [[ "$registry_tags" == stable ]]
+    [[ $(<"$CALLS_DIR/order") == metadata ]]
+    refute_file_exists "$CALLS_DIR/unexpected-oci"
+}
+
+@test "GAR-013 if-faster without configured Google credentials retains public OCI" {
+    load_module gar
+    function gar_access_token_if_available { return "$LOOKUP_UNAVAILABLE"; }
+    function gar_tags_by_digest_api { : >"$CALLS_DIR/unexpected-api"; }
+    function oci_tags_by_digest_anonymously { printf '%s\n' public; }
+
+    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
+    [[ "$registry_lookup_backend" == oci-registry-api ]]
+    [[ "$registry_tags" == public ]]
+    refute_file_exists "$CALLS_DIR/unexpected-api"
+}
+
+@test "GAR-014 if-required tries public OCI before authenticated metadata" {
+    load_module gar
+    opt_credential_policy=if-required
+    function oci_tags_by_digest_anonymously {
+        printf '%s\n' public >>"$CALLS_DIR/order"
+        return "$LOOKUP_DENIED"
+    }
+    function gar_access_token {
+        printf '%s\n' token >>"$CALLS_DIR/order"
+        printf '%s\n' short-lived-token
+    }
+    function gar_tags_by_digest_api {
+        printf 'metadata:%s\n' "$4" >>"$CALLS_DIR/order"
+        printf '%s\n' private
+    }
+
+    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
+    [[ "$registry_lookup_backend" == gar-api ]]
+    [[ "$registry_tags" == private ]]
+    [[ $(<"$CALLS_DIR/order") == $'public\ntoken\nmetadata:short-lived-token' ]]
+}
+
+@test "GAR-015 unavailable metadata falls back to public OCI without claiming not-found" {
+    load_module gar
+    registry_lookup_result=completed
+    function gar_access_token_if_available { printf '%s\n' token; }
+    function gar_tags_by_digest_api { return "$LOOKUP_UNAVAILABLE"; }
+    function oci_tags_by_digest_anonymously { printf '%s\n' public; }
+
+    gar_find_tags us-docker.pkg.dev us-docker.pkg.dev/project/repo/app "$DIGEST"
+    [[ "$registry_lookup_backend" == oci-registry-api ]]
+    [[ "$registry_lookup_result" == completed ]]
+    [[ "$registry_tags" == public ]]
 }
