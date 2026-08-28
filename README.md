@@ -1,5 +1,8 @@
 # container-image-tags
 
+[![Tests](https://github.com/huyz/container-image-tags/actions/workflows/test.yml/badge.svg)](https://github.com/huyz/container-image-tags/actions/workflows/test.yml)
+[![Stress tests](https://github.com/huyz/container-image-tags/actions/workflows/stress.yml/badge.svg)](https://github.com/huyz/container-image-tags/actions/workflows/stress.yml)
+
 `container-image-tags` resolves a local image or remote tag to a resolved
 repository digest. For local images, it checks the registry whether the known tag
 still points to that digest. It can then find other current registry tags
@@ -7,6 +10,13 @@ that point to that digest.
 
 Arguments can be local Docker container names or IDs, local image names or IDs,
 or fully qualified `repository@sha256:...` digests.
+
+## Project status
+
+This is an early `v0.1.0` release. Docker Hub and GHCR are the most thoroughly
+tested providers; other registry adapters are useful but need more real-world
+testing. Feedback, provider reports, and pull requests are welcome. Releases
+and release notes are tracked through [GitHub Releases](https://github.com/huyz/container-image-tags/releases).
 
 ## Registry support
 
@@ -30,7 +40,7 @@ or fully qualified `repository@sha256:...` digests.
     incompatible-registry fallback
 
 NOTE: only the Docker Hub and GitHub Container Registry paths are fully tested.
-Please report any issues.
+More testing will be done if there is demand for these providers.
 
 ## Requirements
 
@@ -57,17 +67,6 @@ Optional:
   `aws` (Elastic Container Registry) can provide optional authenticated fast
   paths or short-lived credentials.
 
-Registry-facing commands have a 600-second wall-clock deadline by default,
-including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
-Set `CIT_NETWORK_TIMEOUT_SECONDS` to a non-negative integer to choose another
-limit, or to `0` to disable the deadline.
-
-On macOS and Linux, Homebrew users can install all with:
-
-```sh
-brew install bash coreutils gnu-getopt curl jq perl docker skopeo gh gcloud-cli azure-cli awscli
-```
-
 ### Docker Hub authentication
 
 Docker Hub scans start anonymously. If Hub refuses further anonymous tag pagination (around 10
@@ -75,18 +74,30 @@ successive requests), you will be prompted for a Hub username and PAT before a r
 prompt and avoid the slower Skopeo fallback, set the environment variables `DOCKER_HUB_USERNAME` and
 `DOCKER_HUB_PAT` (a Public Repo Read-only PAT is sufficient) before running this app.
 
-## Installation
+## Quick start
 
-Clone the repository and symlink the executable into a directory on `PATH`:
+Install the runtime dependencies with Homebrew, clone the repository, and run
+the executable from the checkout:
 
 ```sh
+brew install bash coreutils gnu-getopt curl jq perl docker
+# Or with all optional dependencies:
+#brew install bash coreutils gnu-getopt curl jq perl docker skopeo gh gcloud-cli azure-cli awscli
+
 git clone https://github.com/huyz/container-image-tags.git
 cd container-image-tags
-sudo ln -s "$PWD/container-image-tags" /usr/local/bin/container-image-tags
+./container-image-tags --version
+./container-image-tags db
 ```
 
-Keep the `lib` directory beside `container-image-tags`. The executable
-resolves symlinks back to the checkout so it can load those modules.
+Keep the `lib` directory beside the executable. You can add the checkout to
+your `PATH` if desired:
+
+```sh
+export PATH="$PWD:$PATH"
+```
+
+Run `./container-image-tags --help` for the complete option and input guide.
 
 ## Usage
 
@@ -178,6 +189,11 @@ minutes fails fast; pass `--allow-expensive-scan` to permit one explicitly.
 The engine is selected automatically; bounded scans always use the pool so they
 can stop scheduling early. See [Benchmarks](docs/benchmarks.md) for the
 Codeberg comparison that informed this choice.
+
+Registry-facing commands have a 600-second wall-clock deadline by default,
+including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
+`CIT_NETWORK_TIMEOUT_SECONDS` to a non-negative integer to choose another
+limit, or to `0` to disable the deadline.
 
 ### JSON Output
 
@@ -295,11 +311,6 @@ CIT_LIVE_TESTS=1 CIT_LIVE_GENERIC_OCI_REF='alpine@sha256:28bd5fe8b56d1bd048e5bab
 Live tests are opt-in and skipped unless their target environment variables are
 configured. See [`docs/test-plan.md`](docs/test-plan.md) for the behavioral
 matrix, test IDs, and completion requirements.
-
-As of 2026-08-25, authored mostly by OpenAI GPT 5.6 Sol and DeepSeek V4 Flash.
-
-If this project proves useful, it will be rewritten in go for portability and
-fewer dependencies.
 
 ## License
 
