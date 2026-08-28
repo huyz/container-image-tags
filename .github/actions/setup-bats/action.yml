@@ -8,10 +8,13 @@ runs:
       shell: bash
       env:
         BATS_VERSION: 1.14.0
+        BATS_SHA256: bb537b70b15b732f6d8827dd6578e3d8ce166636ce1f18ea9a074184fcce9177
       run: |
         bats_root="$RUNNER_TEMP/bats-core-$BATS_VERSION"
-        curl -fsSLo "$RUNNER_TEMP/bats-core.tar.gz" \
+        bats_archive="$RUNNER_TEMP/bats-core.tar.gz"
+        curl -fsSLo "$bats_archive" \
           "https://github.com/bats-core/bats-core/archive/refs/tags/v$BATS_VERSION.tar.gz"
-        tar -xzf "$RUNNER_TEMP/bats-core.tar.gz" -C "$RUNNER_TEMP"
+        printf '%s  %s\n' "$BATS_SHA256" "$bats_archive" | shasum -a 256 -c -
+        tar -xzf "$bats_archive" -C "$RUNNER_TEMP"
         echo "BATS_ROOT=$bats_root" >> "$GITHUB_ENV"
         echo "$bats_root/bin" >> "$GITHUB_PATH"
