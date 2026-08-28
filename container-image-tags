@@ -92,6 +92,12 @@ source "$MODULE_DIR/common.sh"
 # shellcheck source=lib/runtime.sh
 source "$MODULE_DIR/runtime.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/scan-policy.sh
+source "$MODULE_DIR/scan-policy.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/scheduler.sh
+source "$MODULE_DIR/scheduler.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/access-policy.sh
 source "$MODULE_DIR/access-policy.sh"
 # shellcheck source-path=SCRIPTDIR

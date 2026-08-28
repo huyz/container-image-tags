@@ -84,6 +84,10 @@ function load_common {
     CIT_RUNTIME_NO_EXIT_TRAP=1
     source "$REPO_ROOT/lib/runtime.sh"
     unset CIT_RUNTIME_NO_EXIT_TRAP
+    # shellcheck source=../../lib/scan-policy.sh
+    source "$REPO_ROOT/lib/scan-policy.sh"
+    # shellcheck source=../../lib/scheduler.sh
+    source "$REPO_ROOT/lib/scheduler.sh"
     # shellcheck source=../../lib/access-policy.sh
     source "$REPO_ROOT/lib/access-policy.sh"
 }

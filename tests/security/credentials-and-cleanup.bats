@@ -164,6 +164,8 @@ EOF
 SCRIPT_NAME=interrupt-harness
 source "$INTERRUPT_REPO_ROOT/lib/common.sh"
 source "$INTERRUPT_REPO_ROOT/lib/runtime.sh"
+source "$INTERRUPT_REPO_ROOT/lib/scan-policy.sh"
+source "$INTERRUPT_REPO_ROOT/lib/scheduler.sh"
 source "$INTERRUPT_REPO_ROOT/lib/skopeo.sh"
 trap 'exit 130' INT TERM
 skopeo_prepare_lazy_auth

@@ -240,8 +240,9 @@ Credential values are not passed on command lines.
 ## Development
 
 The executable owns argument parsing, local-input orchestration, and output.
-The `lib` directory contains shared diagnostics and rolling workers
-(`common.sh`), local image resolution (`local-images.sh`), anonymous generic
+The `lib` directory contains shared statuses and diagnostics (`common.sh`),
+durable-tag and scan selection (`scan-policy.sh`), bounded workers
+(`scheduler.sh`), local image resolution (`local-images.sh`), anonymous generic
 OCI lookup (`oci.sh`), its portable credential-aware fallback (`skopeo.sh`),
 registry adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and
 `ecr.sh`), the universal ordering and fallback engine (`policy-engine.sh`), and

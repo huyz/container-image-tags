@@ -28,7 +28,8 @@ Each positional argument passes through these stages:
 
 The executable contains dependency and option handling plus the final loop.
 The pipeline itself lives in `lib/pipeline.sh`; result records and renderers live
-in `lib/results.sh`.
+in `lib/results.sh`. `lib/scan-policy.sh` owns durable-tag and scan-selection
+semantics, while `lib/scheduler.sh` owns bounded per-tag worker execution.
 
 ## State boundaries
 
