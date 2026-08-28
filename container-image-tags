@@ -56,6 +56,7 @@
 set -Eeuo pipefail
 shopt -s failglob inherit_errexit
 SCRIPT_NAME=${BASH_SOURCE[0]##*/}
+CIT_VERSION=0.1.0
 # shellcheck disable=SC2329
 function trap_err { local rc=$?; printf '%s: ERROR: command failed with status %d at %s:%d: %s\n' \
     "$SCRIPT_NAME" "$rc" "${BASH_SOURCE[1]}" "${BASH_LINENO[0]}" "$BASH_COMMAND" >&2; return "$rc"; }
@@ -160,11 +161,12 @@ json_results=
 
 function usage {
     cat <<END
-Usage: $SCRIPT_NAME [-h|--help] [-v|--verbose] [-d|--debug] [--json]
+Usage: $SCRIPT_NAME [-h|--help] [--version] [-v|--verbose] [-d|--debug] [--json]
                     [--tag-resolution mode] [--tag-scan mode]
                     [--allow-expensive-scan] [--credential-policy policy]
                     <container-or-image-or-digest> [...]
         -h|--help: get help
+        --version: print the program version
         -v|--verbose: turn on verbose mode
         -d|--debug: turn on debug mode; could trigger more requests to find
             get more error details from registries
@@ -235,12 +237,13 @@ Arguments are interpreted as follows:
 END
 }
 
-opts=$("$GETOPT" --options hvd --long help,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvd --long help,version,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
 while true; do
     case "$1" in
         -h | --help) usage; exit 0 ;;
+        --version) printf '%s %s\n' "$SCRIPT_NAME" "$CIT_VERSION"; exit 0 ;;
         -v | --verbose) opt_verbose=opt_verbose; shift ;;
         -d | --debug) opt_debug=opt_debug; shift ;;
         --json) opt_json=opt_json; shift ;;

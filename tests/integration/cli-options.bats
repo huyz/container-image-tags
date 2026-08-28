@@ -93,6 +93,14 @@ function run_cli_with_tty_input {
     assert_output_contains 'repository@sha256:'
 }
 
+@test "CLI-001a version prints the single release version" {
+    install_noop_required_tools
+
+    run_cli --version
+    assert_status 0
+    assert_output_contains "container-image-tags 0.1.0"
+}
+
 @test "SMOKE-001 help runs with all external dependencies stubbed" {
     install_noop_required_tools
 
