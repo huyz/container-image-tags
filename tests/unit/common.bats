@@ -140,7 +140,7 @@ function lookup_and_log {
     assert_output_exact $'17.5\n17.6\n17.7'
 }
 
-@test "COMMON-010 standalone direct-tag classification is deliberately conservative" {
+@test "COMMON-010 standalone semver classification still requires three components" {
     load_common
 
     tag_is_assumed_durable v1.2.3
@@ -177,6 +177,73 @@ function lookup_and_log {
     run select_matching_tags_for_scan $'stable\n1.796.0'
     assert_status 0
     assert_output_exact stable
+}
+
+@test "COMMON-013 durable heuristic accepts short hashes anywhere in a tag" {
+    load_common
+
+    for tag in a1b2c A1B2C a1b2cg tip-a1b2c tip-a1b2cg \
+            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do
+        run tag_is_assumed_durable "$tag"
+        assert_status 0
+    done
+}
+
+@test "COMMON-014 durable heuristic retains the five-hex-character threshold" {
+    load_common
+
+    for tag in a1b2 tip-a1b2g 12345 tip-12345g; do
+        run tag_is_assumed_durable "$tag"
+        assert_status 1
+    done
+
+    # The letter check applies to the whole tag, not just the hex run.
+    run tag_is_assumed_durable build-12345g
+    assert_status 0
+}
+
+@test "COMMON-015 durable heuristic accepts date-like sequences anywhere in a tag" {
+    load_common
+
+    # Optional separators also allow a six-digit sequence split as YYYY-MM.
+    for tag in 20260827 2026-08-27 27-08-2026 260827 26-08-27 2026-08; do
+        for candidate in "$tag" "tip-$tag" "${tag}g" "tip-${tag}g"; do
+            run tag_is_assumed_durable "$candidate"
+            assert_status 0
+        done
+    done
+}
+
+@test "COMMON-016 durable heuristic still rejects floating channels and incomplete dates" {
+    load_common
+
+    for tag in latest main master dev devel development stable edge nightly canary \
+            LATEST MAIN STABLE tip-202-08g tip-26-8-27g ''; do
+        run tag_is_assumed_durable "$tag"
+        assert_status 1
+    done
+}
+
+@test "COMMON-017 embedded hashes and dates are durable regardless of semver precision" {
+    load_common
+
+    for tag in tip-a1b2cg tip-27-08-2026g; do
+        run tag_is_assumed_durable "$tag" 3
+        assert_status 0
+    done
+    run tag_is_assumed_durable tip-1.2.3
+    assert_status 1
+}
+
+@test "COMMON-018 any-durable stops at an embedded hash or date" {
+    load_common
+    registry_tag_scan=any-durable
+
+    for tag in tip-a1b2cg tip-27-08-2026g; do
+        run select_matching_tags_for_scan "$(printf '%s\n' latest "$tag" 1.2.3)"
+        assert_status 0
+        assert_output_exact "$(printf '%s\n' latest "$tag")"
+    done
 }
 
 @test "POOL-001 rolling pool never exceeds its configured worker cap" {

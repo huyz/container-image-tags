@@ -60,6 +60,9 @@ function durable_semver_precision_from_tags {
     printf '%s\n' "${recurring:-$greatest}"
 }
 
+# Determine if a tag should be assumed as durable (stable, long-lived).
+# Tags are considered durable if they match digest-like hashes, date-based formats,
+# or semantic versions matching the observed precision convention.
 function tag_is_assumed_durable {
     local tag="$1"
     local observed_precision="${2-}"
@@ -71,8 +74,11 @@ function tag_is_assumed_durable {
         return 1
         ;;
     esac
-    if [[ "$lower" =~ ^[0-9a-f]{12,64}$ && "$lower" =~ [a-f] ]] ||
-            [[ "$lower" =~ ^[0-9]{4}-?[0-9]{2}-?[0-9]{2}([._-].*)?$ ]]; then
+    # Regex:
+    # - digest-like hex hash (5+ hex chars, at least one letter)
+    # - date-based tag (YYYYMMDD or YYYY-MM-DD or DD-MM-YYYY)
+    if [[ "$lower" =~ [0-9a-f]{5,} && "$lower" =~ [a-f] ]] ||
+            [[ "$lower" =~ [0-9]{2,4}-?[0-9]{2}-?[0-9]{2,4} ]]; then
         return 0
     fi
     precision=$(tag_semver_precision "$tag") || return 1
@@ -139,6 +145,9 @@ function matching_tags_through_first_durable {
     return 1
 }
 
+# Print selected matches. In any-durable mode, return 1 with matches still printed
+# if none is durable; this is a selection result, not a lookup failure.
+# Complete-metadata callers intentionally ignore it because no scan work remains.
 function select_matching_tags_for_scan {
     local matching_tags="$1"
     local observed_tags="${2-$matching_tags}"

@@ -492,6 +492,10 @@ function oci_digest_for_tag_with_bearer_token {
 # Print tags whose complete manifest digest matches digest. Individual HEAD
 # failures make an exhaustive result fail so the dispatcher can retry through
 # Skopeo rather than silently returning an incomplete tag set.
+# The inventory's direct_tag_durable flag refers to the caller's registry_direct_tag.
+# Scan mode and direct-tag confirmation remain shared registry_* state; this
+# function sets registry_durable_semver_precision and registry_seed_matching_tags
+# for the scheduler.
 function oci_tags_by_digest_from_list {
     local registry="$1"
     local repository="$2"
