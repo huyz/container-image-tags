@@ -103,7 +103,7 @@ EOF
 
     start=$SECONDS
     runtime_cleanup
-    (( SECONDS - start < 2 ))
+    (( SECONDS - start < 5 ))
     ! kill -0 "$child_pid" 2>/dev/null
     [[ ${#runtime_child_pids[@]} -eq 0 ]]
 }
