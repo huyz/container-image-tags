@@ -3,210 +3,285 @@
 [![Tests](https://github.com/huyz/container-image-tags/actions/workflows/test.yml/badge.svg)](https://github.com/huyz/container-image-tags/actions/workflows/test.yml)
 [![Stress tests](https://github.com/huyz/container-image-tags/actions/workflows/stress.yml/badge.svg)](https://github.com/huyz/container-image-tags/actions/workflows/stress.yml)
 
-`container-image-tags` resolves a local image or remote tag to a resolved
-repository digest. For local images, it checks the registry whether the known tag
-still points to that digest. It can then find other current registry tags
-that point to that digest.
+**Find out what is actually running behind a Docker tag—and which tags still reference that image.**
 
-Arguments can be local Docker container names or IDs, local image names or IDs,
-or fully qualified `repository@sha256:...` digests.
+You pulled `postgres:17` last month. That tag may have moved since then.
+`container-image-tags` checks whether it still points to your
+local image, then can find version tags that match the image you already have.
 
-## Project status
+```sh
+# Has this local image's tag (e.g. "17") moved at the registry?
+# Are there any better tags still applicable and more durable
+# (i.e., less likely to be moved in the future; e.g., "17.11-trixie")
+container-image-tags postgres:17
 
-This is an early `v0.1.0` release. Docker Hub and GHCR are the most thoroughly
-tested providers; other registry adapters are useful but need more real-world
-testing. Feedback, provider reports, and pull requests are welcome. Releases
-and release notes are tracked through [GitHub Releases](https://github.com/huyz/container-image-tags/releases).
+# Find every current tag at the registry for that container's image
+container-image-tags --tag-scan=all my-postgres-container
+```
 
-## Registry support
+This is a metadata lookup tool: it does not pull image layers, start containers,
+or update your images. macOS and Linux are supported.
 
-- **Docker Hub**: direct tag checks and digest-to-tag lookup through the tags API
-- **GitHub Container Registry**: anonymous OCI lookup and an optional faster
-  GitHub Packages API path
-- **Google Container Registry**: direct digest/tag metadata lookup, with configured
-  credentials or an on-demand Google Cloud CLI token as fallbacks
-- **Google Artifact Registry**: authenticated digest/tag metadata lookup plus
-  public and token-authenticated OCI paths, with Skopeo as a compatibility
-  fallback
-- **Azure Container Registry**: digest/tag metadata API, with configured
-  credentials or an on-demand Azure CLI token as fallbacks
-- **Amazon ECR**: signed digest/tag metadata API, with configured registry
-  credentials or an on-demand AWS CLI token as fallbacks
-- **Amazon ECR Public**: opportunistic digest metadata API when a configured
-    AWS profile can resolve the registry alias cheaply, otherwise anonymous
-    registry access
-- Other **OCI-compatible registries** (e.g. **Codeberg**, **LinuxServer.io**):
-    anonymous parallel manifest `HEAD` lookup, with Skopeo as the private/
-    incompatible-registry fallback
+You could do the same exhaustive searches yourself with a simple loop using curl
+(see [Stack Overflow: How to find all image tags of a running Docker container?](
+    https://stackoverflow.com/questions/56646899/how-to-find-all-image-tags-of-a-running-docker-container))
+but this tool makes your searches faster and more convenient. It queries quicker
+registry-provided metadata APIs, parallelizes requests, and handles fallbacks
+(both to get past limits for anonymous queries and in case a service is unavailable).
 
-NOTE: only the Docker Hub and GitHub Container Registry paths are fully tested.
-More testing will be done if there is demand for these providers.
+## Confidence and current limits
 
-## Requirements
+This is an AI-assisted project. I've reviewed, refactored, and refined the
+implementation to be confident of its correctness and ensure the code is easy to
+follow and maintain — just as for a hand-coded codebase.
 
-Generally, this script supports macOS and Linux, maybe other systems if you
-can install the more common GNU tools.
+An offline test suite exercises all the registry adapters and the policy engine,
+simulating various registry responses and credential scenarios.
+As for real-world validation, Docker Hub and GHCR are the most tested providers.
 
-The required tools are:
-
-- Bash 4.4 or newer
-- GNU `realpath` (coreutils), `timeout`, `getopt`
-- `curl` 7.66.0 or later
-- `jq`
-- Perl 5
-
-Recommended:
-- Docker CLI (for `auto` and `local` tag resolution) is required unless you
-  only want to query a specific image digest or use `--tag-resolution remote`.
-
-Optional:
-- Skopeo is required only when a native provider path cannot answer a private
-  lookup, or when a registry is incompatible with the OCI fast path.
-- Depending on the registry, `gh` (GitHub Container Registry),
-  `gcloud` (Google Container Registry), `az` (Azure Container Registry), or
-  `aws` (Elastic Container Registry) can provide optional authenticated fast
-  paths or short-lived credentials.
-
-### Docker Hub authentication
-
-Docker Hub scans start anonymously. If Hub refuses further anonymous tag pagination (around 10
-successive requests), you will be prompted for a Hub username and PAT before a retry. To avoid the
-prompt and avoid the slower Skopeo fallback, set the environment variables `DOCKER_HUB_USERNAME` and
-`DOCKER_HUB_PAT` (a Public Repo Read-only PAT is sufficient) before running this app.
+TBD: More live registry tests, and a way to manually verify results against
+your own Skopeo or curl loop.
 
 ## Quick start
 
-Install the runtime dependencies with Homebrew, clone the repository, and run
-the executable from the checkout:
+On macOS with Homebrew:
 
 ```sh
-brew install bash coreutils gnu-getopt curl jq perl docker
-# Or with all optional dependencies:
-#brew install bash coreutils gnu-getopt curl jq perl docker skopeo gh gcloud-cli azure-cli awscli
+# For macOS, you need the newer Bash (4.4+) on your `PATH`, not `/bin/bash`.
+brew install bash coreutils gnu-getopt curl jq perl
 
 git clone https://github.com/huyz/container-image-tags.git
 cd container-image-tags
 ./container-image-tags --version
-./container-image-tags db
 ```
 
-Keep the `lib` directory beside the executable. You can add the checkout to
-your `PATH` if desired:
+Linux requires the same runtime tools: Bash 4.4+, GNU `realpath`, `timeout` and
+`getopt`, curl 7.66.0+, jq, and Perl 5. Install them through your distribution's
+package manager (or Homebrew as well).
 
-```sh
-export PATH="$PWD:$PATH"
+This tool can inspect what you have **locally** by using the Docker CLI so that
+you can simply pass a container name or local image reference:
+
+```shell
+# Queries the local Docker daemon to find the image underlying the local
+# container named "my-postgres", check that its local tag still points to the
+# same image manifest digest (i.e. the same `repository@sha256:…`) at the
+# remote registry, and prompts you whether you want to look for any or all
+# other alias tags.
+./container-image-tags my-postgres
 ```
 
-Run `./container-image-tags --help` for the complete option and input guide.
+Or you can check a **remote tag**, irrespective of what you have running locally.
+And just for demonstration, let's force anonymous lookup only:
 
-## Usage
+```shell
+# Public registry lookup: no local lookup and no user credentials.
+./container-image-tags --tag-resolution=remote --credential-policy=never \
+  postgres:17
+```
+
+This resolves what `postgres:17` points to **now** and asks you if you want
+to find alias tags for that digest. For example, one public run
+returned these tags after `first matching durable tag` was chosen:
 
 ```text
-container-image-tags [options] <container-or-image-or-digest> [...]
+Remote tags (partial scan):
+17
+17.11-trixie
 ```
 
-Examples:
+Keep `lib/` beside the executable. To use the command without specifying its
+path, you can symlink it to a directory in your `PATH`:
+```sh
+ln -s /path/to/container-image-tags/container-image-tags ~/.local/bin/container-image-tags
+```
+
+Other CLI tools for registries (e.g., `gh`, `aws`, etc.) and Skopeo (for registry-agnostic
+fallbacks) are optional; see [Authentication](#authentication-you-control-the-tradeoff).
+
+## How it works
+
+1. **Identify the image.** A container or local image supplies its saved
+   repository digest. A remote tag is resolved at the registry; alternatively,
+   you can specify an explicit `repository@sha256:…`.
+2. **Check the known tag.** For a local image, compare its saved digest with the
+   tag's current digest at the registry. A mismatch means the tag moved. (Any
+   following scan still uses the digest of the local image.)
+3. **Find alias tags for that same digest.** Search the same repository for
+   current tags with a matching digest, stopping at the breadth you chose.
+
+By default, `--tag-resolution=auto` uses local Docker state when available and
+announces a remote fallback otherwise. Use `local` to require a local image or
+`remote` to ignore local state. (Not to be confused, local resolution does not
+imply an offline-only mode: the tag check and reverse scan will still contact
+the registry to do lookups.)
+
+## Scope and registry support
+
+Registry adapters cover Docker Hub, HCR (GitHub), GCR (Google), GAR (Google),
+ACR (Azure), ECR and ECR Public (AWS), plus a generic OCI path (standard
+container-registry API lookup) and Skopeo fallback. ECR Public's metadata
+shortcut needs configured AWS access; otherwise the public OCI path is
+available.
+
+- Results describe a repository's **current tags in one registry**, not historical
+  tags that were moved or deleted, and not equivalent images in other registries.
+- Matching means **manifest-digest equality**. Tags match only when their
+  digests are identical. A multi-platform index has a different digest from each
+  platform-specific image it contains (e.g. `amd64`, `arm64`). Local images are
+  not matched by their Image ID from your local Docker daemon.
+- A container lookup uses a tag from its image's saved metadata, not necessarily
+  the original launch reference. Pass an explicit local `image:tag` to choose
+  which tag to check when an image has several.
+- Registries can change tags during a scan (rare), restrict access, or rate-limit
+  requests. An exhaustive scan is not an atomic snapshot.
+
+## Choose how much to search
+
+| `--tag-scan` | Result you are asking for |
+| --- | --- |
+| `never` | Only resolve the image and check its known tag; no reverse lookup. |
+| `any` | Stop at the first matching tag, even a floating alias such as `latest`. |
+| `any-durable` | Stop at a matching tag judged durable by a heuristic. May also output floating matches encountered along the way. |
+| `all` | Exhaustively find current matching tags at the registry. |
+| `ask` | Ask interactively which scan breadth to use. |
+
+The default is `ask` in an interactive terminal, and `any-durable` otherwise
+or with `--json`. An explicit `--tag-scan` always wins.
+
+"Durable" is a naming heuristic, **not an immutability guarantee**, e.g. a tag that looks
+like a fine-grained version, a date, or a commit. For example,
+when a repository publishes both `1.796` and `1.796.0`, the more precise tag is
+treated as durable and the shorter one as floating. A durable tag is no guarantee,
+as publishers can still move any tag; so record the digest if you need a truly
+immutable reference.
+
+Where bulk-work cost can be estimated, interactive scans over three minutes
+warn and continue. Non-interactive scans estimated over ten minutes stop unless
+you pass `--allow-expensive-scan`. Separately, registry-facing commands have a
+600-second deadline each; set `CIT_NETWORK_TIMEOUT_SECONDS` to another
+non-negative integer, or `0` to disable it. This is not a total-run deadline.
+
+## Why lookups can be fast—and when they are not
+
+Resolving one tag to a digest is cheap. Going the other way is the hard part:
+the standard OCI registry API does not offer a digest-to-tags query. A generic
+client must list tags, then check their manifests individually.
+
+The tool avoids that work where the registry offers richer metadata:
+
+| Registry path | Work needed to find matching tags |
+| --- | --- |
+| Docker Hub tags API | Fetch pages containing both tags and digests; no manifest request per tag. Large repositories can still require many pages. |
+| GitHub Container Registry (GHCR), via GitHub Packages | Search package-version pages containing digests and their tags. Requires GitHub credentials; a long version history can still be expensive. |
+| Azure Container Registry (ACR), Google Artifact Registry (GAR), Amazon ECR; Google Container Registry (GCR) | Read tags associated with a digest from provider metadata instead of inspecting each tag. Access requirements vary by provider. |
+| Generic OCI, including Codeberg and LinuxServer.io | List tags, then compare manifest digests using lightweight `HEAD` requests, with up to eight in flight. No image layers are downloaded. |
+
+Under the default credential policy (`if-faster` — see below), a GHCR reverse
+lookup first fetches a page from the Packages API when `gh` is available. If
+that page does not contain a match, and more pages remain, it compares the
+measured cost of continuing with this API against an estimated cost of the
+alternate method of scanning current OCI tags, then chooses the cheaper
+permitted path. An unavailable Packages method can fall back to public OCI
+method.
+
+Bounded scans stop scheduling new work once the requested match is found
+depending on `--tag-scan`. A known tag that hasn't moved at the registry can
+satisfy `any` immediately, or `any-durable` if appropriate. Exhaustive OCI scans
+reuse connections through curl's parallel engine.
+
+**Skopeo is the compatibility fallback**, including access through configured
+registry credentials. For reverse scans, this still involves one query for each
+tag; authenticating for it does not speed up reverse scans.
+
+## Authentication: you control the tradeoff
+
+Credentials can serve two different purposes: access to a private repository, or
+access to a faster metadata API for a public repository. You're not required to
+log in to try a public (anonymous) lookup. Public access may obtain an
+anonymous, repository-scoped bearer token; this does not use your account
+credentials. However, some registries throttle or limit anonymous requests while
+offering a faster API to authenticated users.
+
+The default is **`--credential-policy=if-faster`**. It favors using your
+credentials at the applicable registries for a faster or more complete provider
+API, even if there's a (slower) anonymous means.
+
+| Policy | When user credentials may be used |
+| --- | --- |
+| `never` | Never. Only public/anonymous access; no authentication prompts. |
+| `if-required` | Start public; permit credentials only after an explicit access denial. |
+| `if-faster` (default) | Permit credentials proactively for a faster or more complete native API; otherwise only after an explicit access denial. |
+| `require` | Only credentialed access; no public/anonymous requests. Fail if no permitted path can answer. |
+
+
+### Where credentials come from
+
+- **Docker Hub:** under the default policy, start with the public tags API.
+  After denial, the tool will try `DOCKER_HUB_USERNAME` and `DOCKER_HUB_PAT` if
+  supplied, falling back to Skopeo paths. If automatic paths cannot recover from denial,
+  an interactive run will prompt for a username/PAT to retry; a PAT lets the scan
+  continue when Hub refuses further anonymous pagination.
+  Give read-only access for the repositories you need.
+- **GHCR:** the Packages path uses the `gh` CLI's configured authentication
+  with package-read access (`read:packages`). Public OCI lookups need no GitHub
+  login. After denied automatic paths, an interactive run will prompt to
+  `gh auth refresh -s read:packages`.
+- **Cloud registries:** `gcloud` (GAR/GCR), `az` (ACR), and `aws` (ECR) can
+  supply provider metadata or short-lived credentials from your configured
+  account. `if-faster` permits proactive GAR/ECR metadata access where available;
+  other conditional credential paths wait for denial.
+- **Skopeo fallback:** can try anonymous queries and reuse credentials configured
+  through Docker, Podman, or Skopeo, including supported credential helpers.
+
+Provider tokens use standard input or private temporary files rather than
+subprocess arguments. Session auth files are separate from your saved logins
+and cleaned up on exit. For your security, supplying secrets through environment
+variables requires care; do not paste PATs into command lines or bug reports.
+
+Requests go to registry/provider APIs and their authentication services.
+`--credential-policy=never` disables user credentials, not network access.
+
+## More examples
 
 ```sh
-# Check a container by name.
-container-image-tags postgres
+# Query a digest directly, without requiring a local Docker.
+container-image-tags --tag-resolution=remote \
+  'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 
-# Check an exact local image with tag.
-container-image-tags --tag-resolution local postgres:17
-
-# Ignore Docker's local state and resolve this tag through the registry.
-container-image-tags --tag-resolution remote postgres:17
-
-# Check every local tag for a repository (local image with any tag).
+# Check the tags of every local image with the name "postgres".
 container-image-tags 'postgres:*'
 
-# Query a registry digest directly.
-container-image-tags 'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
+# Return a single machine-readable array for multiple inputs.
+container-image-tags --json --tag-scan=any postgres:17 redis:7
 
-# Check all local containers for all remote tags.
+# Check all local containers and find all their current matching tags.
 container-image-tags --tag-scan=all $(docker ps -a --format '{{.Names}}')
 
-# Explicitly permit a long non-interactive bulk lookup.
+# Explicitly permit a long unattended lookup.
 container-image-tags --tag-scan=all --allow-expensive-scan registry.example/app:1
-
-# Return one machine-readable array containing every result.
-container-image-tags --json --tag-scan=any postgres redis:7
 ```
 
-Tag resolution defaults to `auto`: use a matching local image when present, or
-announce a fallback and resolve the tag through the registry. Use
-`--tag-resolution local` to require local resolution, or `--tag-resolution
-remote` to ignore Docker's local state. Remote registry queries used to compare
-or find tags are still available after local resolution.
+Run `container-image-tags --help` for the complete option and input-resolution
+guide. Container names and IDs, local image names and IDs, remote tags, and
+fully qualified SHA-256 repository digests are supported.
 
-Use `--tag-scan ask|never|any|any-durable|all` to control reverse tag lookup. Use
-`--credential-policy never|if-required|if-faster|require` to control when user
-credentials may be used; the default is `if-faster`. Run
-`container-image-tags --help` for the full option and input-resolution guide.
-See [Architecture](docs/architecture.md) for the processing pipeline, result
-record, provider boundaries, current registry-access matrix, credential-policy
-design direction, fallback ownership, and runtime-resource model.
+### JSON for automation
 
-`any` stops at the first matching tag, including a floating alias such as
-`latest`. `any-durable` retains the previous bounded-scan behavior: it stops at
-a tag heuristically assumed durable. The heuristic infers the most precise recurring semantic
-version shape in the tags exposed by the registry: for a repository containing
-both `1.796` and `1.796.0`, the three-component tag is treated as durable and
-the shorter tag as floating. Known channels such as `latest`, `main`, `dev`,
-`stable`, and `edge` are floating; complete commit-like and date-like tags are
-durable. A directly checked three-or-more-component version can satisfy `any-durable`
-immediately. For shorter version schemes, the first registry tag page supplies
-the repository convention and can satisfy `any-durable` without further pagination or
-manifest probes. These classifications express publisher convention, not a
-registry guarantee. `all` remains exhaustive and returns every matching tag.
+`--json` writes one array to standard output; diagnostics go to standard error.
+Each resolved image has its input, source, repository digest, local metadata
+when available, direct tag-check status, and scan mode, status, backend, and tags.
+Wildcard inputs can produce multiple results.
 
-While searching, `any-durable` retains every matching tag encountered in candidate
-order, including floating tags, and stops after the first durable match. A
-confirmed floating tag is included without probing it again. Thus a
-result may contain `latest`, `1.796`, and `1.796.0`; the final tag is the durable
-match that satisfied the scan.
+Inspect `remote_tag_check.status` and `tag_scan.status`, not just the exit code:
+a successful invocation does not mean the original tag still matches, or that
+an exhaustive scan ran. A completed `any` scan is still only a partial search.
 
-Generic public OCI scans list tags once, reuse one anonymous repository token,
-and issue manifest `HEAD` requests with up to eight transfers in flight. Curl's
-parallel engine reuses connections for exhaustive scans; `any` and
-`any-durable` check candidate tags with the rolling worker pool so they can stop
-scheduling after the requested match. Skopeo uses the same pool
-when the OCI fast path is unavailable. Tag pagination stops early when the
-observed lower bound alone proves that the subsequent scan is too expensive.
-Docker Hub similarly estimates exhaustive pagination from its first page.
+<details>
+<summary>Example JSON and scan status fields</summary>
 
-GHCR Packages pages are searched as they arrive. Under the default
-`if-faster` credential policy, an unresolved multi-page Packages lookup lists
-the current OCI tags, compares the measured Packages page cost with the
-conservative parallel OCI estimate, and selects the cheaper remaining path.
-OCI inventory pagination stops as soon as its observed lower-bound scan cost
-already exceeds the Packages estimate.
-Neither package pages nor provider tag arrays are assumed chronological; OCI
-tag pagination is lexical. Interactive bulk work estimated above three minutes
-prints an advisory and continues. Non-interactive work estimated above ten
-minutes fails fast; pass `--allow-expensive-scan` to permit one explicitly.
-
-The engine is selected automatically; bounded scans always use the pool so they
-can stop scheduling early. See [Benchmarks](docs/benchmarks.md) for the
-Codeberg comparison that informed this choice.
-
-Registry-facing commands have a 600-second wall-clock deadline by default,
-including curl, Docker, Skopeo, GitHub CLI, and cloud CLI operations. Set
-`CIT_NETWORK_TIMEOUT_SECONDS` to a non-negative integer to choose another
-limit, or to `0` to disable the deadline.
-
-### JSON Output
-
-Use `--json` for automation. Standard output is a single JSON array with one
-object per resolved image; wildcard inputs may therefore add multiple objects.
-Diagnostics continue to use standard error. JSON mode defaults to
-`--tag-scan=any-durable` even on an interactive terminal, while an explicit
-`--tag-scan` value takes precedence. Each result includes the original input,
-subject source, local image and container details, repository digest, registry
-classification, direct remote-tag check, and reverse-scan status and tags.
-
-For example, the standard output from
-`container-image-tags --json --tag-scan=any postgres:17` has this shape:
+Illustrative output for `--json --tag-scan=any postgres:17` with a matching
+local image (digests and version are placeholders):
 
 ```json
 [
@@ -216,6 +291,8 @@ For example, the standard output from
     "local_image": {
       "id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "version": "17.6",
+      "revision": null,
+      "refname": null,
       "tag": "17"
     },
     "repository": "postgres",
@@ -233,84 +310,46 @@ For example, the standard output from
     "tag_scan": {
       "mode": "any",
       "status": "completed",
-      "backend": "docker-hub-api",
+      "backend": "direct-tag-check",
       "provider_metadata": null,
-      "tags": [
-        "17-alpine"
-      ]
+      "tags": ["17"]
     }
   }
 ]
 ```
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
-`skipped`. `tag_scan.backend` identifies the implementation used for a scan:
-`acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`, `gar-api`,
-`github-packages-api`, `gcr-api`, `oci-registry-api`, or `skopeo`; it is `null`
-when no scan ran.
-`tag_scan.provider_metadata` contains
-provider-specific response data when available, currently for successful
-GitHub Packages API lookups, and is otherwise `null`.
+`skipped`. `tag_scan.backend` is `acr-api`, `direct-tag-check`, `docker-hub-api`,
+`ecr-api`, `gar-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, or
+`skopeo`; it is `null` when no scan ran. `provider_metadata` currently contains
+additional data for successful GitHub Packages API lookups, otherwise `null`.
 
-Registry access starts anonymously where possible. Private-registry access can
-reuse credentials configured by Docker, Skopeo, or Podman. When needed, the
-script can request short-lived credentials from the relevant cloud CLI.
-Credential values are not passed on command lines.
+</details>
 
 ## Development
 
-The executable owns argument parsing, local-input orchestration, and output.
-The `lib` directory contains shared statuses and diagnostics (`common.sh`),
-durable-tag and scan selection (`scan-policy.sh`), bounded workers
-(`scheduler.sh`), local image resolution (`local-images.sh`), anonymous generic
-OCI lookup (`oci.sh`), its portable credential-aware fallback (`skopeo.sh`),
-registry adapters (`docker-hub.sh`, `ghcr.sh`, `acr.sh`, `gar.sh`, and
-`ecr.sh`), the universal ordering and fallback engine (`policy-engine.sh`), and
-central registry classification and request construction (`registries.sh`).
+See [releases](https://github.com/huyz/container-image-tags/releases) for release
+notes and [architecture](docs/architecture.md) for the complete per-provider
+attempt order and implementation contracts.
 
-To add registry-specific support, source its adapter before `registries.sh`,
-classify its repository host in `registry_classify`, and give it one capability
-registration function whose atomic callbacks share the direct/reverse request
-and result API. Lookup helpers use the named status
-contract in `common.sh`: `LOOKUP_SUCCEEDED` (0), `LOOKUP_NOT_FOUND` (1),
-`LOOKUP_UNAVAILABLE` (2), `LOOKUP_DENIED` (3), and terminal
-`LOOKUP_STOPPED` (4). `policy-engine.sh` alone interprets these statuses and
-decides eligibility, ordering, fallback, and interactive-recovery timing. Each
-dispatch caller supplies a lightweight associative lookup context that receives
-status, digest, errors, tags, backend, and optional provider metadata.
+The executable and `lib/` are Bash source. Provider adapters implement registry
+operations; a shared policy engine controls credential eligibility, attempt
+ordering, and fallback. The [architecture guide](docs/architecture.md) covers
+module boundaries and adding providers.
 
-### Tests
-
-The offline test suite uses [Bats Core](https://bats-core.readthedocs.io/) 1.5
-or newer; CI pins Bats Core 1.14.0. On macOS, install the development
-dependencies with:
+The offline suite uses Bats Core 1.5+; CI pins 1.14.0. On macOS:
 
 ```sh
 brew install bats-core shellcheck
-```
-
-Run the same required checks used by CI from any directory:
-
-```sh
 tests/run static
-tests/run  # Runs unit, integration, security tests
+tests/run  # Unit, integration, and security tests
 ```
 
-The required suite isolates `HOME`, Docker configuration, cloud configuration,
-and all external commands. It does not use the network, a Docker daemon, or
-real credentials. Narrower and optional tiers are also available:
-
-```sh
-tests/run unit
-tests/run integration
-tests/run security
-tests/run stress
-CIT_LIVE_TESTS=1 CIT_LIVE_GENERIC_OCI_REF='alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b' tests/run live
-```
-
-Live tests are opt-in and skipped unless their target environment variables are
-configured. See [`docs/test-plan.md`](docs/test-plan.md) for the behavioral
-matrix, test IDs, and completion requirements.
+The harness isolates user configuration and replaces external-service commands
+with fixtures. Individual suites are available through `tests/run unit`,
+`integration`, `security`, or `stress`. Stress tests also run in a separate
+scheduled/manual workflow. Live tests require explicit opt-in and a configured
+target; see the [test plan](docs/test-plan.md) for details.
 
 ## License
 
