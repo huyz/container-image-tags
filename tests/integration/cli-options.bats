@@ -98,7 +98,7 @@ function run_cli_with_tty_input {
 
     run_cli --version
     assert_status 0
-    assert_output_contains "container-image-tags 0.1.0"
+    assert_output_contains "container-image-tags 0.1.1"
 }
 
 @test "SMOKE-001 help runs with all external dependencies stubbed" {
