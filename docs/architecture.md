@@ -106,133 +106,66 @@ caller-owned context.
 
 ## Registry access matrix
 
-Registry access currently combines several independent decisions. Keeping
-their names separate helps avoid treating an authenticated path as necessarily
-slow, or an anonymous path as necessarily fast.
+This section covers only the reverse scan from a known digest to its current
+tags. Digest resolution is outside the matrix.
 
-| Axis            | Question                                                | Current control                                        |
-| --------------- | ------------------------------------------------------- | ------------------------------------------------------ |
-| Subject source  | Was the repository digest resolved locally or remotely? | `--tag-resolution`                                     |
-| Scan breadth    | Is reverse lookup skipped, bounded, or exhaustive?      | `--tag-scan`                                           |
-| Credential use  | May a lookup identify the caller, and when?             | `--credential-policy`                                  |
-| Backend         | Which provider, OCI, or Skopeo API performs the lookup? | Selected automatically                                 |
-| Cost guard      | May estimated long pagination or per-tag work proceed unattended? | `--allow-expensive-scan`                        |
+Three algorithms appear in the cells:
 
-### How registry operations determine the path
+- **Indexed metadata** asks a provider API for the tags attached to the digest.
+  It avoids per-tag manifest requests and is normally the cheapest path.
+- **Native OCI scan** uses `lib/oci.sh` to list tags, then sends a manifest
+  `HEAD` for each candidate required by the scan mode. It uses up to eight
+  workers. `any` and `any-durable` can stop early; `all` is linear in the
+  repository's tag count.
+- **Skopeo scan** runs `skopeo list-tags`, then inspects each required candidate
+  manifest. It has the same stopping and eight-worker contracts as native OCI,
+  but is a compatibility and credential-discovery fallback, not a faster
+  reverse algorithm (in fact it is usually slower than native OCI).
 
-Direct and reverse lookup have different protocol costs:
+The rows below are attempt priority, not unconditional calls. Read each
+registry column from top to bottom and skip any row whose condition is false.
+The default `--credential-policy=if-faster` permits an existing credential only
+when it unlocks a cheaper indexed path; ordinary credential and interactive
+rows require an earlier `LOOKUP_DENIED`. `if-required` starts with public rows,
+`never` removes all credentialed rows, and `require` removes all public rows.
+The engine stops as soon as a row succeeds or returns a terminal outcome.
 
-- A direct `tag -> digest` lookup is cheap through the OCI Distribution API.
-  One manifest `HEAD` request can return `Docker-Content-Digest` (possibly
-  after exchanging a public repository-scoped bearer token).
-- A reverse `digest -> tags` lookup is not defined by the OCI Distribution
-  API. Its generic implementation must list the repository's tags and then
-  request each candidate manifest to discover its digest. Bounded scans can
-  stop early; `all` is inherently one manifest request per tag.
-- A provider metadata API is preferred when it returns the tag and digest
-  relationship directly. That avoids per-tag manifest requests and may also
-  expose an authoritative not-found response.
+| Step / condition | Docker Hub | GHCR | ACR | GCR | GAR | Private ECR | ECR Public | Other OCI |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **0. Satisfy the scan locally** | If the already-confirmed input tag satisfies `any`, or satisfies `any-durable` and is durable, return it. `all` always continues. | Same | Same | Same | Same | Same | Same | Same |
+| **1. Reuse an in-run provider session** | Reuse a Docker Hub API token obtained for an earlier input. | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| **2. Try the provider-specific primary path** | Public paginated Hub tags API. Each record already pairs a tag with its digest; bounded modes can stop between pages. For `all`, measure page 1 and guard the estimated remaining pages. Hub typically denies further requests after ~10 pages. | With usable `gh` credentials under `if-faster` or `require`, search only the first GitHub Packages page for the digest. A complete miss is authoritative; an incomplete miss continues at step 3. | Public ACR manifest-metadata request by digest. One response contains the attached tags. | Public GCR `tags/list` extension. Its digest-keyed manifest map contains the attached tags in one response. | Under `if-faster` or `require`, use an existing Google token with `dockerImages.get`. A 404 is non-authoritative because remote or virtual repositories may resolve an upstream image. | Under `if-faster` or `require`, call signed `DescribeImages` by digest. The response contains all current tags. | Under `if-faster` or `require`, use the signed ECR Public API when AWS credentials are detectable and the repository alias resolves unambiguously. | N/A |
+| **3. Continue the measured GHCR path** | N/A | If step 2 pagination indicates more Packages pages, anonymously inventory OCI tags while it remains cheaper than the remaining Packages pages. Register both measured continuations, then commit to the cheaper one first: more Packages pages, or manifest `HEAD`s over the already-listed OCI tags. Either bulk continuation runs the expensive-work guard. | N/A | N/A | N/A | N/A | N/A | N/A |
+| **4. Try the public native OCI path** | N/A; the Hub API is the preferred public index. | Use when the Packages probe is unavailable or not permitted, after any measured continuation is unavailable, or after a Packages continuation is denied. A denial from an OCI continuation suppresses this duplicate public attempt. | N/A; ACR metadata is the preferred public index. | N/A; the GCR manifest map is the preferred public index. | List tags and inspect candidate manifests. This also verifies a non-authoritative GAR API miss. | N/A; authentication probe only: the expected denial unlocks credentialed paths under `if-required` or after the signed API is unavailable. | Normal fallback when the signed API is unavailable or credentials are not permitted. | Primary algorithm: list tags and inspect candidate manifests. |
+| **5. Try provider credentials**<br>After `LOOKUP_DENIED`, or immediately under `require` | Exchange `DOCKER_HUB_USERNAME` and `DOCKER_HUB_PAT` for a short-lived Hub token, then resume the paginated Hub API scan. | Search GitHub Packages pages using existing `gh` credentials with `read:packages`. | Ask Azure CLI for the digest-addressed manifest metadata. | Obtain a short-lived Google token and repeat the GCR manifest-map request. | Obtain a Google token and try `dockerImages.get`, unless that API was already attempted. Its 404 remains non-authoritative. | Call signed `DescribeImages`, unless the same API was already attempted. | Call the signed ECR Public API, unless it was already attempted. | N/A |
+| **6. Try credentialed native OCI**<br>After step 5 cannot answer | N/A | N/A | N/A | N/A | Reuse the Google token to list tags and inspect candidate manifests through native OCI. | N/A | N/A | N/A |
+| **7. Reuse the Skopeo session authfile** | If the session authfile already contains this registry, run the generic Skopeo scan. | Same | Same | Same | Same | Same | Same | Same |
+| **8. Try isolated public Skopeo** | Run the generic scan with an explicitly empty authfile only when earlier public access was unavailable, not denied. | Same | Same | Same | Same | Same | Same | Same |
+| **9. Try configured Skopeo credentials**<br>After `LOOKUP_DENIED`, or immediately under `require` | Let Skopeo use its default credential context, including Skopeo/Podman auth and Docker credential helpers. | Same | Same | Same | Same | Same | Same | Same |
+| **10. Give Skopeo a provider credential**<br>After denial (or under `require`) and configured credentials cannot answer | N/A | N/A | Obtain a short-lived ACR credential, store it only in the session authfile, then run the generic scan. | Obtain a short-lived Google credential, store it only in the session authfile, then run the generic scan. | Obtain a short-lived Google credential, store it only in the session authfile, then run the generic scan. | Obtain a short-lived ECR credential, store it only in the session authfile, then run the generic scan. | Obtain a short-lived ECR Public credential, store it only in the session authfile, then run the generic scan. | N/A |
+| **11. Offer interactive recovery**<br>Only after denial and all automatic paths | Collect a Docker Hub username/PAT and retry the Hub API, or let the user skip this input. | Offer to refresh `gh` with `read:packages` and retry Packages, explicitly choose the slower anonymous OCI scan, or skip this input. | N/A | N/A | N/A | N/A | N/A | N/A |
 
-In this document, **native OCI** means the explicit Distribution API client in
-`lib/oci.sh`; it does not mean that no OCI protocol is involved elsewhere.
-Skopeo normally talks to the same registry protocol internally, but it owns
-transport compatibility, credential discovery, and manifest handling. A row
-without a native OCI step may therefore still reach registry manifest
-endpoints through its Skopeo fallback.
+Every per-tag OCI or Skopeo scan performs an expensive-work preflight. A
+non-interactive estimate over ten minutes returns `LOOKUP_STOPPED` unless
+`--allow-expensive-scan` was supplied; an interactive estimate over three
+minutes warns and continues. Docker Hub and GHCR apply the same policy to
+measured remaining API pages.
 
-#### Native OCI versus the Skopeo fallback
+Fallback is determined by the result of the current row:
 
-Native OCI and Skopeo are two implementations of the same portable registry
-operations. For a direct lookup, each resolves one tag to its exact manifest
-digest. For a reverse lookup, each lists the repository's tags and resolves
-the manifest digest of every candidate required by the scan mode. Both paths
-therefore preserve full-digest equality, provider tag order, the `any`,
-`any-durable`, and `all` stopping contracts, an eight-worker concurrency
-limit, and the expensive-scan preflight.
+| Result | Effect on the remaining rows |
+| --- | --- |
+| `LOOKUP_SUCCEEDED` | Return the selected tags immediately. |
+| `LOOKUP_NOT_FOUND` | Stop when the mechanism is authoritative. GAR's metadata miss is deliberately converted to `LOOKUP_UNAVAILABLE` so OCI can verify remote and virtual repositories. |
+| `LOOKUP_STOPPED` | Stop immediately. Rate limiting and a refused expensive scan never select a more request-intensive backend. |
+| `LOOKUP_UNAVAILABLE` | Try the next permitted mechanism. This can change clients or backends but cannot authorize credentials. |
+| `LOOKUP_DENIED` | Record the denial and permit credentialed rows according to `--credential-policy`. A denial from a public row also suppresses later public rows. |
 
-Skopeo is not a provider metadata fast path. In particular, it does not replace
-the Docker Hub, GitHub Packages, ACR, GCR, GAR, or ECR indexes described below. A
-Skopeo reverse lookup still performs a tag-list request followed by as many
-manifest inspections as the scan requires. Its value is broader registry and
-credential compatibility when the deliberately narrow native client cannot
-finish the operation.
-
-| Capability | Native OCI | Skopeo fallback | Practical consequence |
-| --- | --- | --- | --- |
-| Registry model | Calls OCI Distribution v2 endpoints directly with `curl`. | Uses Skopeo's `docker://` transport, which normally calls the same Distribution endpoints. | Choosing Skopeo usually changes the client implementation, not the registry-side algorithm. |
-| Direct `tag -> digest` | Sends a manifest `HEAD` and reads the exact `Docker-Content-Digest` response header. | Downloads the raw manifest with `skopeo inspect --raw` and computes its digest with `skopeo manifest-digest`. | Native OCI transfers less data; Skopeo can accommodate manifest and transport behavior outside the native client's assumptions. |
-| Reverse `digest -> tags` | Paginates `tags/list`, then sends one manifest `HEAD` for each required candidate. | Runs `skopeo list-tags`, then one raw manifest inspection and digest calculation for each required candidate. | Both are linear in the number of inspected tags; Skopeo is compatibility fallback, not a reverse-lookup acceleration. |
-| Public access | Sends no user credential. It can answer one Bearer challenge by obtaining a public repository-scoped token. | Uses a temporary empty authfile so cached credentials cannot leak into the public attempt. | Both support genuinely public-first operation even when the registry calls its public bearer exchange "authentication." |
-| Existing credentials | Does not search credential stores or invoke credential helpers. | Can use credentials known to Skopeo or Podman and, through Skopeo's discovery, Docker configuration and credential helpers. | A private generic registry normally needs Skopeo unless a provider adapter supplies a token directly to native OCI. |
-| Provider credentials | Can use a bearer token explicitly supplied by a provider adapter, as the Google adapters do. | Can store a short-lived ACR, Google, or ECR credential obtained by a provider callback in a session-only authfile. | Provider tokens may make either client authenticated; "native" does not mean "anonymous," and "Skopeo" does not mean "authenticated." |
-| Manifest and platform handling | Accepts an explicit set of OCI and Docker manifest media types and relies on registry response headers. | Delegates media-type, registry, and raw-manifest handling to Skopeo; on macOS the tool passes `--override-os linux` to match the Docker Desktop default environment. | Skopeo is the safer compatibility attempt for a registry or manifest shape the native client does not recognize. |
-| Concurrency and cost | Uses parallel manifest `HEAD` requests; exhaustive scans use curl's native parallel engine when available so connections may be reused or multiplexed. | Starts one Skopeo inspection process per candidate through the shared rolling worker pool. | Native OCI is expected to be lighter and is estimated at one second per parallel batch; Skopeo uses a conservative two seconds per tag before parallelism. |
-| Failure classification | Classifies actual HTTP status codes and required headers: denial, absence, rate limit, or unsupported/unavailable behavior. | Maps bounded patterns in Skopeo's command diagnostics, such as 401/403, 404, and 429, to the shared lookup statuses. | Native OCI has more structured failure evidence; an unfamiliar Skopeo diagnostic is conservatively treated as unavailable. |
-| Runtime dependency | Uses the program's existing `curl` and `jq` requirements. | Requires the optional external Skopeo executable. | A missing Skopeo leaves native and provider paths usable, but removes the generic compatibility and configured-credential fallback. |
-| Secret isolation | Writes bearer headers to mode-0600 temporary files rather than process arguments. | Separates a mode-0600 empty public authfile from a mode-0600 session authfile and supplies login secrets on standard input. | Neither path intentionally exposes tokens in process arguments, and a public Skopeo attempt cannot silently become credentialed. |
-
-"Skopeo fallback" consequently describes two different transitions, both
-governed by the same status contract:
-
-1. After `LOOKUP_UNAVAILABLE`, Skopeo may be tried with its isolated empty
-   authfile as a different public client. This is a compatibility fallback;
-   unavailability alone never authorizes user credentials.
-2. After `LOOKUP_DENIED`, the credential policy may permit Skopeo to use
-   configured registry credentials. If that attempt is also denied, a
-   provider adapter may obtain a short-lived credential and put it in the
-   session authfile.
-
-An already acquired in-session credential is reused first when the credential
-policy permits it. Otherwise the public Skopeo attempt precedes configured
-credentials. `LOOKUP_NOT_FOUND` and `LOOKUP_STOPPED` are terminal: neither
-selects another backend nor broadens credential use. Thus the word "fallback"
-does not mean "always authenticated," and Skopeo itself has no hidden
-anonymous-to-authenticated transition outside this sequence.
-
-The path matrix below assumes the default `--credential-policy=if-faster`.
-Other policies can reorder or remove public and credentialed attempts. Numbers
-show attempt order within each lookup column. A "Skopeo fallback" step expands
-to the sequence in that row's Skopeo column.
-
-| Registry | Direct tag lookup order | Reverse digest lookup order | Provider credential path | Skopeo fallback | Reverse-scan cost |
-| --- | --- | --- | --- | --- | --- |
-| Docker Hub | 1. Public Hub tag API<br>2. Environment PAT retry after access denial<br>3. Skopeo fallback<br>4. Interactive PAT retry after denied automatic paths | 1. Public paginated Hub API with bounded early exit and exhaustive page-cost guard<br>2. Environment PAT retry after access denial<br>3. Interactive PAT or Skopeo fallback | 1. Exchange an environment or interactive PAT for a short-lived Hub token after access denial | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Hub API: one digest-bearing record per tag; page cost guarded<br>Skopeo: one request per tag |
-| GHCR | 1. Public native OCI manifest request<br>2. Incremental GitHub Packages pages after access denial<br>3. Skopeo fallback<br>4. Interactive `gh` scope refresh after denied automatic paths | 1. Probe the first Packages page when `gh` is available<br>2. For unresolved multi-page histories, inventory current OCI tags and advertise both measured continuations<br>3. Execute the cheaper continuation selected by the engine<br>4. Try ordinary public OCI and Skopeo compatibility paths when a probe is unavailable<br>5. Offer interactive recovery only after denied automatic paths | 1. Use existing `gh` credentials for the Packages API<br>2. Refresh `gh` credentials interactively when selected | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Packages API: one to many serial pages, searched incrementally<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
-| ACR | 1. Public ACR tag metadata API<br>2. Azure CLI metadata after access denial<br>3. Skopeo fallback | 1. Public ACR manifest metadata API<br>2. Azure CLI metadata after access denial<br>3. Skopeo fallback | 1. Query metadata through Azure CLI after access denial<br>2. Obtain a short-lived Azure token if Skopeo is denied | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Azure token after access denial | Metadata API: **fast**<br>Skopeo: one request per tag |
-| GCR | 1. Public GCR manifest map<br>2. Token-authenticated GCR manifest map after access denial<br>3. Skopeo fallback | 1. Public GCR manifest map<br>2. Token-authenticated GCR manifest map after access denial<br>3. Skopeo fallback | 1. Obtain a short-lived Google token after access denial<br>2. Reuse the token with the GCR manifest map | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Google token after access denial | Manifest map: **fast**<br>Skopeo: one request per tag |
-| GAR | 1. Public native OCI manifest request<br>2. Token-authenticated native OCI manifest request after access denial<br>3. Skopeo fallback | 1. Authenticated GAR DockerImage API when configured Google credentials are available<br>2. Public native OCI tag listing and parallel manifest `HEAD` requests<br>3. Authenticated GAR DockerImage API after access denial, if not already tried<br>4. Token-authenticated native OCI listing and parallel manifest `HEAD` requests<br>5. Skopeo fallback | 1. Probe an existing Google Cloud CLI token for the faster DockerImage API under `if-faster`<br>2. Obtain a short-lived Google token after access denial or under `require`<br>3. Reuse the token with the GAR API and native OCI paths | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived Google token after access denial | DockerImage API: **fast**<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
-| Private ECR | 1. Signed ECR service API<br>2. Public native OCI manifest request if the service API is unavailable<br>3. Skopeo fallback | 1. Signed ECR service API<br>2. Public native OCI listing and parallel manifest `HEAD` requests if the service API is unavailable<br>3. Skopeo fallback | 1. Use AWS credentials with the signed service API<br>2. Obtain a short-lived AWS token if Skopeo is denied | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived AWS token after access denial | ECR API: **fast**<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
-| ECR Public | 1. Public native OCI manifest request<br>2. Skopeo fallback | 1. Signed ECR Public API when AWS credentials are detectable<br>2. Public native OCI listing and parallel manifest `HEAD` requests<br>3. Skopeo fallback | 1. Use AWS credentials with the signed reverse-lookup API<br>2. Obtain a short-lived AWS token if Skopeo is denied | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial<br>4. Obtain a short-lived AWS token after access denial | ECR API: **fast**<br>Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
-| Other OCI | 1. Public native OCI manifest request<br>2. Skopeo fallback | 1. Public native OCI tag listing and parallel manifest `HEAD` requests<br>2. Skopeo fallback | Not applicable | 1. Reuse an in-session token, if present<br>2. Try isolated public access<br>3. Try configured registry credentials after access denial | Native OCI: one request per tag, parallel for `all`<br>Skopeo: one request per tag |
-
-### Why each registry uses those paths
-
-This matrix connects known registry operations to the choices above. The same
-decision rule applies to every row: use a direct provider index when it is
-available and materially cheaper; otherwise use native OCI for public access
-and Skopeo for credential and compatibility fallbacks.
-
-| Registry | Relevant operation characteristics | Direct path rationale | Reverse path rationale |
-| --- | --- | --- | --- |
-| Docker Hub | The Hub tag endpoint returns the digest for one exact tag. Paginated tag records also pair each tag with its digest, although deep anonymous pagination can require sign-in. | Use the Hub tag API because it answers `tag -> digest` directly; a manifest request would duplicate data already present in one tag record. After configured paths fail on an explicit denial, an interactive PAT retry lets private repositories work without requiring credentials to have been exported in advance. | Use the paginated Hub tag API because every page can be filtered by digest without requesting each manifest. Retry the refused page with a PAT, or use Skopeo when the Hub API cannot complete. |
-| GHCR | Public packages expose OCI Distribution endpoints. The GitHub Packages API exposes a package-version digest and all of its current tags together, but offers neither digest filtering nor a tagged-only filter and requires usable `gh` credentials with `read:packages`. | Use native OCI first because one public manifest request is the cheapest exact lookup and does not require GitHub credentials. Use incremental Packages pages after public access is denied so private packages remain reachable; if existing credentials still fail, an interactive scope refresh can recover the exact lookup. | Under `if-faster`, search the first Packages page immediately. If the digest remains unresolved and more pages exist, inventory the current OCI tags, compare the measured Packages page latency with a conservative parallel OCI estimate, and automatically choose the cheaper permitted remainder. Stop that inventory once its observed lower-bound scan cost already exceeds Packages. No decision assumes chronological package or tag order. |
-| ACR | ACR's artifact metadata endpoints accept either an exact tag or an exact manifest digest. The Azure CLI can query the corresponding metadata for authenticated registries. | Use tag metadata because it returns the digest directly and can distinguish absence without fetching a manifest. | Use manifest metadata because it returns the tags attached to the requested digest in one operation. Native OCI would replace that indexed lookup with tag listing plus per-tag manifest requests, so it provides no fast-path benefit. |
-| GCR | GCR extends `tags/list` with a `manifest` object keyed by complete digest; each entry contains its current tags. This is richer than the standard OCI tags-list response. | Search the manifest map for exact tag membership and return its digest. One map request replaces a manifest request and already supports public access. | Index the same map by the requested digest and return its tags. Reuse the map with a Google token after denial; there is no reason to expand it into per-tag native OCI requests. |
-| GAR | GAR supports standard OCI Distribution operations and accepts a short-lived Google token on those operations. Its authenticated Artifact Registry API also exposes a digest-addressed DockerImage resource containing the tags attached to that image. | Use one native OCI manifest request, anonymously when allowed and with a Google token after denial. The authenticated metadata API would not reduce this already constant-cost operation. | Under `if-faster`, use `dockerImages.get` when configured Google credentials are available because one indexed request replaces tag listing plus per-tag manifest requests. Public access remains native OCI. An API 404 is verified through OCI because remote or virtual repositories may resolve an upstream image absent from their own metadata index. |
-| Private ECR | Signed `DescribeImages` accepts a tag or digest and returns image details containing both the digest and current tags. The registry endpoint is private, so a public OCI request will normally be denied. | Under `if-faster`, use signed `DescribeImages` because it is both authoritative and a single indexed lookup. The public native OCI attempt after service-API unavailability is best-effort policy/backend fallback; configured registry credentials or AWS-backed Skopeo are the realistic private-registry fallback. | Use signed `DescribeImages` because it directly implements `digest -> tags`. A native OCI scan is retained only as a best-effort fallback or when a public-first credential policy requires that ordering; it is not expected to outperform or usually access private ECR anonymously. |
-| ECR Public | The Distribution endpoint is public. The ECR Public service API can return image details by digest, but it is signed and first requires resolving the repository alias to a registry ID. | Use one public native OCI manifest request because it avoids AWS credentials and alias discovery. The signed API offers no direct-lookup advantage large enough to justify those prerequisites. | When AWS credentials and an unambiguous alias are available, use the signed API because it returns the tags for a digest directly. Otherwise use public OCI tag listing plus manifest requests. |
-| Other OCI | Only standard OCI Distribution behavior is assumed; there is no known provider index that pairs tags and digests. | Use one public native OCI manifest request, then Skopeo for private or incompatible registries. | List tags and request candidate manifests because that is the only portable reverse algorithm. Use Skopeo when the native client cannot complete the registry-specific exchange. |
-
-Here, "public" means that no user credential is supplied (i.e. anonymous). An
-OCI registry may still issue a repository-scoped bearer token for public
-access, so "no user credentials" is more precise than "no authentication." A
-rate limit or an authoritative not-found response is terminal; it must not
-trigger a broader or credentialed fallback.
-
-Provider-owned interactive recovery occurs only after an explicit denial and
-only after automatic credential paths fail. Docker Hub can collect a PAT for
-the fast tag API; GHCR can refresh the existing `gh` credential's
-`read:packages` scope.
+Here, **public** means that no user credential is supplied; a registry may
+still issue a repository-scoped bearer token for public access. Native OCI
+keeps bearer headers in mode-0600 temporary files; Skopeo separates an empty
+public authfile from the session authfile and receives login secrets on
+standard input.
 
 Provider-specific response parsing and authentication remain in provider
 modules. Generic request resources and diagnostic extraction live in

@@ -35,12 +35,8 @@ This is an AI-assisted project. I've reviewed, refactored, and refined the
 implementation to be confident of its correctness and ensure the code is easy to
 follow and maintain — just as for a hand-coded codebase.
 
-An offline test suite exercises all the registry adapters and the policy engine,
-simulating various registry responses and credential scenarios.
+An offline test suites covers all supported registry adapters.
 As for real-world validation, Docker Hub and GHCR are the most tested providers.
-
-TBD: More live registry tests, and a way to manually verify results against
-your own Skopeo or curl loop.
 
 ## Quick start
 
@@ -81,13 +77,23 @@ And just for demonstration, let's force anonymous lookup only:
 ```
 
 This resolves what `postgres:17` points to **now** and asks you if you want
-to find alias tags for that digest. For example, one public run
-returned these tags after `first matching durable tag` was chosen:
+to find alias tags for that digest. For example, if you select the
+`first matching durable tag` you may get:
 
 ```text
 Remote tags (partial scan):
 17
 17.11-trixie
+```
+
+If you select `all`, you may get:
+
+```text
+Other remote tags:
+17.11-trixie
+17.11
+17-trixie
+17
 ```
 
 Keep `lib/` beside the executable. To use the command without specifying its
@@ -113,9 +119,9 @@ fallbacks) are optional; see [Authentication](#authentication-you-control-the-tr
 By default, `--tag-resolution=auto` uses local Docker state when available and
 announces a remote fallback otherwise. Use `local` to require a local image or
 `remote` to ignore local state. (Not to be confused, local resolution does not
-imply an offline-only mode: the tag check and reverse scan will still contact
-the registry to do lookups.)
-
+imply an offline-only mode: the tag check and reverse scan still contact the
+registry.)
+ 
 ## Scope and registry support
 
 Registry adapters cover Docker Hub, HCR (GitHub), GCR (Google), GAR (Google),
@@ -249,7 +255,7 @@ Requests go to registry/provider APIs and their authentication services.
 container-image-tags --tag-resolution=remote \
   'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 
-# Check the tags of every local image with the name "postgres".
+# Check the tags of every local image from the `postgres` repository
 container-image-tags 'postgres:*'
 
 # Return a single machine-readable array for multiple inputs.
