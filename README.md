@@ -121,7 +121,7 @@ announces a remote fallback otherwise. Use `local` to require a local image or
 `remote` to ignore local state. (Not to be confused, local resolution does not
 imply an offline-only mode: the tag check and reverse scan still contact the
 registry.)
- 
+
 ## Scope and registry support
 
 Registry adapters cover Docker Hub, HCR (GitHub), GCR (Google), GAR (Google),
@@ -216,7 +216,7 @@ API, even if there's a (slower) anonymous means.
 | Policy | When user credentials may be used |
 | --- | --- |
 | `never` | Never. Only public/anonymous access; no authentication prompts. |
-| `if-required` | Start public; permit credentials only after an explicit access denial. |
+| `if-required` | Exhaust applicable public mechanisms; permit credentials only after an explicit access denial. |
 | `if-faster` (default) | Permit credentials proactively for a faster or more complete native API; otherwise only after an explicit access denial. |
 | `require` | Only credentialed access; no public/anonymous requests. Fail if no permitted path can answer. |
 
@@ -225,18 +225,22 @@ API, even if there's a (slower) anonymous means.
 
 - **Docker Hub:** under the default policy, start with the public tags API.
   After denial, the tool will try `DOCKER_HUB_USERNAME` and `DOCKER_HUB_PAT` if
-  supplied, falling back to Skopeo paths. If automatic paths cannot recover from denial,
-  an interactive run will prompt for a username/PAT to retry; a PAT lets the scan
-  continue when Hub refuses further anonymous pagination.
+  supplied. Otherwise it can obtain an anonymous repository token and use the
+  native registry API, then fall back to Skopeo paths. If automatic paths cannot
+  recover from denial, an interactive run will prompt for a username/PAT to
+  retry the faster Hub tags API; a PAT is not required for the native OCI scan.
   Give read-only access for the repositories you need.
 - **GHCR:** the Packages path uses the `gh` CLI's configured authentication
   with package-read access (`read:packages`). Public OCI lookups need no GitHub
   login. After denied automatic paths, an interactive run will prompt to
   `gh auth refresh -s read:packages`.
-- **Cloud registries:** `gcloud` (GAR/GCR), `az` (ACR), and `aws` (ECR) can
-  supply provider metadata or short-lived credentials from your configured
-  account. `if-faster` permits proactive GAR/ECR metadata access where available;
-  other conditional credential paths wait for denial.
+- **Cloud registries:** Public repositories are queried without user credentials
+  through provider metadata or native OCI where supported. After an access
+  denial, gcloud (GAR/GCR), az (ACR), or aws (ECR) can use your configured
+  account for private metadata or a short-lived registry credential. Under
+  `if-faster`, ECR may use existing AWS credentials proactively because its
+  indexed `DescribeImages` API is signed; the public indexed paths for ACR, GCR,
+  and GAR do not need that optimization.
 - **Skopeo fallback:** can try anonymous queries and reuse credentials configured
   through Docker, Podman, or Skopeo, including supported credential helpers.
 

@@ -199,6 +199,8 @@ function gcr_register_policy_attempts {
     request_ref[provider_auth_callback]=gar_authenticate
     policy_add_attempt gcr-public gcr_policy_attempt_public \
         gcr-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt gcr-oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 30
     policy_add_attempt gcr-google-token gcr_policy_attempt_google_token \
         gcr-api "$POLICY_ACCESS_CREDENTIAL" 20
     skopeo_register_policy_attempts "$request_name" gcr 70

@@ -88,6 +88,23 @@ function assert_classification {
     refute_file_exists "$CALLS_DIR/skopeo"
 }
 
+@test "HUB-022 denied Hub API falls back to anonymous Docker registry OCI" {
+    load_registry_dispatch
+    opt_credential_policy=never
+    function docker_hub_tags_by_digest { return "$LOOKUP_DENIED"; }
+    function oci_tags_by_digest_anonymously {
+        printf '%s\0' "$@" >"$CALLS_DIR/hub-oci"
+        printf '%s\n' stable
+    }
+    registry_classify alpine
+
+    dispatch_find_tags_by_digest alpine sha256:one all '<none>'
+    [[ "${dispatch_lookup[tags]}" == stable ]]
+    [[ "${dispatch_lookup[backend]}" == oci-registry-api ]]
+    assert_call_args "$CALLS_DIR/hub-oci" \
+        registry-1.docker.io library/alpine sha256:one
+}
+
 @test "DISPATCH-003 reverse lookup records the actual initial backend" {
     load_registry_dispatch
     function docker_hub_tags_by_digest { registry_tags=stable; }
@@ -299,6 +316,18 @@ function assert_classification {
     [[ "${dispatch_lookup[tags]}" == stable ]]
 }
 
+@test "ACR-018 denied metadata retains anonymous native OCI" {
+    load_registry_dispatch
+    opt_credential_policy=never
+    function acr_policy_attempt_public { return "$LOOKUP_DENIED"; }
+    function oci_tags_by_digest_anonymously { printf '%s\n' public-oci; }
+    registry_classify vault.azurecr.io/team/app
+
+    dispatch_find_tags_by_digest vault.azurecr.io/team/app sha256:one all '<none>'
+    [[ "${dispatch_lookup[backend]}" == oci-registry-api ]]
+    [[ "${dispatch_lookup[tags]}" == public-oci ]]
+}
+
 @test "DISPATCH-012 ECR not-found reverse API is authoritative" {
     load_registry_dispatch
     function ecr_tags_by_digest_api { return "$LOOKUP_NOT_FOUND"; }
@@ -373,9 +402,20 @@ function assert_classification {
         "${dispatch_lookup[tags]}" == fallback ]]
 }
 
+@test "GCR-008 denied metadata retains anonymous native OCI" {
+    load_registry_dispatch
+    opt_credential_policy=never
+    function gcr_tags_by_digest_anonymously { return "$LOOKUP_DENIED"; }
+    function oci_tags_by_digest_anonymously { printf '%s\n' public-oci; }
+    registry_classify gcr.io/project/app
+
+    dispatch_find_tags_by_digest gcr.io/project/app sha256:one all '<none>'
+    [[ "${dispatch_lookup[backend]}" == oci-registry-api ]]
+    [[ "${dispatch_lookup[tags]}" == public-oci ]]
+}
+
 @test "GAR-016 GAR metadata reverse lookup reports its actual backend" {
     load_registry_dispatch
-    function gar_access_token_if_available { printf '%s\n' token; }
     function gar_tags_by_digest_api { printf '%s\n' metadata; }
     function oci_tags_by_digest_anonymously {
         : >"$CALLS_DIR/unexpected-oci"
@@ -387,6 +427,48 @@ function assert_classification {
     [[ "${dispatch_lookup[backend]}" == gar-api ]]
     [[ "${dispatch_lookup[tags]}" == metadata ]]
     refute_file_exists "$CALLS_DIR/unexpected-oci"
+}
+
+@test "GAR-017 public metadata lookup does not request a Google token" {
+    load_registry_dispatch
+    function gar_tags_by_digest_api {
+        printf '%s\0' "$@" >"$CALLS_DIR/gar-api"
+        printf '%s\n' metadata
+    }
+    function gar_access_token { : >"$CALLS_DIR/unexpected-token"; return 1; }
+    registry_classify us-docker.pkg.dev/project/repo/app
+
+    dispatch_find_tags_by_digest \
+        us-docker.pkg.dev/project/repo/app sha256:one all '<none>'
+    [[ "${dispatch_lookup[backend]}" == gar-api ]]
+    assert_call_args "$CALLS_DIR/gar-api" us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app sha256:one ''
+    refute_file_exists "$CALLS_DIR/unexpected-token"
+}
+
+@test "GAR-013 if-required exhausts public OCI before a metadata token retry" {
+    load_registry_dispatch
+    opt_credential_policy=if-required
+    function gar_tags_by_digest_api {
+        if [[ -z "$4" ]]; then
+            printf '%s\n' public-api >>"$CALLS_DIR/gar-order"
+            return "$LOOKUP_DENIED"
+        fi
+        printf '%s\n' token-api >>"$CALLS_DIR/gar-order"
+        printf '%s\n' metadata
+    }
+    function oci_tags_by_digest_anonymously {
+        printf '%s\n' public-oci >>"$CALLS_DIR/gar-order"
+        return "$LOOKUP_UNAVAILABLE"
+    }
+    function gar_access_token { printf '%s\n' token; }
+    registry_classify us-docker.pkg.dev/project/repo/app
+
+    dispatch_find_tags_by_digest \
+        us-docker.pkg.dev/project/repo/app sha256:one all '<none>'
+    [[ $(cat "$CALLS_DIR/gar-order") == $'public-api\npublic-oci\ntoken-api' ]]
+    [[ "${dispatch_lookup[backend]}" == gar-api ]]
+    [[ "${dispatch_lookup[tags]}" == metadata ]]
 }
 
 @test "DISPATCH-013 stopped GCR reverse lookup never invokes Skopeo" {

@@ -1,11 +1,10 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034,SC2154,SC2178  # standalone module lint: shared fields and namerefs
 
-# Google registry access. GAR uses its authenticated DockerImage resource for
-# indexed digest-to-tags lookup when credentials are allowed, the shared OCI
-# engine for public and token-authenticated registry access, and Skopeo as the
-# compatibility fallback. GCR also reuses the token helper for its digest-keyed
-# metadata endpoint.
+# Google registry access. GAR uses its DockerImage resource anonymously for
+# public indexed digest-to-tags lookup and retries it with a Google token after
+# denial. The shared OCI engine and Skopeo remain compatibility fallbacks. GCR
+# also reuses the token helper for its digest-keyed metadata endpoint.
 
 function gar_access_token {
     local registry="$1"
@@ -22,26 +21,6 @@ function gar_access_token {
     }
     [[ -n "$token" ]] || return "$LOOKUP_UNAVAILABLE"
     printf '%s\n' "$token"
-}
-
-# Probe configured Google Cloud CLI credentials without turning an ordinary
-# public GAR lookup into a warning. The default if-faster policy uses this to
-# select the indexed DockerImage API only when a token is already available.
-function gar_access_token_if_available {
-    local token error_tmp
-
-    command -v "${GCLOUD:=gcloud}" &>/dev/null || return "$LOOKUP_UNAVAILABLE"
-    error_tmp=$(runtime_temp_file gar-token-error)
-    if token=$(run_network_command "$GCLOUD" \
-            auth print-access-token --quiet 2>"$error_tmp") &&
-            [[ -n "$token" ]]; then
-        rm -f "$error_tmp"
-        printf '%s\n' "$token"
-        return "$LOOKUP_SUCCEEDED"
-    fi
-    debug "Configured Google Cloud credentials are unavailable: $(command_error_single_line "$error_tmp")"
-    rm -f "$error_tmp"
-    return "$LOOKUP_UNAVAILABLE"
 }
 
 # Print the location, project ID, repository name, and image path represented
@@ -89,7 +68,7 @@ function gar_docker_image_metadata {
     local location project repository image
     local location_encoded project_encoded repository_encoded image_encoded
     local request_headers response_tmp http_code error_message expected_uri
-    local -a resource_parts=()
+    local -a resource_parts=() request_args=()
 
     readarray -t resource_parts < <(
         gar_api_resource_parts "$registry" "$display_repository"
@@ -110,11 +89,14 @@ function gar_docker_image_metadata {
 
     request_headers=$(runtime_temp_file gar-api-headers)
     response_tmp=$(runtime_temp_file gar-api-response)
-    chmod 600 "$request_headers"
-    printf 'Authorization: Bearer %s\n' "$token" >"$request_headers"
+    if [[ -n "$token" ]]; then
+        chmod 600 "$request_headers"
+        printf 'Authorization: Bearer %s\n' "$token" >"$request_headers"
+        request_args+=(-H "@$request_headers")
+    fi
     if ! http_code=$(registry_http_request GET \
             "https://artifactregistry.googleapis.com/v1/projects/$project_encoded/locations/$location_encoded/repositories/$repository_encoded/dockerImages/$image_encoded" \
-            "$response_tmp" '' -H "@$request_headers"); then
+            "$response_tmp" '' "${request_args[@]}"); then
         rm -f "$request_headers" "$response_tmp"
         return "$LOOKUP_UNAVAILABLE"
     fi
@@ -234,19 +216,6 @@ function gar_debug_denial_detail {
     printf '%s\n' "${docker_error#*denied: }"
 }
 
-function gar_policy_existing_token_is_available {
-    local request_name="$1"
-    local -n request_ref="$request_name"
-    local token
-
-    [[ -z "${request_ref[provider_token]-}" ]] || return 0
-    if token=$(gar_access_token_if_available); then
-        request_ref[provider_token]="$token"
-        return 0
-    fi
-    return 1
-}
-
 function gar_policy_get_token {
     local request_name="$1"
     local -n request_ref="$request_name"
@@ -293,15 +262,16 @@ function gar_policy_attempt_api {
     local result_name="$2"
     local -n request_ref="$request_name"
     local -n result_ref="$result_name"
-    local output status
+    local access_mode="${3-public}"
+    local output status token=
 
-    [[ -z "${request_ref[gar_api_attempted]-}" ]] ||
-        return "$LOOKUP_UNAVAILABLE"
-    request_ref[gar_api_attempted]=1
-    gar_policy_get_token "$request_name" || return "$LOOKUP_UNAVAILABLE"
+    if [[ "$access_mode" == credential ]]; then
+        gar_policy_get_token "$request_name" || return "$LOOKUP_UNAVAILABLE"
+        token="${request_ref[provider_token]}"
+    fi
     if output=$(gar_tags_by_digest_api \
             "${request_ref[registry]}" "${request_ref[display_repository]}" \
-            "${request_ref[digest]}" "${request_ref[provider_token]}"); then
+            "${request_ref[digest]}" "$token"); then
         result_ref[tags]="$output"
         return "$LOOKUP_SUCCEEDED"
     else
@@ -310,21 +280,24 @@ function gar_policy_attempt_api {
     return "$status"
 }
 
+function gar_policy_attempt_api_with_token {
+    gar_policy_attempt_api "$1" "$2" credential
+}
+
 function gar_register_policy_attempts {
     local request_name="$1"
     local -n request_ref="$request_name"
 
     request_ref[provider_auth_callback]=gar_authenticate
     if [[ "${request_ref[operation]}" == reverse ]]; then
-        policy_add_attempt gar-api-existing gar_policy_attempt_api \
-            gar-api "$POLICY_ACCESS_FAST_CREDENTIAL" 10 0 \
-            gar_policy_existing_token_is_available
+        policy_add_attempt gar-api-public gar_policy_attempt_api \
+            gar-api "$POLICY_ACCESS_PUBLIC" 10 0
     fi
     policy_add_attempt gar-oci-public oci_policy_attempt_public \
         oci-registry-api "$POLICY_ACCESS_PUBLIC" 20
     if [[ "${request_ref[operation]}" == reverse ]]; then
-        policy_add_attempt gar-api-token gar_policy_attempt_api \
-            gar-api "$POLICY_ACCESS_CREDENTIAL" 25 0
+        policy_add_attempt gar-api-token gar_policy_attempt_api_with_token \
+            gar-api "$POLICY_ACCESS_CREDENTIAL" 15 0
     fi
     policy_add_attempt gar-oci-token gar_policy_attempt_oci_token \
         oci-registry-api "$POLICY_ACCESS_CREDENTIAL" 30

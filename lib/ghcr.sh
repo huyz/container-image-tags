@@ -405,8 +405,8 @@ function choose_ghcr_direct_authentication {
     done
 }
 
-# Ask how to proceed when the Packages API cannot be used. The selected action
-# is printed as "refresh", "anonymous", or "skip".
+# Ask whether to refresh Packages credentials or skip after automatic public
+# OCI and configured-credential paths have already been exhausted.
 function choose_ghcr_fallback {
     local can_refresh="$1"
     local choice
@@ -416,28 +416,17 @@ function choose_ghcr_fallback {
     fi
 
     echo "$SCRIPT_NAME: GitHub Packages API credentials with read:packages scope are unavailable." >&2
-    if [[ -n "$can_refresh" ]]; then
-        echo "  [r] Run 'gh auth refresh -s read:packages', then retry" >&2
-        echo "  [a] Use the slower anonymous OCI tag scan" >&2
-        echo "  [s] Skip GHCR lookup and exit" >&2
-        while true; do
-            printf "Choose [r/a/s]: " >&2
-            IFS= read -r choice </dev/tty || return 1
-            case "$choice" in
-            r | R) printf 'refresh\n'; return 0 ;;
-            a | A) printf 'anonymous\n'; return 0 ;;
-            s | S) printf 'skip\n'; return 0 ;;
-            esac
-        done
-    fi
-
-    printf "The gh CLI is unavailable. [y] Use the slower anonymous OCI tag scan [s] Skip and exit. Choose [y/s]: " >&2
-    IFS= read -r choice </dev/tty || return 1
-    case "$choice" in
-    y | Y | yes | YES | Yes) printf 'anonymous\n' ;;
-    s | S) printf 'skip\n' ;;
-    *) return 1 ;;
-    esac
+    [[ -n "$can_refresh" ]] || return 1
+    echo "  [r] Run 'gh auth refresh -s read:packages', then retry" >&2
+    echo "  [s] Skip GHCR lookup and exit" >&2
+    while true; do
+        printf "Choose [r/s]: " >&2
+        IFS= read -r choice </dev/tty || return 1
+        case "$choice" in
+        r | R) printf 'refresh\n'; return 0 ;;
+        s | S) printf 'skip\n'; return 0 ;;
+        esac
+    done
 }
 
 function ghcr_policy_gh_is_available {
@@ -523,9 +512,6 @@ function ghcr_policy_attempt_interactive {
     refresh)
         ghcr_refresh_authentication || warn "gh authentication refresh failed"
         ghcr_policy_attempt_packages "$request_name" "$result_name"
-        ;;
-    anonymous)
-        ghcr_policy_attempt_public_oci "$request_name" "$result_name"
         ;;
     skip)
         skip_input=1

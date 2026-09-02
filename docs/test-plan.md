@@ -450,6 +450,7 @@ Implement in `tests/unit/docker-hub.bats`:
 | HUB-019 | P0 | denied direct lookup exhausts automatic paths before an interactive PAT retry of the exact tag. |
 | HUB-020 | P0 | an authoritative not-found or stopped direct fallback never prompts for another credential. |
 | HUB-021 | P0 | an exhaustive first page feeds total page count and measured latency into the shared cost guard. |
+| HUB-022 | P0 | Hub metadata denial retains anonymous native OCI against `registry-1.docker.io`. |
 
 ## GHCR
 
@@ -468,7 +469,7 @@ Implement in `tests/unit/ghcr.bats`:
 | GHCR-009 | P0 | unavailable public OCI changes backend without authorizing credentials. |
 | GHCR-010 | P0 | Packages result populates provider metadata and tags. |
 | GHCR-011 | P1 | no-tag active package metadata prints the documented note. |
-| GHCR-012 | P0 | anonymous and skip string choices dispatch correctly. |
+| GHCR-012 | P0 | refresh and skip string choices dispatch correctly after automatic anonymous OCI has been exhausted. |
 | GHCR-013 | P0 | skip affects only the current input. |
 | GHCR-014 | P0 | a stopped anonymous lookup never invokes Packages or Skopeo. |
 | GHCR-015 | P0 | denied direct lookup exhausts existing `gh` and registry credentials before offering scope refresh and retrying the exact tag. |
@@ -501,9 +502,10 @@ Implement in `tests/unit/acr.bats`:
 | ACR-012 | P0 | manifest metadata must return the requested complete digest. |
 | ACR-013 | P0 | `any-durable` returns matches through one durable tag; `all` deduplicates deterministically. |
 | ACR-014 | P0 | unavailable API falls back to lazy-auth Skopeo and changes backend to `skopeo`. |
-| ACR-015 | P0 | anonymous Skopeo attempt precedes configured credentials and Azure short-lived login. |
+| ACR-015 | P0 | metadata denial retains native OCI and isolated-public Skopeo as independent public attempts. |
 | ACR-016 | P0 | Azure token travels over stdin to Skopeo; authfile is mode 0600. |
 | ACR-017 | P0 | successful metadata reverse lookup reports backend `acr-api`. |
+| ACR-018 | P0 | denied metadata retains native OCI under public-only policy. |
 
 ## GCR and GAR
 
@@ -518,6 +520,7 @@ Implement in `tests/unit/gcr-gar.bats`:
 | GCR-005 | P0 | 404, denial, rate limiting, malformed response, and transport failure map to the named statuses. |
 | GCR-006 | P0 | unavailable or denied GCR metadata follows the intended GAR / Skopeo authentication fallback. |
 | GCR-007 | P0 | GCR success reports `gcr-api`; fallback reports `skopeo`. |
+| GCR-008 | P0 | denied GCR metadata retains native OCI under public-only policy. |
 | GAR-001 | P0 | public GAR access does not invoke `gcloud`. |
 | GAR-002 | P0 | denial triggers configured credentials before `gcloud`. |
 | GAR-003 | P0 | `gcloud auth print-access-token --quiet` is invoked exactly. |
@@ -529,11 +532,12 @@ Implement in `tests/unit/gcr-gar.bats`:
 | GAR-009 | P0 | domain-scoped project paths are restored to the API project ID without confusing nested image paths. |
 | GAR-010 | P0 | malformed success, denial, rate limiting, and metadata 404 map to safe statuses; metadata 404 remains eligible for OCI verification. |
 | GAR-011 | P0 | DockerImage tags require the exact repository prefix, preserve provider order, deduplicate, and apply bounded scan semantics. |
-| GAR-012 | P0 | `if-faster` uses available Google credentials for the indexed reverse API before public OCI. |
-| GAR-013 | P0 | `if-faster` without configured Google credentials quietly retains public OCI behavior. |
-| GAR-014 | P0 | `if-required` attempts public OCI before obtaining a Google token and querying DockerImage metadata. |
+| GAR-012 | P0 | public reverse lookup tries anonymous `dockerImages.get` without invoking `gcloud`. |
+| GAR-013 | P0 | anonymous `dockerImages.get` denial retains public OCI and unlocks a credentialed metadata retry. |
+| GAR-014 | P0 | `if-required` exhausts anonymous metadata and OCI before obtaining a Google token. |
 | GAR-015 | P0 | unavailable or absent metadata falls back to public OCI without claiming an authoritative not-found result. |
 | GAR-016 | P0 | successful GAR metadata reverse lookup reports backend `gar-api`. |
+| GAR-017 | P0 | public indexed metadata succeeds without requesting a Google token. |
 
 ## Private ECR and ECR Public
 
@@ -629,6 +633,8 @@ declarations through `tests/unit/registries.bats`:
 | POLICY-ENGINE-009 | P0 | interactive recovery is eligible only after denial in a real terminal. |
 | POLICY-ENGINE-010 | P0 | a confirmed direct tag is a built-in reverse shortcut. |
 | POLICY-ENGINE-011 | P0 | a completed plan leaves no process-wide attempt state that can leak into a later request. |
+| POLICY-ENGINE-012 | P0 | denial from one public mechanism does not suppress another public mechanism. |
+| POLICY-ENGINE-013 | P0 | `if-required` exhausts eligible public mechanisms before unlocked credentials. |
 | POLICY-001 | P0 | provider declarations under `require` skip public OCI and enter credentialed Skopeo. |
 - Provider dispatch tests verify actual registration order, backend reporting,
   fallback, and terminal behavior for both direct and reverse requests.

@@ -33,6 +33,7 @@ function attempt_public_unavailable { record_attempt public "$LOOKUP_UNAVAILABLE
 function attempt_public_not_found { record_attempt public "$LOOKUP_NOT_FOUND" "$@"; }
 function attempt_public_stopped { record_attempt public "$LOOKUP_STOPPED" "$@"; }
 function attempt_public_success { record_attempt public "$LOOKUP_SUCCEEDED" "$@"; }
+function attempt_public_compat_success { record_attempt compatibility "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_compat_success { record_attempt compatibility "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_fast_success { record_attempt fast "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_credential_success { record_attempt credential "$LOOKUP_SUCCEEDED" "$@"; }
@@ -157,4 +158,29 @@ function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCE
     [[ "${result[backend]}" == public-api ]]
     ! declare -p policy_attempt_ids >/dev/null 2>&1
     ! declare -p policy_attempt_callback >/dev/null 2>&1
+}
+
+@test "POLICY-ENGINE-012 public denial does not suppress another public mechanism" {
+    load_policy_engine
+    policy_add_attempt public attempt_public_denied public-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt compatibility attempt_public_compat_success \
+        compatibility-api "$POLICY_ACCESS_PUBLIC" 20
+
+    policy_execute_lookup policy_request policy_result
+    [[ $(cat "$CALLS_DIR/order") == $'public\ncompatibility' ]]
+    [[ "${policy_result[backend]}" == compatibility-api ]]
+}
+
+@test "POLICY-ENGINE-013 if-required exhausts public mechanisms after denial" {
+    load_policy_engine
+    opt_credential_policy=if-required
+    policy_add_attempt public attempt_public_denied public-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt credential attempt_credential_success private-api \
+        "$POLICY_ACCESS_CREDENTIAL" 5
+    policy_add_attempt compatibility attempt_public_compat_success \
+        compatibility-api "$POLICY_ACCESS_PUBLIC" 20
+
+    policy_execute_lookup policy_request policy_result
+    [[ $(cat "$CALLS_DIR/order") == $'public\ncompatibility' ]]
+    [[ "${policy_result[backend]}" == compatibility-api ]]
 }

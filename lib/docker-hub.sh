@@ -490,12 +490,17 @@ function docker_hub_policy_attempt_interactive {
 
 function docker_hub_register_policy_attempts {
     local request_name="$1"
+    local -n request_ref="$request_name"
+
+    request_ref[oci_registry]=registry-1.docker.io
 
     policy_add_attempt docker-hub-session docker_hub_policy_attempt_api \
         docker-hub-api "$POLICY_ACCESS_SESSION" 5 1 \
         docker_hub_policy_session_is_available
     policy_add_attempt docker-hub-public docker_hub_policy_attempt_api \
         docker-hub-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt docker-hub-oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 30
     policy_add_attempt docker-hub-environment docker_hub_policy_attempt_environment \
         docker-hub-api "$POLICY_ACCESS_CREDENTIAL" 20 1 \
         docker_hub_policy_environment_is_available

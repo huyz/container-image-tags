@@ -228,6 +228,8 @@ function acr_register_policy_attempts {
     request_ref[provider_auth_callback]=acr_authenticate
     policy_add_attempt acr-public acr_policy_attempt_public \
         acr-api "$POLICY_ACCESS_PUBLIC" 10
+    policy_add_attempt acr-oci-public oci_policy_attempt_public \
+        oci-registry-api "$POLICY_ACCESS_PUBLIC" 30
     policy_add_attempt acr-azure acr_policy_attempt_azure \
         acr-api "$POLICY_ACCESS_CREDENTIAL" 20
     skopeo_register_policy_attempts "$request_name" acr 70

@@ -52,7 +52,6 @@ function policy_attempt_is_permitted {
     local id="$1"
     local request_name="$2"
     local denial_observed="$3"
-    local public_denied="$4"
     local access="${policy_attempt_access[$id]}"
     local policy="${opt_credential_policy:-if-faster}"
 
@@ -64,9 +63,7 @@ function policy_attempt_is_permitted {
         ;;
     local:*)
         ;;
-    public:*)
-        [[ -z "$public_denied" ]] || return 1
-        ;;
+    public:*) ;;
     session:*)
         ;;
     fast-credential:if-faster | fast-credential:require)
@@ -113,17 +110,34 @@ function policy_register_builtin_attempts {
 function policy_select_attempt {
     local request_name="$1"
     local denial_observed="$2"
-    local public_denied="$3"
-    local selected_name="$4"
+    local selected_name="$3"
     local -n selected_ref="$selected_name"
-    local id selected_cost selected_sequence
+    local id selected_cost selected_sequence public_first=
+    local policy="${opt_credential_policy:-if-faster}"
+
+    # `if-required` exhausts independent public mechanisms before using a
+    # credential unlocked by a denial. Other policies retain cost ordering, so
+    # `if-faster` may prefer a cheap credentialed index to a public bulk scan.
+    if [[ "$policy" == if-required ]]; then
+        for id in "${policy_attempt_ids[@]}"; do
+            [[ "${policy_attempt_access[$id]}" == "$POLICY_ACCESS_PUBLIC" ]] || continue
+            if policy_attempt_is_permitted "$id" "$request_name" "$denial_observed"; then
+                public_first=1
+                break
+            fi
+        done
+    fi
 
     selected_ref=
     selected_cost=
     selected_sequence=
     for id in "${policy_attempt_ids[@]}"; do
         policy_attempt_is_permitted \
-            "$id" "$request_name" "$denial_observed" "$public_denied" || continue
+            "$id" "$request_name" "$denial_observed" || continue
+        if [[ -n "$public_first" &&
+                "${policy_attempt_access[$id]}" != "$POLICY_ACCESS_PUBLIC" ]]; then
+            continue
+        fi
         if [[ -z "$selected_ref" ]] ||
                 (( policy_attempt_cost[$id] < selected_cost )) ||
                 (( policy_attempt_cost[$id] == selected_cost &&
@@ -162,14 +176,14 @@ function policy_execute_lookup {
     local result_name="$2"
     local -n result_ref="$result_name"
     local attempt_id callback status
-    local denial_observed='' public_denied='' last_status=$LOOKUP_UNAVAILABLE
+    local denial_observed='' last_status=$LOOKUP_UNAVAILABLE
     local availability
     local -A mechanism_result=()
 
     result_ref=()
     policy_register_builtin_attempts "$request_name"
     while policy_select_attempt \
-            "$request_name" "$denial_observed" "$public_denied" attempt_id; do
+            "$request_name" "$denial_observed" attempt_id; do
         callback="${policy_attempt_callback[$attempt_id]}"
         availability="${policy_attempt_available[$attempt_id]}"
         if [[ -n "$availability" ]] && ! "$availability" "$request_name"; then
@@ -202,9 +216,6 @@ function policy_execute_lookup {
             ;;
         "$LOOKUP_DENIED")
             denial_observed=1
-            if [[ "${policy_attempt_access[$attempt_id]}" == "$POLICY_ACCESS_PUBLIC" ]]; then
-                public_denied=1
-            fi
             ;;
         "$LOOKUP_STOPPED")
             policy_copy_attempt_result mechanism_result "$result_name" \

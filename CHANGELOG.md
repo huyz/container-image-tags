@@ -2,6 +2,27 @@
 
 All notable changes to `container-image-tags` are documented in this file.
 
+## v0.2.0 — 2026-09-01
+
+### Added
+
+- Anonymous native OCI fallbacks for Docker Hub, ACR, and GCR, including
+  repository-scoped Docker Hub token exchange through `registry-1.docker.io`.
+- Anonymous indexed `dockerImages.get` lookup for public GAR repositories, with
+  a Google-token retry only when public access is denied.
+
+### Changed
+
+- Made access denial mechanism-specific so one public backend no longer
+  suppresses other eligible public mechanisms.
+- Made `if-required` exhaust applicable public mechanisms before using an
+  unlocked credentialed path; `if-faster` can still prefer a cheaper indexed
+  credentialed path to a public bulk scan.
+- Removed the redundant interactive GHCR anonymous-scan choice after automatic
+  anonymous OCI lookup has already run.
+- Reworked the registry architecture matrix and authentication documentation
+  around explicit attempt order, backend capabilities, and fallback behavior.
+
 ## v0.1.1 — 2026-08-31
 
 ### Changed

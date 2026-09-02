@@ -172,6 +172,20 @@ EOF
     [[ $(<"$CALLS_DIR/curl.headers") == 'Authorization: Bearer google-token-canary' ]]
 }
 
+@test "GAR-012 public DockerImage metadata sends no Authorization header" {
+    load_module gar
+    export GCR_BODY='{"uri":"us-docker.pkg.dev/project/repo/app@'"$DIGEST"'","tags":["us-docker.pkg.dev/project/repo/app:stable"]}'
+    install_gcr_curl 200 "$GCR_BODY"
+
+    run gar_docker_image_metadata us-docker.pkg.dev \
+        us-docker.pkg.dev/project/repo/app "$DIGEST" ''
+    assert_status 0
+    assert_output_exact "$GCR_BODY"
+    refute_file_exists "$CALLS_DIR/curl.headers"
+    args=$(tr '\0' '\n' <"$CALLS_DIR/curl.args")
+    [[ "$args" != *'Authorization:'* ]]
+}
+
 @test "GAR-009 API resource parsing restores domain-scoped project IDs" {
     load_module gar
 

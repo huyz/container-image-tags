@@ -594,11 +594,11 @@ function oci_policy_attempt_public {
     local result_name="$2"
     local -n request_ref="$request_name"
     local -n result_ref="$result_name"
-    local output status
+    local output status registry="${request_ref[oci_registry]-${request_ref[registry]}}"
 
     if [[ "${request_ref[operation]}" == direct ]]; then
         if output=$(oci_digest_for_tag_anonymously \
-                "${request_ref[registry]}" "${request_ref[repository]}" \
+                "$registry" "${request_ref[repository]}" \
                 "${request_ref[tag]}"); then
             result_ref[digest]="$output"
             return "$LOOKUP_SUCCEEDED"
@@ -608,7 +608,7 @@ function oci_policy_attempt_public {
     fi
 
     if output=$(oci_tags_by_digest_anonymously \
-            "${request_ref[registry]}" "${request_ref[repository]}" \
+            "$registry" "${request_ref[repository]}" \
             "${request_ref[digest]}"); then
         result_ref[tags]="$output"
         return "$LOOKUP_SUCCEEDED"
