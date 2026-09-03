@@ -11,6 +11,26 @@ if [[ "$1 $2" == 'image inspect' ]]; then
     if [[ "$4" == --format ]]; then format="$5"; fi
     [[ "$reference" != missing ]] || exit 1
     case "$format" in
+    '{{json .}}')
+        "$JQ" -cn \
+            --arg id "${DOCKER_IMAGE_ID:-sha256:image}" \
+            --arg digests "${DOCKER_REPO_DIGESTS-}" \
+            --arg tags "${DOCKER_REPO_TAGS-}" \
+            --arg version "${DOCKER_IMAGE_VERSION-}" \
+            --arg revision "${DOCKER_IMAGE_REVISION-}" \
+            --arg refname "${DOCKER_IMAGE_REFNAME-}" '
+                {
+                    Id: $id,
+                    RepoDigests: ($digests | split("\n") | map(select(length > 0))),
+                    RepoTags: ($tags | split("\n") | map(select(length > 0))),
+                    Config: {Labels: {
+                        "org.opencontainers.image.version": $version,
+                        "org.opencontainers.image.revision": $revision,
+                        "org.opencontainers.image.ref.name": $refname
+                    }}
+                }
+            '
+        ;;
     '{{.Id}}') printf '%s\n' "${DOCKER_IMAGE_ID:-sha256:image}" ;;
     *RepoDigests*) printf '%s' "${DOCKER_REPO_DIGESTS-}" ;;
     *RepoTags*) printf '%s' "${DOCKER_REPO_TAGS-}" ;;
@@ -46,6 +66,7 @@ EOF
     [[ "$local_image_version" == 1.2.3 ]]
     [[ "$local_image_revision" == abc123 ]]
     [[ "$local_image_refname" == v1.2.3 ]]
+    [[ $(grep -ao inspect "$CALLS_DIR/docker.args" | wc -l) -eq 1 ]]
 }
 
 @test "INPUT-011 local image inspection succeeds even without a RepoDigest" {

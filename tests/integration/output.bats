@@ -40,6 +40,23 @@ if [[ "$1 $2" == 'image inspect' ]]; then
         esac
     done
     case "$format" in
+    '{{json .}}')
+        "$JQ" -cn \
+            --arg id "$LOCAL_IMAGE_ID" \
+            --arg digest "$LOCAL_REPO_DIGEST" \
+            --arg tag "$LOCAL_REPO_TAGS" '
+                {
+                    Id: $id,
+                    RepoDigests: [$digest],
+                    RepoTags: [$tag],
+                    Config: {Labels: {
+                        "org.opencontainers.image.version": "1.2.3",
+                        "org.opencontainers.image.revision": "revision-one",
+                        "org.opencontainers.image.ref.name": "v1.2.3"
+                    }}
+                }
+            '
+        ;;
     '{{.Id}}') printf '%s' "$LOCAL_IMAGE_ID" ;;
     *RepoDigests*) printf '%s' "$LOCAL_REPO_DIGEST" ;;
     *RepoTags*) printf '%s' "$LOCAL_REPO_TAGS" ;;

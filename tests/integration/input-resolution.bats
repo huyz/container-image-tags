@@ -50,6 +50,27 @@ if [[ "$1 $2" == 'image inspect' ]]; then
         esac
     done
     case "$format" in
+    '{{json .}}')
+        "$JQ" -cn \
+            --arg id "$(<"$FIXTURE_DIR/docker-images/$key.id")" \
+            --rawfile digests "$FIXTURE_DIR/docker-images/$key.repodigests" \
+            --rawfile tags "$FIXTURE_DIR/docker-images/$key.repotags" \
+            --rawfile version "$FIXTURE_DIR/docker-images/$key.version" \
+            --rawfile revision "$FIXTURE_DIR/docker-images/$key.revision" \
+            --rawfile refname "$FIXTURE_DIR/docker-images/$key.refname" '
+                def lines: split("\n") | map(select(length > 0));
+                {
+                    Id: $id,
+                    RepoDigests: ($digests | lines),
+                    RepoTags: ($tags | lines),
+                    Config: {Labels: {
+                        "org.opencontainers.image.version": ($version | rtrimstr("\n")),
+                        "org.opencontainers.image.revision": ($revision | rtrimstr("\n")),
+                        "org.opencontainers.image.ref.name": ($refname | rtrimstr("\n"))
+                    }}
+                }
+            '
+        ;;
     '{{.Id}}') cat "$FIXTURE_DIR/docker-images/$key.id" ;;
     *RepoDigests*) cat "$FIXTURE_DIR/docker-images/$key.repodigests" ;;
     *RepoTags*) cat "$FIXTURE_DIR/docker-images/$key.repotags" ;;

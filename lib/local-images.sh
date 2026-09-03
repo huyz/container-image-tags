@@ -10,34 +10,36 @@ function inspect_local_image {
     local image_ref="$1"
     local preferred_repository="${2:-}"
     local preferred_tag="${3:-}"
-    local repo_digests repo_tags candidate candidate_repository
+    local inspection repo_digests repo_tags candidate candidate_repository
 
-    if ! image_id=$(
+    if ! inspection=$(
         run_network_command "$DOCKER" image inspect \
-            "$image_ref" --format '{{.Id}}' 2>/dev/null
+            "$image_ref" --format '{{json .}}' 2>/dev/null
     ); then
         return 1
     fi
-    repo_digests=$(
-        run_network_command "$DOCKER" image inspect "$image_id" \
-            --format='{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null
-    ) || return 1
-    repo_tags=$(
-        run_network_command "$DOCKER" image inspect "$image_id" \
-            --format='{{range .RepoTags}}{{println .}}{{end}}' 2>/dev/null
-    ) || return 1
-    local_image_version=$(
-        run_network_command "$DOCKER" image inspect "$image_id" \
-            --format='{{with index .Config.Labels "org.opencontainers.image.version"}}{{.}}{{end}}' 2>/dev/null
-    ) || return 1
-    local_image_revision=$(
-        run_network_command "$DOCKER" image inspect "$image_id" \
-            --format='{{with index .Config.Labels "org.opencontainers.image.revision"}}{{.}}{{end}}' 2>/dev/null
-    ) || return 1
-    local_image_refname=$(
-        run_network_command "$DOCKER" image inspect "$image_id" \
-            --format='{{with index .Config.Labels "org.opencontainers.image.ref.name"}}{{.}}{{end}}' 2>/dev/null
-    ) || return 1
+    "$JQ" -e '
+        type == "object" and
+        (.Id | type == "string") and
+        (.RepoDigests == null or
+            (all(.RepoDigests[]; type == "string"))) and
+        (.RepoTags == null or
+            (all(.RepoTags[]; type == "string"))) and
+        (.Config.Labels == null or (.Config.Labels | type == "object"))
+    ' <<<"$inspection" >/dev/null 2>&1 || return 1
+
+    image_id=$("$JQ" -r '.Id' <<<"$inspection")
+    repo_digests=$("$JQ" -r '.RepoDigests[]?' <<<"$inspection")
+    repo_tags=$("$JQ" -r '.RepoTags[]?' <<<"$inspection")
+    local_image_version=$("$JQ" -r \
+        '.Config.Labels["org.opencontainers.image.version"] // empty' \
+        <<<"$inspection")
+    local_image_revision=$("$JQ" -r \
+        '.Config.Labels["org.opencontainers.image.revision"] // empty' \
+        <<<"$inspection")
+    local_image_refname=$("$JQ" -r \
+        '.Config.Labels["org.opencontainers.image.ref.name"] // empty' \
+        <<<"$inspection")
 
     repo_digest=
     local_tag=
