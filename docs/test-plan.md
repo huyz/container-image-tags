@@ -663,6 +663,7 @@ Implement in `tests/unit/skopeo.bats`:
 | SKOPEO-014 | P0 | expensive non-interactive scan stops before manifest work. |
 | SKOPEO-015 | P0 | `--allow-expensive-scan` permits only that guard and emits a notice. |
 | SKOPEO-016 | P1 | below-threshold scans do not emit an advisory. |
+| SKOPEO-019 | P0 | isolated authfiles are created only when an available Skopeo attempt needs them. |
 - The central policy-engine cases cover Skopeo session, public, configured, and
   provider-token eligibility; `LOOKUP_UNAVAILABLE` may change backend but never
   authorizes credentials.

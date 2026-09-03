@@ -23,26 +23,21 @@ function registry_classify {
         ;;
     *.azurecr.io/* | *.azurecr.cn/* | *.azurecr.de/* | *.azurecr.us/*)
         registry_kind=acr
-        skopeo_prepare_lazy_auth
         ;;
     gcr.io/* | us.gcr.io/* | eu.gcr.io/* | asia.gcr.io/*)
         registry_kind=gcr
         registry_repository="${repository#*/}"
-        skopeo_prepare_lazy_auth
         ;;
     *-docker.pkg.dev/*)
         registry_kind=gar
-        skopeo_prepare_lazy_auth
         ;;
     public.ecr.aws/*)
         registry_kind=ecr
-        skopeo_prepare_lazy_auth
         ;;
     *.dkr.ecr.*.amazonaws.com/* | *.dkr.ecr.*.amazonaws.com.cn/* | \
         *.dkr.ecr-fips.*.amazonaws.com/* | *.dkr.ecr-fips.*.amazonaws.com.cn/* | \
         *.dkr-ecr.*.on.aws/* | *.dkr-ecr-fips.*.on.aws/*)
         registry_kind=ecr
-        skopeo_prepare_lazy_auth
         ;;
     *)
         if [[ "$repository" != */* ||
@@ -58,9 +53,6 @@ function registry_classify {
         ;;
     esac
 
-    case "$registry_kind" in
-    docker-hub | ghcr | other) skopeo_prepare_lazy_auth ;;
-    esac
 }
 
 # Build the common request consumed by provider capability declarations and the

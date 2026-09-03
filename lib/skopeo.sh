@@ -208,12 +208,14 @@ function skopeo_session_has_registry {
 }
 
 function skopeo_policy_is_available {
-    skopeo_is_available
+    skopeo_is_available || return 1
+    skopeo_prepare_lazy_auth
 }
 
 function skopeo_policy_session_is_available {
     local -n request_ref="$1"
 
+    [[ -n "$skopeo_session_authfile" ]] || return 1
     skopeo_session_has_registry "${request_ref[registry]}"
 }
 
@@ -226,7 +228,9 @@ function skopeo_policy_configured_is_available {
 function skopeo_policy_provider_auth_is_available {
     local -n request_ref="$1"
 
-    [[ -n "${request_ref[provider_auth_callback]-}" ]] && skopeo_is_available
+    [[ -n "${request_ref[provider_auth_callback]-}" ]] || return 1
+    skopeo_is_available || return 1
+    skopeo_prepare_lazy_auth
 }
 
 function skopeo_policy_attempt {

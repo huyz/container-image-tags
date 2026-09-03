@@ -508,3 +508,13 @@ function assert_classification {
     [[ "${lookup[backend]}" == docker-hub-api ]]
     [[ "${lookup[tags]}" == $'latest\n1.2.3' ]]
 }
+
+@test "DISPATCH-017 registry classification has no authentication side effects" {
+    load_registry_dispatch
+    function skopeo_prepare_lazy_auth { : >"$CALLS_DIR/skopeo-auth"; }
+
+    registry_classify vault.azurecr.io/team/app
+    refute_file_exists "$CALLS_DIR/skopeo-auth"
+    registry_classify registry.example/team/app
+    refute_file_exists "$CALLS_DIR/skopeo-auth"
+}

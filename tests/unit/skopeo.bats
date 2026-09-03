@@ -256,3 +256,14 @@ EOF
     assert_status 0
     assert_output_exact match
 }
+
+@test "SKOPEO-019 available public attempts prepare isolated authfiles lazily" {
+    load_skopeo
+    write_static_stub skopeo '' 0
+    [[ -z "$skopeo_anonymous_authfile" ]]
+    [[ -z "$skopeo_session_authfile" ]]
+
+    skopeo_policy_is_available
+    assert_file_mode "$skopeo_anonymous_authfile" 600
+    assert_file_mode "$skopeo_session_authfile" 600
+}
