@@ -285,6 +285,14 @@ function process_input {
     local input_reference="$1"
     local input_position="$2"
     local image_to_process wildcard_output_index=0 seen_wildcard_repo_digests=
+    # Resolution helpers use Bash dynamic scope; keep their complete subject
+    # state owned by this one input instead of leaking it between CLI inputs.
+    local input='' container='' image_id=''
+    local local_image_version='' local_image_revision='' local_image_refname=''
+    local repo_digest='' local_tag='' subject_source=''
+    local wildcard_image_ids='' wildcard_reference='' wildcard_repository=''
+    local repo='' repo_sha=''
+    local registry_kind='' registry_repository='' registry_host=''
     local -a images_to_process
     local -A result=()
 
