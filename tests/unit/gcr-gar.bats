@@ -99,6 +99,26 @@ EOF
     assert_status "$LOOKUP_UNAVAILABLE"
 }
 
+@test "GCR-009 authenticated lookup does not depend on loading the GAR adapter" {
+    load_gcr
+    function google_access_token { printf '%s\n' token; }
+    function gcr_digest_for_tag_with_bearer_token {
+        printf '%s\0' "$@" >"$CALLS_DIR/gcr-authenticated.args"
+        printf '%s\n' sha256:authenticated
+    }
+    declare -A request=(
+        [operation]=direct
+        [registry]=gcr.io
+        [repository]=project/app
+        [tag]=stable
+    ) result=()
+
+    gcr_policy_attempt_google_token request result
+    [[ "${result[digest]}" == sha256:authenticated ]]
+    assert_call_args "$CALLS_DIR/gcr-authenticated.args" \
+        gcr.io project/app stable token
+}
+
 @test "GAR-003 gcloud authentication uses exact quiet access-token command" {
     load_module gar
     skopeo_session_authfile="$TEST_ROOT/google-auth.json"
@@ -114,7 +134,7 @@ IFS= read -r token
 printf '%s' "$token" >"$CALLS_DIR/skopeo.stdin"
 EOF
 
-    run gar_authenticate us-docker.pkg.dev
+    run google_authenticate us-docker.pkg.dev
     assert_status 0
     assert_call_args "$CALLS_DIR/gcloud.args" auth print-access-token --quiet
     [[ $(<"$CALLS_DIR/skopeo.stdin") == "$GOOGLE_CANARY" ]]
@@ -132,7 +152,7 @@ printf '%s\0' "$@" >"$CALLS_DIR/skopeo.args"
 cat >/dev/null
 EOF
 
-    run gar_authenticate gcr.io
+    run google_authenticate gcr.io
     assert_status 0
     args=$(tr '\0' '\n' <"$CALLS_DIR/skopeo.args")
     [[ "$args" == *'oauth2accesstoken'* ]]

@@ -4,24 +4,7 @@
 # Google registry access. GAR uses its DockerImage resource anonymously for
 # public indexed digest-to-tags lookup and retries it with a Google token after
 # denial. The shared OCI engine and Skopeo remain compatibility fallbacks. GCR
-# also reuses the token helper for its digest-keyed metadata endpoint.
-
-function gar_access_token {
-    local registry="$1"
-    local token
-
-    command -v "${GCLOUD:=gcloud}" &>/dev/null || {
-        warn "Install Google Cloud CLI and run 'gcloud auth login' to access private Google registry '$registry'"
-        return "$LOOKUP_UNAVAILABLE"
-    }
-    notice "Requesting a short-lived token from Google Cloud CLI for '$registry'."
-    token=$(run_network_command "$GCLOUD" auth print-access-token --quiet) || {
-        warn "Google Cloud CLI authentication failed for registry '$registry'"
-        return "$LOOKUP_UNAVAILABLE"
-    }
-    [[ -n "$token" ]] || return "$LOOKUP_UNAVAILABLE"
-    printf '%s\n' "$token"
-}
+# also reuses the shared Google authentication module.
 
 # Print the location, project ID, repository name, and image path represented
 # by one GAR reference. Docker writes a domain-scoped project ID's colon as a
@@ -168,24 +151,6 @@ function gar_tags_by_digest_api {
     select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
 }
 
-function gar_authenticate {
-    local registry="$1"
-
-    command -v "${GCLOUD:=gcloud}" &>/dev/null || {
-        warn "Install Google Cloud CLI and run 'gcloud auth login' to access private Google registry '$registry'"
-        return 1
-    }
-
-    notice "Google registry denied anonymous access; retrying with a short-lived token from Google Cloud CLI."
-    if ! run_network_command "$GCLOUD" auth print-access-token --quiet |
-            run_network_command "$SKOPEO" login \
-                --authfile "$skopeo_session_authfile" \
-                --username oauth2accesstoken --password-stdin "$registry" >/dev/null; then
-        warn "Google Cloud CLI authentication failed for registry '$registry'"
-        return 1
-    fi
-}
-
 # Skopeo reports only the HTTP status for some Google registry token failures,
 # while Docker's manifest client can preserve the registry's response body.
 # Make this extra network request only in debug mode and return just the
@@ -224,7 +189,7 @@ function gar_policy_get_token {
     if [[ -n "${request_ref[provider_token]-}" ]]; then
         return 0
     fi
-    token=$(gar_access_token "${request_ref[registry]}") || return 1
+    token=$(google_access_token "${request_ref[registry]}") || return 1
     request_ref[provider_token]="$token"
 }
 
@@ -288,7 +253,7 @@ function gar_register_policy_attempts {
     local request_name="$1"
     local -n request_ref="$request_name"
 
-    request_ref[provider_auth_callback]=gar_authenticate
+    request_ref[provider_auth_callback]=google_authenticate
     if [[ "${request_ref[operation]}" == reverse ]]; then
         policy_add_attempt gar-api-public gar_policy_attempt_api \
             gar-api "$POLICY_ACCESS_PUBLIC" 10 0

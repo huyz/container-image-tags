@@ -109,6 +109,9 @@ function load_module {
         source "$REPO_ROOT/lib/oci.sh"
         ;;
     esac
+    case "$module" in
+    gar | gcr) source "$REPO_ROOT/lib/google-auth.sh" ;;
+    esac
     # shellcheck disable=SC1090
     source "$REPO_ROOT/lib/$module.sh"
 }

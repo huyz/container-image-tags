@@ -61,7 +61,7 @@ IFS= read -r secret
 printf '%s' "$secret" >"$CALLS_DIR/skopeo.stdin"
 EOF
 
-    run --separate-stderr gar_authenticate us-docker.pkg.dev
+    run --separate-stderr google_authenticate us-docker.pkg.dev
     assert_status 0
     refute_output_contains "$GOOGLE_CANARY"
     refute_stderr_contains "$GOOGLE_CANARY"

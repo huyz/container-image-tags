@@ -169,7 +169,7 @@ function gcr_policy_attempt_google_token {
     local -n result_ref="$result_name"
     local output token status
 
-    token=$(gar_access_token "${request_ref[registry]}") ||
+    token=$(google_access_token "${request_ref[registry]}") ||
         return "$LOOKUP_UNAVAILABLE"
     if [[ "${request_ref[operation]}" == direct ]]; then
         if output=$(gcr_digest_for_tag_with_bearer_token \
@@ -196,7 +196,7 @@ function gcr_register_policy_attempts {
     local request_name="$1"
     local -n request_ref="$request_name"
 
-    request_ref[provider_auth_callback]=gar_authenticate
+    request_ref[provider_auth_callback]=google_authenticate
     policy_add_attempt gcr-public gcr_policy_attempt_public \
         gcr-api "$POLICY_ACCESS_PUBLIC" 10
     policy_add_attempt gcr-oci-public oci_policy_attempt_public \

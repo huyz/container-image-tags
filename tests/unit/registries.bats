@@ -16,6 +16,8 @@ function load_registry_dispatch {
     source "$REPO_ROOT/lib/ghcr.sh"
     # shellcheck source=../../lib/acr.sh
     source "$REPO_ROOT/lib/acr.sh"
+    # shellcheck source=../../lib/google-auth.sh
+    source "$REPO_ROOT/lib/google-auth.sh"
     # shellcheck source=../../lib/gar.sh
     source "$REPO_ROOT/lib/gar.sh"
     # shellcheck source=../../lib/gcr.sh
@@ -145,7 +147,7 @@ function assert_classification {
 @test "DISPATCH-006 denied GCR metadata invokes only its intended auth fallback" {
     load_registry_dispatch
     function gcr_digest_for_tag_anonymously { return "$LOOKUP_DENIED"; }
-    function gar_access_token { printf '%s\n' token; }
+    function google_access_token { printf '%s\n' token; }
     function gcr_digest_for_tag_with_bearer_token {
         printf '%s\0' "$@" >"$CALLS_DIR/gcr-authenticated"
         printf '%s\n' sha256:authenticated
@@ -434,7 +436,7 @@ function assert_classification {
         printf '%s\0' "$@" >"$CALLS_DIR/gar-api"
         printf '%s\n' metadata
     }
-    function gar_access_token { : >"$CALLS_DIR/unexpected-token"; return 1; }
+    function google_access_token { : >"$CALLS_DIR/unexpected-token"; return 1; }
     registry_classify us-docker.pkg.dev/project/repo/app
 
     dispatch_find_tags_by_digest \
@@ -460,7 +462,7 @@ function assert_classification {
         printf '%s\n' public-oci >>"$CALLS_DIR/gar-order"
         return "$LOOKUP_UNAVAILABLE"
     }
-    function gar_access_token { printf '%s\n' token; }
+    function google_access_token { printf '%s\n' token; }
     registry_classify us-docker.pkg.dev/project/repo/app
 
     dispatch_find_tags_by_digest \

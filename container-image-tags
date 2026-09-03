@@ -122,6 +122,9 @@ source "$MODULE_DIR/ghcr.sh"
 # shellcheck source=lib/acr.sh
 source "$MODULE_DIR/acr.sh"
 # shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/google-auth.sh
+source "$MODULE_DIR/google-auth.sh"
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/gar.sh
 source "$MODULE_DIR/gar.sh"
 # shellcheck source-path=SCRIPTDIR

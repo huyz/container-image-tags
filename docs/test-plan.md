@@ -522,6 +522,7 @@ Implement in `tests/unit/gcr-gar.bats`:
 | GCR-006 | P0 | unavailable or denied GCR metadata follows the intended GAR / Skopeo authentication fallback. |
 | GCR-007 | P0 | GCR success reports `gcr-api`; fallback reports `skopeo`. |
 | GCR-008 | P0 | denied GCR metadata retains native OCI under public-only policy. |
+| GCR-009 | P0 | authenticated GCR lookup loads shared Google authentication without depending on the GAR adapter. |
 | GAR-001 | P0 | public GAR access does not invoke `gcloud`. |
 | GAR-002 | P0 | denial triggers configured credentials before `gcloud`. |
 | GAR-003 | P0 | `gcloud auth print-access-token --quiet` is invoked exactly. |
