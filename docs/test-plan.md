@@ -341,12 +341,13 @@ Implement these end-to-end cases in `tests/integration/cli-options.bats`:
 | CLI-008 | P0 | JSON with no explicit scan mode — Defaults to `any-durable` even interactively |
 | CLI-009 | P0 | Non-interactive human mode without explicit scan mode — Defaults to `any-durable` |
 | CLI-010 | P0 | Interactive human mode without explicit scan mode — Defaults to `ask` |
-| CLI-011 | P0 | Explicit scan mode in any environment — Explicit value wins |
+| CLI-011 | P0 | Explicit `never` scan mode — No registry scan request is made |
 | CLI-012 | P0 | Non-remote resolution with Docker missing — Dependency diagnostic before processing input |
 | CLI-013 | P0 | Remote resolution with Docker missing — Docker is not required |
 | CLI-014 | P0 | Help and version without operational dependencies — Requested information and zero status |
 | CLI-015 | P0 | Bash older than 4.4 — Clear version error before module execution |
 | CLI-016 | P0 | Missing Perl, curl, jq, getopt, realpath, or timeout — Correct diagnostic before work |
+| CLI-017 | P0 | `--version` — Single program name and release version with status 0 |
 
 ## Input resolution and local Docker metadata
 
@@ -703,7 +704,7 @@ JSON tests must parse stdout with jq and assert fields semantically:
 | JSON-002 | P0 | one object per resolved image in input/expansion order. |
 | JSON-003 | P0 | local and remote subject fields have correct nullability. |
 | JSON-004 | P0 | direct check statuses cover resolved, match, mismatch, not-found, and not-applicable. |
-| JSON-005 | P0 | scan statuses cover completed, not-found, not-requested, declined, and skipped. |
+| JSON-005 | P0 | `never` scan mode reports `not_requested`, a null backend, and no tags. |
 | JSON-006 | P0 | backend is one of `acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`, `gar-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, `skopeo`, or null where no scan ran. |
 | JSON-007 | P0 | backend changes to the actual fallback backend. |
 | JSON-008 | P0 | tags are an array with exact values and order. |

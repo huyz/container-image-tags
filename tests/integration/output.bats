@@ -220,6 +220,9 @@ EOF
     assert_stderr_exact 'NOTICE: changed'
     run --separate-stderr warn caution
     assert_stderr_contains '⚠️ WARNING: caution'
+    run --separate-stderr abort broken
+    assert_status 1
+    assert_stderr_contains '❌ ERROR: broken'
     run --separate-stderr verbose hidden
     assert_stderr_exact ''
     opt_verbose=1

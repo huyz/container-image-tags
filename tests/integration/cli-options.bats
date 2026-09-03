@@ -93,7 +93,7 @@ function run_cli_with_tty_input {
     assert_output_contains 'repository@sha256:'
 }
 
-@test "CLI-001a version prints the single release version" {
+@test "CLI-017 version prints the single release version" {
     install_noop_required_tools
 
     run_cli --version
