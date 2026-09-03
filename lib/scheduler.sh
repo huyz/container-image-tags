@@ -147,12 +147,14 @@ function tags_by_digest_with_rolling_pool {
     if (( terminal_status == LOOKUP_STOPPED ||
             terminal_status == LOOKUP_DENIED )) &&
             [[ "$registry_tag_scan" != any &&
-                "$registry_tag_scan" != any-durable || -z "$matches" ]]; then
+                "$registry_tag_scan" != any-durable ||
+                -z "$bounded_match_found" ]]; then
         return "$terminal_status"
     fi
     if [[ -n "$require_complete" && "$failed" -gt 0 ]] &&
             [[ "$registry_tag_scan" != any &&
-                "$registry_tag_scan" != any-durable || -z "$matches" ]]; then
+                "$registry_tag_scan" != any-durable ||
+                -z "$bounded_match_found" ]]; then
         return "$LOOKUP_UNAVAILABLE"
     fi
 }

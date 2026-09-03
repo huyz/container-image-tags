@@ -478,3 +478,15 @@ function lookup_pool_terminal {
     assert_status "$LOOKUP_DENIED"
     assert_output_exact match
 }
+
+@test "POOL-017 any-durable rejects partial results without a durable match" {
+    load_common
+    registry_tag_scan=any-durable
+    registry_durable_semver_precision=3
+    candidates=(1.2 failed)
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
+        progress worker lookup_from_tag 1
+    assert_status "$LOOKUP_UNAVAILABLE"
+    assert_output_exact 1.2
+}
