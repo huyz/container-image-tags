@@ -121,7 +121,7 @@ function ghcr_package_version {
     local wanted="$3"
     local owner package_name package_encoded owner_kind endpoint match page
     local remaining_pages pagination_cost_checked
-    local queried_api=
+    local completed_api=
     local -A page_result=()
 
     owner="${ghcr_repository%%/*}"
@@ -146,9 +146,8 @@ function ghcr_package_version {
         while true; do
             endpoint="/$owner_kind/$owner/packages/container/$package_encoded/versions?per_page=100&page=$page"
             verbose "Searching GitHub package versions for $owner_kind/$owner/$package_name (page $page)"
-            if ghcr_package_version_page "$endpoint" "$selector" "$wanted" page_result; then
-                queried_api=1
-            else
+            if ! ghcr_package_version_page \
+                    "$endpoint" "$selector" "$wanted" page_result; then
                 break
             fi
             match="${page_result[match]}"
@@ -156,7 +155,10 @@ function ghcr_package_version {
                 printf '%s\n' "$match"
                 return "$LOOKUP_SUCCEEDED"
             fi
-            [[ -n "${page_result[next]}" ]] || break
+            if [[ -z "${page_result[next]}" ]]; then
+                completed_api=1
+                break
+            fi
             if [[ -z "$pagination_cost_checked" &&
                     -n "${page_result[last]}" ]]; then
                 remaining_pages=$(( page_result[last] - page ))
@@ -170,7 +172,7 @@ function ghcr_package_version {
         done
     done
 
-    [[ -n "$queried_api" ]] && return "$LOOKUP_NOT_FOUND"
+    [[ -n "$completed_api" ]] && return "$LOOKUP_NOT_FOUND"
     return "$LOOKUP_UNAVAILABLE"
 }
 

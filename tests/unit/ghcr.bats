@@ -115,9 +115,24 @@ EOF
     assert_status "$LOOKUP_NOT_FOUND"
 }
 
-@test "GHCR-006 unavailable gh command returns unavailable" {
+@test "GHCR-006 unavailable gh and interrupted pagination return unavailable" {
     load_ghcr
     GH="$STUB_BIN/missing-gh"
+
+    run ghcr_package_version owner/app digest "$DIGEST"
+    assert_status "$LOOKUP_UNAVAILABLE"
+
+    GH="$STUB_BIN/gh"
+    write_stub gh <<'EOF'
+endpoint="${!#}"
+if [[ "$endpoint" == *'page=1' ]]; then
+    base="${endpoint%&page=*}"
+    printf 'HTTP/2 200\r\nLink: <%s&page=2>; rel="next"\r\n\r\n[]\n' "$base"
+    exit 0
+fi
+printf '%s\n' 'temporary failure' >&2
+exit 1
+EOF
 
     run ghcr_package_version owner/app digest "$DIGEST"
     assert_status "$LOOKUP_UNAVAILABLE"
