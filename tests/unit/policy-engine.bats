@@ -36,6 +36,8 @@ function attempt_public_success { record_attempt public "$LOOKUP_SUCCEEDED" "$@"
 function attempt_public_compat_success { record_attempt compatibility "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_compat_success { record_attempt compatibility "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_fast_success { record_attempt fast "$LOOKUP_SUCCEEDED" "$@"; }
+function attempt_session_success { record_attempt session "$LOOKUP_SUCCEEDED" "$@"; }
+function attempt_fast_session_success { record_attempt fast-session "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_credential_success { record_attempt credential "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCEEDED" "$@"; }
 
@@ -74,6 +76,10 @@ function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCE
 @test "POLICY-ENGINE-004 never excludes every credential class" {
     load_policy_engine
     opt_credential_policy=never
+    policy_add_attempt fast-session attempt_fast_session_success fast-session-api \
+        "$POLICY_ACCESS_FAST_SESSION" 0
+    policy_add_attempt session attempt_session_success session-api \
+        "$POLICY_ACCESS_SESSION" 0
     policy_add_attempt fast attempt_fast_success fast-api "$POLICY_ACCESS_FAST_CREDENTIAL" 1
     policy_add_attempt credential attempt_credential_success private-api "$POLICY_ACCESS_CREDENTIAL" 2
     policy_add_attempt public attempt_public_success public-api "$POLICY_ACCESS_PUBLIC" 10
@@ -183,4 +189,30 @@ function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCE
     policy_execute_lookup policy_request policy_result
     [[ $(cat "$CALLS_DIR/order") == $'public\ncompatibility' ]]
     [[ "${policy_result[backend]}" == compatibility-api ]]
+}
+
+@test "POLICY-ENGINE-014 ordinary sessions require a denial under if-faster" {
+    load_policy_engine
+    opt_credential_policy=if-faster
+    policy_add_attempt session attempt_session_success skopeo \
+        "$POLICY_ACCESS_SESSION" 5
+    policy_add_attempt public attempt_public_denied public-api \
+        "$POLICY_ACCESS_PUBLIC" 10
+
+    policy_execute_lookup policy_request policy_result
+    [[ $(cat "$CALLS_DIR/order") == $'public\nsession' ]]
+    [[ "${policy_result[backend]}" == skopeo ]]
+}
+
+@test "POLICY-ENGINE-015 if-faster may reuse a fast provider session" {
+    load_policy_engine
+    opt_credential_policy=if-faster
+    policy_add_attempt fast-session attempt_fast_session_success fast-api \
+        "$POLICY_ACCESS_FAST_SESSION" 5
+    policy_add_attempt public attempt_public_success public-api \
+        "$POLICY_ACCESS_PUBLIC" 10
+
+    policy_execute_lookup policy_request policy_result
+    [[ $(cat "$CALLS_DIR/order") == fast-session ]]
+    [[ "${policy_result[backend]}" == fast-api ]]
 }

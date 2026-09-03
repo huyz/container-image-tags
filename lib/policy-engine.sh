@@ -9,6 +9,7 @@
 readonly POLICY_ACCESS_PUBLIC=public
 readonly POLICY_ACCESS_LOCAL=local
 readonly POLICY_ACCESS_SESSION=session
+readonly POLICY_ACCESS_FAST_SESSION=fast-session
 readonly POLICY_ACCESS_FAST_CREDENTIAL=fast-credential
 readonly POLICY_ACCESS_CREDENTIAL=credential
 readonly POLICY_ACCESS_INTERACTIVE=interactive
@@ -30,7 +31,8 @@ function policy_add_attempt {
     [[ -z ${policy_attempt_callback[$id]+x} ]] ||
         abort "Duplicate registry policy attempt '$id'"
     case "$access" in
-    "$POLICY_ACCESS_LOCAL" | "$POLICY_ACCESS_PUBLIC" | "$POLICY_ACCESS_SESSION" | \
+    "$POLICY_ACCESS_LOCAL" | "$POLICY_ACCESS_PUBLIC" | \
+        "$POLICY_ACCESS_SESSION" | "$POLICY_ACCESS_FAST_SESSION" | \
         "$POLICY_ACCESS_FAST_CREDENTIAL" | "$POLICY_ACCESS_CREDENTIAL" | \
         "$POLICY_ACCESS_INTERACTIVE") ;;
     *) abort "Invalid access class '$access' for registry policy attempt '$id'" ;;
@@ -57,18 +59,17 @@ function policy_attempt_is_permitted {
 
     [[ -z ${policy_attempt_finished[$id]-} ]] || return 1
     case "$access:$policy" in
-    public:require | session:never | fast-credential:never | \
+    public:require | session:never | fast-session:never | fast-credential:never | \
         credential:never | interactive:never)
         return 1
         ;;
     local:*)
         ;;
     public:*) ;;
-    session:*)
-        ;;
+    fast-session:if-faster | fast-session:require | \
     fast-credential:if-faster | fast-credential:require)
         ;;
-    fast-credential:* | credential:* | interactive:*)
+    session:* | fast-session:* | fast-credential:* | credential:* | interactive:*)
         [[ -n "$denial_observed" || "$policy" == require ]] || return 1
         ;;
     esac

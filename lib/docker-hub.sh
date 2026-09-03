@@ -521,7 +521,7 @@ function docker_hub_register_policy_attempts {
     request_ref[oci_registry]=registry-1.docker.io
 
     policy_add_attempt docker-hub-session docker_hub_policy_attempt_api \
-        docker-hub-api "$POLICY_ACCESS_SESSION" 5 1 \
+        docker-hub-api "$POLICY_ACCESS_FAST_SESSION" 5 1 \
         docker_hub_policy_session_is_available
     policy_add_attempt docker-hub-public docker_hub_policy_attempt_api \
         docker-hub-api "$POLICY_ACCESS_PUBLIC" 10
