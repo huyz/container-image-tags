@@ -107,6 +107,16 @@ Use IDs of the form `<AREA>-NNN`, for example `CLI-001`, `OCI-014`, or
 name should state the condition and expected outcome rather than an internal
 function name alone.
 
+The tables below describe the target suite, not an assertion that every case is
+already implemented. An ID is implemented when the same ID appears at the start
+of a Bats test name; `STATIC-*` is the exception because those checks are
+implemented directly by `tests/run static`. As of 2026-09-03, these target cases
+remain planned:
+
+`ACR-015`, `ECR-012`, `ECRP-011`, `GAR-001`, `GAR-002`, `GAR-006`, `GAR-007`,
+`GAR-014`, `GAR-015`, `GHCR-007` through `GHCR-010`, `GHCR-012` through
+`GHCR-018`, `HUB-012`, `HUB-015`, `HUB-019`, and `HUB-020`.
+
 ## Test architecture
 
 ### Framework
@@ -643,6 +653,8 @@ declarations through `tests/unit/registries.bats`:
 | POLICY-ENGINE-011 | P0 | a completed plan leaves no process-wide attempt state that can leak into a later request. |
 | POLICY-ENGINE-012 | P0 | denial from one public mechanism does not suppress another public mechanism. |
 | POLICY-ENGINE-013 | P0 | `if-required` exhausts eligible public mechanisms before unlocked credentials. |
+| POLICY-ENGINE-014 | P0 | ordinary configured Skopeo sessions remain denial-gated under `if-faster`. |
+| POLICY-ENGINE-015 | P0 | explicitly classified fast sessions may run before denial under `if-faster`. |
 | POLICY-ENGINE-016 | P0 | declarations reject unknown callbacks and invalid authoritative flags. |
 | POLICY-ENGINE-017 | P0 | a successful direct attempt must return a digest. |
 | POLICY-ENGINE-018 | P0 | a successful reverse attempt must return tags or an explicit skip. |
@@ -672,6 +684,8 @@ Implement in `tests/unit/skopeo.bats`:
 | SKOPEO-014 | P0 | expensive non-interactive scan stops before manifest work. |
 | SKOPEO-015 | P0 | `--allow-expensive-scan` permits only that guard and emits a notice. |
 | SKOPEO-016 | P1 | below-threshold scans do not emit an advisory. |
+| SKOPEO-017 | P0 | an exhaustive scan rejects partial matches after a candidate inspect failure. |
+| SKOPEO-018 | P0 | a candidate that vanished during inspection does not invalidate an otherwise complete scan. |
 | SKOPEO-019 | P0 | isolated authfiles are created only when an available Skopeo attempt needs them. |
 - The central policy-engine cases cover Skopeo session, public, configured, and
   provider-token eligibility; `LOOKUP_UNAVAILABLE` may change backend but never
