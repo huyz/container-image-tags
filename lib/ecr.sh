@@ -26,6 +26,7 @@ function ecr_account_from_registry {
 }
 
 function ecr_aws_credentials_may_be_available {
+    AWS="${AWS:-aws}"
     [[ -n ${AWS_ACCESS_KEY_ID-} || -n ${AWS_PROFILE-} ||
         -n ${AWS_DEFAULT_PROFILE-} || -n ${AWS_WEB_IDENTITY_TOKEN_FILE-} ||
         -n ${AWS_CONTAINER_CREDENTIALS_RELATIVE_URI-} ||

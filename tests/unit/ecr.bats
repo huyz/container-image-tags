@@ -183,6 +183,11 @@ EOF
     args=$(tr '\0' '\n' <"$CALLS_DIR/aws.args")
     [[ "$args" == *'configure'* ]]
     [[ "$args" != *'describe-registries'* ]]
+
+    unset AWS
+    run --separate-stderr ecr_aws_credentials_may_be_available
+    assert_status 1
+    assert_stderr_exact ''
 }
 
 @test "ECRP-004 alias lookup uses fixed region page size and no pagination" {
