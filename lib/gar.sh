@@ -151,36 +151,6 @@ function gar_tags_by_digest_api {
     select_matching_tags_for_scan "$matching_tags" "$matching_tags"
 }
 
-# Skopeo reports only the HTTP status for some Google registry token failures,
-# while Docker's manifest client can preserve the registry's response body.
-# Make this extra network request only in debug mode and return just the
-# registry-provided denial reason when one is available.
-function gar_debug_denial_detail {
-    local image_reference="$1"
-    local docker_error error_tmp
-
-    [[ -n ${opt_debug-} ]] || return 1
-    command -v "$DOCKER" &>/dev/null || return 1
-
-    debug "Requesting a Docker manifest diagnostic for $image_reference after the authenticated Skopeo request was denied"
-    error_tmp=$(runtime_temp_file gar-debug-error)
-    if run_network_command "$DOCKER" manifest inspect \
-            "$image_reference" >/dev/null 2>"$error_tmp"; then
-        rm -f "$error_tmp"
-        debug "Docker manifest inspection succeeded for $image_reference but provided no denial detail"
-        return 1
-    fi
-
-    docker_error=$(tr '\r\n' '  ' <"$error_tmp" | sed -E 's/[[:space:]]+$//')
-    rm -f "$error_tmp"
-    if [[ "$docker_error" != *'denied: '* ]]; then
-        debug "Docker manifest diagnostic for $image_reference did not include a registry denial reason: $docker_error"
-        return 1
-    fi
-
-    printf '%s\n' "${docker_error#*denied: }"
-}
-
 function gar_policy_get_token {
     local request_name="$1"
     local -n request_ref="$request_name"

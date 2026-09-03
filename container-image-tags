@@ -185,8 +185,7 @@ Usage: $SCRIPT_NAME [-h|--help] [--version] [-v|--verbose] [-d|--debug] [--json]
         -h|--help: get help
         --version: print the program version
         -v|--verbose: turn on verbose mode
-        -d|--debug: turn on debug mode; may trigger additional requests to get
-            more error details from registries
+        -d|--debug: show internal diagnostic details
         --json: write one JSON array containing all results to stdout
         --tag-resolution: select how to resolve an image tag
                 (default: $opt_tag_resolution):

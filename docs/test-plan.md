@@ -533,7 +533,6 @@ Implement in `tests/unit/gcr-gar.bats`:
 | GAR-002 | P0 | denial triggers configured credentials before `gcloud`. |
 | GAR-003 | P0 | `gcloud auth print-access-token --quiet` is invoked exactly. |
 | GAR-004 | P0 | username is `oauth2accesstoken`; token travels over stdin. |
-| GAR-005 | P1 | debug denial detail is requested only in debug mode. |
 | GAR-006 | P0 | terminal and not-found outcomes do not trigger inappropriate fallback. |
 | GAR-007 | P0 | access denial obtains one Google token and reuses it with the OCI fast path before Skopeo. |
 | GAR-008 | P0 | the DockerImage API request encodes the exact location, project, repository, nested image path, and complete digest; its token uses a mode-0600 header file rather than process arguments. |

@@ -159,24 +159,6 @@ EOF
     [[ "$args" == *'--password-stdin'* ]]
 }
 
-@test "GAR-005 denial detail only invokes Docker in debug mode" {
-    load_module gar
-    write_stub docker <<'EOF'
-: >"$CALLS_DIR/docker"
-printf '%s\n' 'denied: permission missing' >&2
-exit 1
-EOF
-
-    run gar_debug_denial_detail gcr.io/project/app:stable
-    assert_status 1
-    refute_file_exists "$CALLS_DIR/docker"
-
-    opt_debug=1
-    run --separate-stderr gar_debug_denial_detail gcr.io/project/app:stable
-    assert_status 0
-    assert_output_exact 'permission missing'
-}
-
 @test "GAR-008 DockerImage metadata uses the exact digest resource and a header file" {
     load_module gar
     export GCR_BODY='{"uri":"us-docker.pkg.dev/project/repo/team/app@'"$DIGEST"'","tags":["us-docker.pkg.dev/project/repo/team/app:stable"]}'
