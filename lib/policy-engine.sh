@@ -175,11 +175,25 @@ function policy_copy_attempt_result {
 function policy_execute_lookup {
     local request_name="$1"
     local result_name="$2"
+    local -n request_ref="$request_name"
     local -n result_ref="$result_name"
     local attempt_id callback status
     local denial_observed='' last_status=$LOOKUP_UNAVAILABLE
     local availability
     local -A mechanism_result=()
+    # Adapter helpers still use Bash's dynamic scope for transient scan state.
+    # Keep that compatibility state local to one policy execution so nested or
+    # subsequent lookups cannot observe values from another request.
+    local registry_tags=
+    local registry_lookup_result=completed
+    local registry_lookup_backend=
+    local registry_metadata=
+    local registry_durable_semver_precision=
+    local registry_seed_matching_tags=
+    local registry_digest="${request_ref[digest]-}"
+    local registry_tag_scan="${request_ref[scan_mode]-}"
+    local registry_direct_tag="${request_ref[direct_tag]-}"
+    local registry_direct_tag_confirmed="${request_ref[direct_tag_confirmed]-}"
 
     result_ref=()
     policy_register_builtin_attempts "$request_name"

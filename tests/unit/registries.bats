@@ -37,7 +37,8 @@ function dispatch_resolve_tag_digest {
 
 function dispatch_find_tags_by_digest {
     dispatch_lookup=()
-    registry_find_tags_by_digest "$1" "$2" "$3" "$4" dispatch_lookup
+    registry_find_tags_by_digest "$1" "$2" "$3" "$4" \
+        dispatch_lookup "${5-}"
 }
 
 function assert_classification {
@@ -218,7 +219,7 @@ function assert_classification {
         registry.example/team/app:stable ''
 }
 
-@test "DISPATCH-008 every reverse lookup resets shared result and metadata fields" {
+@test "DISPATCH-008 reverse lookups isolate transient result and metadata state" {
     load_registry_dispatch
     function ghcr_policy_gh_is_available { return 0; }
     function ghcr_policy_attempt_adaptive_probe {
@@ -236,6 +237,8 @@ function assert_classification {
     dispatch_find_tags_by_digest alpine sha256:two all '<none>'
     [[ -z "${dispatch_lookup[metadata]}" ]]
     [[ "${dispatch_lookup[result]}" == completed ]]
+    ! declare -p registry_tags >/dev/null 2>&1
+    ! declare -p registry_metadata >/dev/null 2>&1
 }
 
 @test "DISPATCH-009 any-durable short-circuits on a confirmed durable direct tag" {
@@ -244,9 +247,7 @@ function assert_classification {
         : >"$CALLS_DIR/scanned"
     }
     registry_classify alpine
-    registry_direct_tag_confirmed=1
-
-    dispatch_find_tags_by_digest alpine sha256:one any-durable 1.2.3
+    dispatch_find_tags_by_digest alpine sha256:one any-durable 1.2.3 1
     [[ "${dispatch_lookup[tags]}" == 1.2.3 ]]
     [[ "${dispatch_lookup[backend]}" == direct-tag-check ]]
     refute_file_exists "$CALLS_DIR/scanned"
@@ -258,9 +259,7 @@ function assert_classification {
         : >"$CALLS_DIR/scanned"
     }
     registry_classify alpine
-    registry_direct_tag_confirmed=1
-
-    dispatch_find_tags_by_digest alpine sha256:one any latest
+    dispatch_find_tags_by_digest alpine sha256:one any latest 1
     [[ "${dispatch_lookup[tags]}" == latest ]]
     [[ "${dispatch_lookup[backend]}" == direct-tag-check ]]
     refute_file_exists "$CALLS_DIR/scanned"

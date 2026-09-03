@@ -134,27 +134,18 @@ function registry_find_tags_by_digest {
     local tag_scan_mode="$3"
     local direct_tag="$4"
     local context_name="$5"
+    local direct_tag_confirmed="${6-}"
     local status
     local -A request=() attempt_result=()
     local -n context_ref="$context_name"
-
-    registry_tags=
-    registry_lookup_result=completed
-    registry_lookup_backend=
-    registry_metadata=
-    registry_durable_semver_precision=
-    registry_seed_matching_tags=
-    registry_digest="$digest"
-    registry_tag_scan="$tag_scan_mode"
-    registry_direct_tag=
-    [[ "$direct_tag" == '<none>' ]] || registry_direct_tag="$direct_tag"
 
     registry_policy_request_init "$repository" request
     request[operation]=reverse
     request[digest]="$digest"
     request[scan_mode]="$tag_scan_mode"
-    request[direct_tag]="$registry_direct_tag"
-    request[direct_tag_confirmed]="${registry_direct_tag_confirmed-}"
+    request[direct_tag]=
+    [[ "$direct_tag" == '<none>' ]] || request[direct_tag]="$direct_tag"
+    request[direct_tag_confirmed]="$direct_tag_confirmed"
     if policy_build_and_execute_lookup request attempt_result registry_register_policy_attempts; then
         status=$LOOKUP_SUCCEEDED
     else
@@ -164,6 +155,7 @@ function registry_find_tags_by_digest {
     context_ref[backend]="${attempt_result[backend]-}"
     context_ref[metadata]="${attempt_result[metadata]-}"
     context_ref[tags]="${attempt_result[tags]-}"
+    context_ref[skip]="${attempt_result[skip]-}"
     case "$status" in
     "$LOOKUP_SUCCEEDED") context_ref[result]=completed ;;
     "$LOOKUP_NOT_FOUND") context_ref[result]=not_found ;;

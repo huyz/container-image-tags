@@ -18,7 +18,6 @@ function require_supported_digest_algorithm {
 }
 
 function reset_input_resolution {
-    skip_input=
     container=
     image_id=
     local_image_version=
@@ -218,6 +217,7 @@ function process_resolved_subject {
     local result_name="$1"
     local -n result_ref="$result_name"
     local tag_scan_mode
+    local direct_tag_confirmed=
     local -A scan_lookup=()
 
     [[ -n "$repo_digest" ]] || return 1
@@ -257,14 +257,14 @@ function process_resolved_subject {
         fi
     fi
 
-    registry_direct_tag_confirmed=
     case "${result_ref[remote_check_status]}" in
-    match | resolved) registry_direct_tag_confirmed=1 ;;
+    match | resolved) direct_tag_confirmed=1 ;;
     esac
     registry_find_tags_by_digest \
-        "$repo" "sha256:$repo_sha" "$tag_scan_mode" "$local_tag" scan_lookup
+        "$repo" "sha256:$repo_sha" "$tag_scan_mode" "$local_tag" \
+        scan_lookup "$direct_tag_confirmed"
     result_capture_scan "$result_name" scan_lookup
-    if [[ -n "$skip_input" ]]; then
+    if [[ -n "${scan_lookup[skip]}" ]]; then
         result_ref[scan_status]=skipped
     fi
     if [[ -n "$opt_json" ]]; then
@@ -294,7 +294,6 @@ function process_input {
     resolve_input_subjects "$input_reference"
     readarray -t images_to_process <<<"${wildcard_image_ids:-__current_resolution__}"
     for image_to_process in "${images_to_process[@]}"; do
-        skip_input=
         if [[ "$image_to_process" != __current_resolution__ ]]; then
             container=
             inspect_local_image "$image_to_process" "$wildcard_repository" || {

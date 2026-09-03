@@ -221,13 +221,12 @@ EOF
         [operation]=reverse
         [display_repository]=ghcr.io/owner/first
     ) result=()
-    skip_input=
     ghcr_policy_attempt_interactive request result
-    [[ -n "$skip_input" ]]
+    [[ -n "${result[skip]}" ]]
 
-    skip_input=
+    result=()
     printf '%s\n' 'Repository:      registry.example/later'
-    [[ -z "$skip_input" ]]
+    [[ -z "${result[skip]-}" ]]
 }
 
 @test "JSON-001 stdout is one valid JSON array and diagnostics stay on stderr" {

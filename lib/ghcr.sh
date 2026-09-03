@@ -516,7 +516,6 @@ function ghcr_policy_attempt_interactive {
         ghcr_policy_attempt_packages "$request_name" "$result_name"
         ;;
     skip)
-        skip_input=1
         result_ref[tags]=
         result_ref[skip]=1
         return "$LOOKUP_SUCCEEDED"

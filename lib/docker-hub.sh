@@ -284,7 +284,7 @@ function choose_docker_hub_authentication {
 # Populate registry_tags with Docker Hub tags matching digest. "any" stops at
 # the first match; "any-durable" stops after the first match heuristically
 # assumed durable. The shared
-# skip_input flag is set when the user elects to skip after anonymous
+# A skip result is returned when the user elects to skip after anonymous
 # pagination is refused.
 function docker_hub_tags_by_digest {
     local hub_repository="$1"
@@ -503,7 +503,6 @@ function docker_hub_policy_attempt_interactive {
         fi
         if [[ "$authentication_choice" == skip ]]; then
             notice "Skipping Docker Hub lookup for ${request_ref[display_repository]}."
-            skip_input=1
             result_ref[tags]=
             result_ref[skip]=1
             return "$LOOKUP_SUCCEEDED"
