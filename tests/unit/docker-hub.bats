@@ -67,7 +67,7 @@ done
 if [[ "$url" == *'page=2' ]]; then
     printf '{"results":[{"name":"v2","digest":"sha256:%s"}],"next":null}' "$HUB_DIGEST" >"$output"
 else
-    printf '{"results":[{"name":"v1","digest":"sha256:%s"}],"next":"https://hub.example/page=2"}' "$HUB_DIGEST" >"$output"
+    printf '{"results":[{"name":"v1","digest":"sha256:%s"}],"next":"https://hub.docker.com/v2/repositories/library/app/tags/?page=2"}' "$HUB_DIGEST" >"$output"
 fi
 printf '200'
 EOF
@@ -111,7 +111,7 @@ done
 if [[ "$url" == *page=2* ]]; then
     printf '{"results":[{"name":"third","digest":"sha256:%s"}],"next":null}' "$HUB_DIGEST" >"$output"
 else
-    printf '{"results":[{"name":"first","digest":"sha256:%s"},{"name":"second","digest":"sha256:%s"}],"next":"https://hub.example/page=2"}' "$HUB_DIGEST" "$HUB_DIGEST" >"$output"
+    printf '{"results":[{"name":"first","digest":"sha256:%s"},{"name":"second","digest":"sha256:%s"}],"next":"https://hub.docker.com/v2/repositories/library/app/tags/?page=2"}' "$HUB_DIGEST" "$HUB_DIGEST" >"$output"
 fi
 printf '200'
 EOF
@@ -265,4 +265,25 @@ EOF
     assert_status "$LOOKUP_STOPPED"
     args=$(tr '\0' '\n' <"$CALLS_DIR/preflight.args")
     [[ "$args" == *$'Docker Hub API\napp\nmay request up to 9999 additional tag pages\n9999\n1'* ]]
+}
+
+@test "HUB-023 reverse lookup rejects cross-origin pagination" {
+    load_hub
+    registry_tag_scan=all; registry_direct_tag=; registry_tags=; skip_input=
+    docker_hub_token=repository-scoped-token
+    write_stub curl <<'EOF'
+url="${!#}"
+printf '%s\n' "$url" >>"$CALLS_DIR/urls"
+output=
+for ((index = 1; index <= $#; ++index)); do
+    if [[ "${!index}" == -o ]]; then index=$((index + 1)); output="${!index}"; fi
+done
+printf '%s' '{"results":[],"next":"https://attacker.example/collect"}' >"$output"
+printf '200'
+EOF
+
+    run docker_hub_tags_by_digest library/app "sha256:$DIGEST" app
+    assert_status "$LOOKUP_UNAVAILABLE"
+    [[ $(wc -l <"$CALLS_DIR/urls") -eq 1 ]]
+    ! grep -Fq attacker.example "$CALLS_DIR/urls"
 }

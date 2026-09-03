@@ -290,7 +290,8 @@ function docker_hub_tags_by_digest {
     local hub_repository="$1"
     local digest="$2"
     local display_repository="$3"
-    local next_url response_tmp request_headers='' http_code error_message matching_tags
+    local pagination_path next_url response_tmp request_headers='' http_code
+    local error_message matching_tags
     local page_tags page_matches durable_precision durable_found
     local page_started_ms page_finished_ms page_elapsed_ms total_tag_count total_pages
     local remaining_pages
@@ -298,7 +299,8 @@ function docker_hub_tags_by_digest {
     local -a request_args
 
     digest="${digest#sha256:}"
-    next_url="https://hub.docker.com/v2/repositories/$hub_repository/tags/?page_size=100"
+    pagination_path="https://hub.docker.com/v2/repositories/$hub_repository/tags/"
+    next_url="${pagination_path}?page_size=100"
     response_tmp=$(runtime_temp_file docker-hub-response)
     while [[ -n "$next_url" ]]; do
         verbose "Listing Docker Hub tags from: $next_url"
@@ -424,6 +426,14 @@ function docker_hub_tags_by_digest {
             fi
         fi
         next_url=$($JQ -r '.next // empty' "$response_tmp")
+        case "$next_url" in
+        '' | "$pagination_path"\?*) ;;
+        *)
+            debug "Docker Hub returned an invalid pagination URL for $display_repository"
+            rm -f "$response_tmp"
+            return "$LOOKUP_UNAVAILABLE"
+            ;;
+        esac
     done
     rm -f "$response_tmp"
 }

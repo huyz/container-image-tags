@@ -451,6 +451,7 @@ Implement in `tests/unit/docker-hub.bats`:
 | HUB-020 | P0 | an authoritative not-found or stopped direct fallback never prompts for another credential. |
 | HUB-021 | P0 | an exhaustive first page feeds total page count and measured latency into the shared cost guard. |
 | HUB-022 | P0 | Hub metadata denial retains anonymous native OCI against `registry-1.docker.io`. |
+| HUB-023 | P0 | reverse pagination rejects a continuation outside the exact Docker Hub repository endpoint. |
 
 ## GHCR
 
