@@ -32,10 +32,10 @@ registry-provided metadata APIs, parallelizes requests, and handles fallbacks
 ## Confidence and current limits
 
 This is an AI-assisted project. I've reviewed, refactored, and refined the
-implementation to be confident of its correctness and ensure the code is easy to
-follow and maintain — just as for a hand-coded codebase.
+implementation to be reasonably confident of its correctness and make the code
+easy to inspect and maintain.
 
-An offline test suites covers all supported registry adapters.
+An offline test suite covers all supported registry adapters.
 As for real-world validation, Docker Hub and GHCR are the most tested providers.
 
 ## Quick start
@@ -50,6 +50,10 @@ git clone https://github.com/huyz/container-image-tags.git
 cd container-image-tags
 ./container-image-tags --version
 ```
+
+For a stable installation, check out a tagged version from the
+[releases page](https://github.com/huyz/container-image-tags/releases) instead
+of following the development branch.
 
 Linux requires the same runtime tools: Bash 4.4+, GNU `realpath`, `timeout` and
 `getopt`, curl 7.66.0+, jq, and Perl 5. Install them through your distribution's
@@ -99,13 +103,21 @@ Scan completion: all candidates checked
 ```
 
 Keep `lib/` beside the executable. To use the command without specifying its
-path, you can symlink it to a directory in your `PATH`:
+path, symlink it to a directory in your `PATH` and verify that your shell finds
+it:
+
 ```sh
+mkdir -p ~/.local/bin
 ln -s /path/to/container-image-tags/container-image-tags ~/.local/bin/container-image-tags
+command -v container-image-tags
 ```
 
-Other CLI tools for registries (e.g., `gh`, `aws`, etc.) and Skopeo (for registry-agnostic
-fallbacks) are optional; see [Authentication](#authentication-you-control-the-tradeoff).
+If the final command prints nothing, add `~/.local/bin` to your shell's `PATH`
+before using the symlink.
+
+Other CLI tools for registries (for example, `gh` and `aws`) and Skopeo (for
+registry-agnostic fallbacks) are optional; see
+[Authentication](#authentication-you-control-the-tradeoff).
 
 ## How it works
 
@@ -126,7 +138,7 @@ registry.)
 
 ## Scope and registry support
 
-Registry adapters cover Docker Hub, HCR (GitHub), GCR (Google), GAR (Google),
+Registry adapters cover Docker Hub, GHCR (GitHub), GCR (Google), GAR (Google),
 ACR (Azure), ECR and ECR Public (AWS), plus a generic OCI path (standard
 container-registry API lookup) and Skopeo fallback. ECR Public's metadata
 shortcut needs configured AWS access; otherwise the public OCI path is
