@@ -89,8 +89,8 @@ function load_common {
     source "$REPO_ROOT/lib/scan-policy.sh"
     # shellcheck source=../../lib/scheduler.sh
     source "$REPO_ROOT/lib/scheduler.sh"
-    # shellcheck source=../../lib/access-policy.sh
-    source "$REPO_ROOT/lib/access-policy.sh"
+    # shellcheck source=../../lib/cost-policy.sh
+    source "$REPO_ROOT/lib/cost-policy.sh"
 }
 
 function load_module {

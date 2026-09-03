@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 
-# Registry credential policy. Backend selection and credential selection are
-# deliberately separate: an unavailable public backend may fall back to a
-# different public backend, but it must not by itself authorize credentials.
+# Shared cost estimation and refusal policy for potentially expensive registry
+# pagination and per-tag manifest scans.
 
 readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_INTERACTIVE=180
 readonly EXPENSIVE_SCAN_THRESHOLD_SECONDS_NONINTERACTIVE=600

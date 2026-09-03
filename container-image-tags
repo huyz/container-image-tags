@@ -117,8 +117,8 @@ source "$MODULE_DIR/scan-policy.sh"
 # shellcheck source=lib/scheduler.sh
 source "$MODULE_DIR/scheduler.sh"
 # shellcheck source-path=SCRIPTDIR
-# shellcheck source=lib/access-policy.sh
-source "$MODULE_DIR/access-policy.sh"
+# shellcheck source=lib/cost-policy.sh
+source "$MODULE_DIR/cost-policy.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/skopeo.sh
 source "$MODULE_DIR/skopeo.sh"
