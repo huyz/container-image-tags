@@ -174,16 +174,10 @@ function registry_find_tags_by_digest {
 }
 
 function registry_print_metadata {
-    local result_name="${1-}"
+    local result_name="$1"
+    local -n result_ref="$result_name"
 
-    if [[ -n "$result_name" ]]; then
-        local -n result_ref="$result_name"
-        case "${result_ref[registry_kind]}" in
-        ghcr) ghcr_print_metadata "$result_name" ;;
-        esac
-        return
-    fi
-    case "$registry_kind" in
-    ghcr) ghcr_print_metadata ;;
+    case "${result_ref[registry_kind]}" in
+    ghcr) ghcr_print_metadata "$result_name" ;;
     esac
 }

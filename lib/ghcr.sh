@@ -545,22 +545,14 @@ function ghcr_register_policy_attempts {
 }
 
 function ghcr_print_metadata {
-    local result_name="${1-}"
-    local lookup_result="$registry_lookup_result"
-    local lookup_backend="$registry_lookup_backend"
-    local metadata="$registry_metadata"
-    local digest="$registry_digest"
-    local tags="$registry_tags"
+    local result_name="$1"
+    local -n result_ref="$result_name"
+    local lookup_result="${result_ref[scan_status]}"
+    local lookup_backend="${result_ref[scan_backend]}"
+    local metadata="${result_ref[provider_metadata]}"
+    local digest="${result_ref[digest]}"
+    local tags="${result_ref[tags]}"
     local package_current_tags
-
-    if [[ -n "$result_name" ]]; then
-        local -n result_ref="$result_name"
-        lookup_result="${result_ref[scan_status]}"
-        lookup_backend="${result_ref[scan_backend]}"
-        metadata="${result_ref[provider_metadata]}"
-        digest="${result_ref[digest]}"
-        tags="${result_ref[tags]}"
-    fi
 
     case "$lookup_result:$lookup_backend" in
     completed:github-packages-api)

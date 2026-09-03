@@ -140,11 +140,16 @@ EOF
 
 @test "GHCR-011 active untagged package metadata prints the documented note" {
     load_ghcr
-    registry_lookup_result=completed
-    registry_lookup_backend=github-packages-api
-    registry_metadata='{"created_at":"2026-01-01","updated_at":"2026-01-02","metadata":{"container":{"tags":[]}}}'
+    declare -A render_result=(
+        [scan_status]=completed
+        [scan_backend]=github-packages-api
+        [provider_metadata]='{"created_at":"2026-01-01","updated_at":"2026-01-02","metadata":{"container":{"tags":[]}}}'
+        [digest]="$DIGEST"
+        [tags]=
+    )
+    set -u
 
-    run ghcr_print_metadata
+    run ghcr_print_metadata render_result
     assert_status 0
     assert_output_contains 'GHCR package info:'
     assert_output_contains 'still an active GHCR package version, but no current tag points to it'
