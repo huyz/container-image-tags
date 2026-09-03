@@ -28,6 +28,10 @@ function policy_add_attempt {
 
     [[ -n "$id" && -n "$callback" && -n "$backend" ]] ||
         abort "Invalid registry policy attempt declaration"
+    declare -F "$callback" >/dev/null ||
+        abort "Registry policy attempt '$id' names unknown callback '$callback'"
+    [[ -z "$available" ]] || declare -F "$available" >/dev/null ||
+        abort "Registry policy attempt '$id' names unknown availability callback '$available'"
     [[ -z ${policy_attempt_callback[$id]+x} ]] ||
         abort "Duplicate registry policy attempt '$id'"
     case "$access" in
@@ -39,6 +43,8 @@ function policy_add_attempt {
     esac
     [[ "$cost" =~ ^[0-9]+$ ]] ||
         abort "Invalid cost '$cost' for registry policy attempt '$id'"
+    [[ "$authoritative" == 0 || "$authoritative" == 1 ]] ||
+        abort "Invalid authoritative flag '$authoritative' for registry policy attempt '$id'"
 
     policy_attempt_sequence[$id]="${#policy_attempt_ids[@]}"
     policy_attempt_ids+=("$id")
@@ -48,6 +54,22 @@ function policy_add_attempt {
     policy_attempt_cost[$id]="$cost"
     policy_attempt_authoritative[$id]="$authoritative"
     policy_attempt_available[$id]="$available"
+}
+
+function policy_attempt_result_is_valid {
+    local request_name="$1"
+    local result_name="$2"
+    local -n request_ref="$request_name"
+    local -n attempt_result_ref="$result_name"
+
+    case "${request_ref[operation]}" in
+    direct) [[ -n "${attempt_result_ref[digest]-}" ]] ;;
+    reverse)
+        [[ -n "${attempt_result_ref[tags]+present}" ||
+            -n "${attempt_result_ref[skip]-}" ]]
+        ;;
+    *) return 1 ;;
+    esac
 }
 
 function policy_attempt_is_permitted {
@@ -215,6 +237,12 @@ function policy_execute_lookup {
         mechanism_result[status]="$status"
         policy_attempt_finished[$attempt_id]=1
         last_status=$status
+
+        if (( status == LOOKUP_SUCCEEDED )) &&
+                ! policy_attempt_result_is_valid \
+                    "$request_name" mechanism_result; then
+            abort "Registry policy attempt '$attempt_id' returned an invalid successful result"
+        fi
 
         case "$status" in
         "$LOOKUP_SUCCEEDED")

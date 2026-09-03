@@ -40,6 +40,7 @@ function attempt_session_success { record_attempt session "$LOOKUP_SUCCEEDED" "$
 function attempt_fast_session_success { record_attempt fast-session "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_credential_success { record_attempt credential "$LOOKUP_SUCCEEDED" "$@"; }
 function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCEEDED" "$@"; }
+function attempt_empty_success { return "$LOOKUP_SUCCEEDED"; }
 
 @test "POLICY-ENGINE-001 if-required unlocks credentials only after public denial" {
     load_policy_engine
@@ -215,4 +216,38 @@ function attempt_interactive_success { record_attempt interactive "$LOOKUP_SUCCE
     policy_execute_lookup policy_request policy_result
     [[ $(cat "$CALLS_DIR/order") == fast-session ]]
     [[ "${policy_result[backend]}" == fast-api ]]
+}
+
+@test "POLICY-ENGINE-016 declarations reject unknown callbacks and invalid flags" {
+    load_policy_engine
+
+    run --separate-stderr policy_add_attempt invalid missing_callback backend \
+        "$POLICY_ACCESS_PUBLIC" 1
+    assert_status 1
+    assert_stderr_contains "unknown callback 'missing_callback'"
+
+    run --separate-stderr policy_add_attempt invalid attempt_public_success backend \
+        "$POLICY_ACCESS_PUBLIC" 1 maybe
+    assert_status 1
+    assert_stderr_contains "Invalid authoritative flag 'maybe'"
+}
+
+@test "POLICY-ENGINE-017 successful direct attempts require a digest" {
+    load_policy_engine
+    policy_add_attempt empty attempt_empty_success backend \
+        "$POLICY_ACCESS_PUBLIC" 1
+
+    run --separate-stderr policy_execute_lookup policy_request policy_result
+    assert_status 1
+    assert_stderr_contains "attempt 'empty' returned an invalid successful result"
+}
+
+@test "POLICY-ENGINE-018 successful reverse attempts require tags or a skip" {
+    load_policy_engine
+    policy_request[operation]=reverse
+    policy_add_attempt empty attempt_empty_success backend \
+        "$POLICY_ACCESS_PUBLIC" 1
+    run --separate-stderr policy_execute_lookup policy_request policy_result
+    assert_status 1
+    assert_stderr_contains "attempt 'empty' returned an invalid successful result"
 }

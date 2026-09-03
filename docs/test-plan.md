@@ -637,6 +637,9 @@ declarations through `tests/unit/registries.bats`:
 | POLICY-ENGINE-011 | P0 | a completed plan leaves no process-wide attempt state that can leak into a later request. |
 | POLICY-ENGINE-012 | P0 | denial from one public mechanism does not suppress another public mechanism. |
 | POLICY-ENGINE-013 | P0 | `if-required` exhausts eligible public mechanisms before unlocked credentials. |
+| POLICY-ENGINE-016 | P0 | declarations reject unknown callbacks and invalid authoritative flags. |
+| POLICY-ENGINE-017 | P0 | a successful direct attempt must return a digest. |
+| POLICY-ENGINE-018 | P0 | a successful reverse attempt must return tags or an explicit skip. |
 | POLICY-001 | P0 | provider declarations under `require` skip public OCI and enter credentialed Skopeo. |
 - Provider dispatch tests verify actual registration order, backend reporting,
   fallback, and terminal behavior for both direct and reverse requests.
