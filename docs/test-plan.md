@@ -796,6 +796,7 @@ CIT_LIVE_GAR_REF
 CIT_LIVE_ACR_REF
 CIT_LIVE_ECR_PUBLIC_REF
 CIT_LIVE_GENERIC_OCI_REF
+CIT_LIVE_GENERIC_OCI_DIGEST
 ```
 
 For each configured target, record the exact reference and whether the test is
@@ -817,7 +818,7 @@ particular number of tags.
 
 | ID | Priority | Contract |
 | --- | --- | --- |
-| LIVE-001 | P2 | when `CIT_LIVE_GENERIC_OCI_REF` is configured, a public generic OCI digest lookup succeeds and returns the expected complete digest. |
+| LIVE-001 | P2 | configured generic OCI tag resolves to `CIT_LIVE_GENERIC_OCI_DIGEST`, scans through the anonymous OCI backend with credentials and Skopeo disabled, and returns the known tag. |
 
 ## CI plan
 
