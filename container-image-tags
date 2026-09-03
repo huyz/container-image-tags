@@ -265,7 +265,10 @@ done
 
 initialize_runtime
 
-opts=$("$GETOPT" --options hvd --long help,version,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
+opts=$("$GETOPT" --options hvd --long help,version,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || {
+    printf "Run '%s --help' for usage.\n" "$SCRIPT_NAME" >&2
+    exit 2
+}
 eval set -- "$opts"
 
 while true; do

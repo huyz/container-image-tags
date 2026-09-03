@@ -125,7 +125,8 @@ function run_cli_with_tty_input {
     run_cli --not-an-option
     assert_status 2
     assert_stderr_contains 'unrecognized option'
-    assert_stderr_contains 'Usage:'
+    assert_stderr_contains "Run 'container-image-tags --help' for usage."
+    refute_stderr_contains 'Usage:'
 }
 
 @test "CLI-004 invalid tag resolution reports accepted values" {

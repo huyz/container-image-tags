@@ -333,7 +333,7 @@ Implement these end-to-end cases in `tests/integration/cli-options.bats`:
 | --- | --- | --- |
 | CLI-001 | P0 | `-h` and `--help` — Status 0 and equivalent help |
 | CLI-002 | P0 | No positional input — Usage on stderr and status 1 |
-| CLI-003 | P0 | Unknown option or getopt failure — Usage and status 2 |
+| CLI-003 | P0 | Unknown option or getopt failure — Concise help hint and status 2 |
 | CLI-004 | P0 | Invalid `--tag-resolution` — Explicit accepted-value error |
 | CLI-005 | P0 | Invalid `--tag-scan` — Explicit accepted-value error |
 | CLI-006 | P0 | Valid and invalid `--credential-policy` values — Four documented values accepted; ambiguous legacy names rejected |
