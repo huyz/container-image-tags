@@ -64,26 +64,39 @@ trap trap_err ERR
 trap 'exit 130' INT  # Exit this shell on SIGINT rather than continuing after an interrupted command
 PS4='+(${BASH_SOURCE}:${LINENO}): ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
 
+function require_command {
+    local command_name="$1"
+    local package_name="${2:-$command_name}"
+
+    command -v "$command_name" &>/dev/null || {
+        echo "$SCRIPT_NAME: ERROR: missing package '$package_name' for required command '$command_name'." >&2
+        exit 1
+    }
+}
+
+function initialize_runtime {
 if [[ $OSTYPE == darwin* ]]; then
     HOMEBREW_PREFIX=$( (/opt/homebrew/bin/brew --prefix || /usr/local/bin/brew --prefix || brew --prefix) 2>/dev/null )
-    _install_hint="Install the missing package and retry: brew install"
-    [[ -x "${GETOPT:="$HOMEBREW_PREFIX/opt/gnu-getopt/bin/getopt"}" ]] || \
-        { echo "$0: ERROR: $_install_hint gnu-getopt, to install $GETOPT." >&2; exit 1; }
-    [[ -x "${REALPATH:="$HOMEBREW_PREFIX/bin/grealpath"}" ]] || \
-        { echo "$0: ERROR: $_install_hint coreutils, to install $REALPATH." >&2; exit 1; }
+    GETOPT=${GETOPT:-"$HOMEBREW_PREFIX/opt/gnu-getopt/bin/getopt"}
+    REALPATH=${REALPATH:-"$HOMEBREW_PREFIX/bin/grealpath"}
     TIMEOUT=${TIMEOUT:=gtimeout}  # Also part of coreutils, already checked above
+    require_command "$GETOPT" gnu-getopt
+    require_command "$REALPATH" coreutils
+    require_command "$TIMEOUT" coreutils
 else
-    _install_hint="Install the missing package "
     GETOPT=${GETOPT:-getopt}
     REALPATH=${REALPATH:-realpath}
     TIMEOUT=${TIMEOUT:=timeout}
+    require_command "$GETOPT"
+    require_command "$REALPATH"
+    require_command "$TIMEOUT"
 fi
-command -v "${PERL:=perl}" &>/dev/null ||
-    { echo "$0: ERROR: $_install_hint perl to install $PERL." >&2; exit 1; }
-command -v "${CURL:=curl}" &>/dev/null ||
-    { echo "$0: ERROR: $_install_hint curl to install $CURL." >&2; exit 1; }
-command -v "${JQ:=jq}" &>/dev/null || \
-    { echo "$0: ERROR: $_install_hint jq to install $JQ." >&2; exit 1; }
+PERL=${PERL:-perl}
+CURL=${CURL:-curl}
+JQ=${JQ:-jq}
+require_command "$PERL" perl
+require_command "$CURL" curl
+require_command "$JQ" jq
 DOCKER=${DOCKER:-docker}
 
 SOURCE_SCRIPT=$("$REALPATH" "${BASH_SOURCE[0]}")
@@ -148,6 +161,7 @@ source "$MODULE_DIR/results.sh"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/pipeline.sh
 source "$MODULE_DIR/pipeline.sh"
+}
 
 #### Options
 
@@ -240,6 +254,17 @@ Arguments are interpreted as follows:
 END
 }
 
+# Basic informational options must work even when operational dependencies are
+# not installed. GNU getopt performs the full parse after initialization.
+for informational_option in "$@"; do
+    case "$informational_option" in
+    -h | --help) usage; exit 0 ;;
+    --version) printf '%s %s\n' "$SCRIPT_NAME" "$CIT_VERSION"; exit 0 ;;
+    esac
+done
+
+initialize_runtime
+
 opts=$("$GETOPT" --options hvd --long help,version,verbose,debug,json,allow-expensive-scan,tag-resolution:,tag-scan:,credential-policy: --name "$SCRIPT_NAME" -- "$@") || { usage >&2; exit 2; }
 eval set -- "$opts"
 
@@ -274,9 +299,8 @@ auto | local | remote) ;;
 *) abort "--tag-resolution must be 'auto', 'local', or 'remote'" ;;
 esac
 
-if [[ "$opt_tag_resolution" != remote ]] && ! command -v "$DOCKER" &>/dev/null; then
-    echo "$0: ERROR: $_install_hint docker." >&2
-    exit 1
+if [[ "$opt_tag_resolution" != remote ]]; then
+    require_command "$DOCKER" docker
 fi
 
 if [[ -z "$opt_tag_scan" ]]; then

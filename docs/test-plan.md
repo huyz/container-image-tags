@@ -341,8 +341,9 @@ Implement these end-to-end cases in `tests/integration/cli-options.bats`:
 | CLI-011 | P0 | Explicit scan mode in any environment — Explicit value wins |
 | CLI-012 | P0 | Non-remote resolution with Docker missing — Dependency diagnostic before processing input |
 | CLI-013 | P0 | Remote resolution with Docker missing — Docker is not required |
-| CLI-014 | P1 | Missing curl, jq, getopt, or realpath — Correct installation diagnostic and nonzero status |
+| CLI-014 | P0 | Help and version without operational dependencies — Requested information and zero status |
 | CLI-015 | P0 | Bash older than 4.4 — Clear version error before module execution |
+| CLI-016 | P0 | Missing Perl, curl, jq, getopt, realpath, or timeout — Correct diagnostic before work |
 
 ## Input resolution and local Docker metadata
 

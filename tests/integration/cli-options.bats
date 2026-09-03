@@ -264,13 +264,35 @@ EOF
     assert_status 0
 }
 
-@test "CLI-014 missing curl produces the documented dependency error" {
-    CURL="$STUB_BIN/missing-curl"
-    export CURL
+@test "CLI-014 help and version do not require operational dependencies" {
+    missing="$STUB_BIN/missing"
 
-    run_cli --help
-    assert_status 1
-    assert_stderr_contains 'missing package'
+    run --separate-stderr env PERL="$missing" CURL="$missing" JQ="$missing" \
+        GETOPT="$missing" REALPATH="$missing" TIMEOUT="$missing" \
+        "$SYSTEM_BASH" "$REPO_ROOT/container-image-tags" --help
+    assert_status 0
+    assert_output_contains 'Usage:'
+    assert_stderr_exact ''
+
+    run --separate-stderr env PERL="$missing" CURL="$missing" JQ="$missing" \
+        GETOPT="$missing" REALPATH="$missing" TIMEOUT="$missing" \
+        "$SYSTEM_BASH" "$REPO_ROOT/container-image-tags" --version
+    assert_status 0
+    assert_output_contains 'container-image-tags 0.2.0'
+    assert_stderr_exact ''
+}
+
+@test "CLI-016 operational runs validate every required command" {
+    install_noop_required_tools
+    for variable in PERL CURL JQ GETOPT REALPATH TIMEOUT; do
+        run --separate-stderr env "$variable=$STUB_BIN/missing-$variable" \
+            "$SYSTEM_BASH" "$REPO_ROOT/container-image-tags" \
+            --tag-resolution=remote --tag-scan=never \
+            "registry.example/team/app@sha256:$DIGEST" </dev/null
+        assert_status 1
+        assert_stderr_contains 'missing package'
+        assert_stderr_contains 'required command'
+    done
 }
 
 @test "CLI-015 Bash older than 4.4 is rejected before dependency checks" {
