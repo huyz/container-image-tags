@@ -212,7 +212,8 @@ EOF
     run_cli --tag-resolution=remote \
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
-    assert_output_contains 'Remote tags (partial scan):'
+    assert_output_contains 'Matching remote tags:'
+    assert_output_contains 'Scan completion: all candidates checked; bounded goal not found'
 }
 
 @test "CLI-010 terminal stdin and stderr default human mode to ask" {

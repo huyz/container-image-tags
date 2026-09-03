@@ -81,19 +81,21 @@ to find alias tags for that digest. For example, if you select the
 `first matching durable tag` you may get:
 
 ```text
-Remote tags (partial scan):
+Matching remote tags:
 17
 17.11-trixie
+Scan completion: stopped after a durable match
 ```
 
 If you select `all`, you may get:
 
 ```text
-Other remote tags:
+Matching remote tags:
 17.11-trixie
 17.11
 17-trixie
 17
+Scan completion: all candidates checked
 ```
 
 Keep `lib/` beside the executable. To use the command without specifying its

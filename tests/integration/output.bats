@@ -138,7 +138,7 @@ function run_cli {
     refute_output_contains 'Remote tag check:'
 }
 
-@test "OUTPUT-004 any and all human headings are distinct" {
+@test "OUTPUT-004 bounded and exhaustive completion are explicit" {
     install_required_tools
     write_stub curl <<'EOF'
 headers=; body=
@@ -157,12 +157,14 @@ EOF
     run_cli --tag-resolution=remote --tag-scan=any \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Remote tags (partial scan):'
+    assert_output_contains 'Matching remote tags:'
+    assert_output_contains 'Scan completion: all candidates checked; bounded goal not found'
 
     run_cli --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Other remote tags:'
+    assert_output_contains 'Matching remote tags:'
+    assert_output_contains 'Scan completion: all candidates checked'
 }
 
 @test "OUTPUT-005 completed scan with no matches prints an explicit none marker" {
@@ -171,7 +173,7 @@ EOF
     run_cli --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Other remote tags:'
+    assert_output_contains 'Matching remote tags:'
     assert_output_contains '<none>'
 }
 
@@ -181,14 +183,15 @@ EOF
 
     run_cli --tag-resolution=local --tag-scan=any-durable registry.example/app:1.2.3
     assert_status 0
-    assert_output_contains 'Remote tags (partial scan):'
+    assert_output_contains 'Matching remote tags:'
+    assert_output_contains 'Scan completion: stopped after a durable match'
     assert_output_contains '1.2.3'
     ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 
     run_cli --json --tag-resolution=local --tag-scan=any-durable \
         registry.example/app:1.2.3
     assert_status 0
-    assert_json '.[0].tag_scan == {"mode":"any-durable","status":"completed","backend":"direct-tag-check","provider_metadata":null,"tags":["1.2.3"]}'
+    assert_json '.[0].tag_scan == {"mode":"any-durable","status":"completed","completion":"durable_match","backend":"direct-tag-check","provider_metadata":null,"tags":["1.2.3"]}'
     ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 }
 
@@ -313,7 +316,7 @@ EOF
     run_cli --json --tag-resolution=remote --tag-scan=never \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_json '.[0].tag_scan == {"mode":"never","status":"not_requested","backend":null,"provider_metadata":null,"tags":[]}'
+    assert_json '.[0].tag_scan == {"mode":"never","status":"not_requested","completion":"not_requested","backend":null,"provider_metadata":null,"tags":[]}'
 }
 
 @test "JSON-006 scan backend belongs to the documented enum" {
@@ -393,4 +396,30 @@ EOF
     assert_status 0
     assert_json 'type == "array" and length == 2'
     assert_json '.[0].input == "registry.example/app:*" and .[1].input == "registry.example/second@sha256:'"$DIGEST_B"'"'
+}
+
+@test "JSON-012 scan completion distinguishes each stopping condition" {
+    install_local_output_fixtures
+    export REMOTE_TAGS='["floating","1.2.3"]'
+
+    run_cli --json --tag-resolution=remote --tag-scan=all \
+        "registry.example/app@sha256:$DIGEST_A"
+    assert_status 0
+    assert_json '.[0].tag_scan.completion == "complete"'
+
+    run_cli --json --tag-resolution=remote --tag-scan=any \
+        "registry.example/app@sha256:$DIGEST_A"
+    assert_status 0
+    assert_json '.[0].tag_scan.completion == "first_match"'
+
+    run_cli --json --tag-resolution=remote --tag-scan=any-durable \
+        "registry.example/app@sha256:$DIGEST_A"
+    assert_status 0
+    assert_json '.[0].tag_scan.completion == "durable_match"'
+
+    export REMOTE_TAGS='["floating"]'
+    run_cli --json --tag-resolution=remote --tag-scan=any-durable \
+        "registry.example/app@sha256:$DIGEST_A"
+    assert_status 0
+    assert_json '.[0].tag_scan.completion == "exhausted"'
 }

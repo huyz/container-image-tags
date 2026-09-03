@@ -689,7 +689,7 @@ all prose:
 | OUTPUT-001 | P0 | interpretation notice appears before registry work. |
 | OUTPUT-002 | P0 | locally resolved repository digest reports image/container fields and direct tag match, mismatch, not-found, or unavailable state correctly. |
 | OUTPUT-003 | P0 | remotely resolved repository digest reports resolution without repeating a local check. |
-| OUTPUT-004 | P0 | bounded and `all` headings are distinct. |
+| OUTPUT-004 | P0 | bounded and exhaustive completion states are explicit. |
 | OUTPUT-005 | P1 | no-match output is explicit. |
 | OUTPUT-006 | P1 | provider metadata is printed only for supported GHCR results. |
 | OUTPUT-007 | P0 | warning, notice, error, verbose, and debug messages use their intended stream and gating. |
@@ -711,13 +711,14 @@ JSON tests must parse stdout with jq and assert fields semantically:
 | JSON-009 | P0 | GHCR provider metadata is parsed JSON; other providers use null. |
 | JSON-010 | P0 | diagnostics, spinners, and cloud CLI notices never contaminate stdout. |
 | JSON-011 | P1 | wildcard and multiple inputs still produce one array. |
+| JSON-012 | P0 | completion distinguishes exhaustive, first-match, durable-match, and exhausted scans. |
 
 Canonical result tests live in `tests/unit/results.bats`:
 
 | ID | Priority | Contract |
 | --- | --- | --- |
 | RESULT-001 | P0 | rendering a canonical result produces semantic JSON without consulting lookup globals. |
-| RESULT-002 | P0 | scan result, backend, metadata, and ordered tags are copied into the canonical result. |
+| RESULT-002 | P0 | scan result, completion, backend, metadata, and ordered tags are copied into the canonical result. |
 
 Runtime helper tests live in `tests/unit/runtime.bats`:
 
