@@ -91,7 +91,9 @@ EOF
     write_stub stubborn-child <<'EOF'
 trap '' TERM
 : >"$CALLS_DIR/stubborn-child.ready"
-sleep 30
+(trap - TERM; sleep 30) &
+printf '%s\n' "$!" >"$CALLS_DIR/grandchild.pid"
+wait
 EOF
     stubborn-child &
     child_pid=$!
@@ -105,5 +107,7 @@ EOF
     runtime_cleanup
     (( SECONDS - start < 5 ))
     ! kill -0 "$child_pid" 2>/dev/null
+    grandchild_pid=$(<"$CALLS_DIR/grandchild.pid")
+    ! kill -0 "$grandchild_pid" 2>/dev/null
     [[ ${#runtime_child_pids[@]} -eq 0 ]]
 }

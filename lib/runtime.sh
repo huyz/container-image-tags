@@ -60,15 +60,43 @@ function runtime_unregister_child {
     runtime_child_pids=("${remaining_pids[@]}")
 }
 
+function runtime_descendant_pids {
+    (( $# > 0 )) || return 0
+
+    # shellcheck disable=SC2016  # Perl program, not a shell expansion
+    ps -e -o pid= -o ppid= | "${PERL:-perl}" -e '
+        my %children;
+        while (<STDIN>) {
+            next unless /^\s*(\d+)\s+(\d+)\s*$/;
+            push @{$children{$2}}, $1;
+        }
+        my @pending = @ARGV;
+        my %seen = map { $_ => 1 } @pending;
+        while (@pending) {
+            my $parent = shift @pending;
+            for my $child (@{$children{$parent} // []}) {
+                next if $seen{$child}++;
+                print "$child\n";
+                push @pending, $child;
+            }
+        }
+    ' -- "$@"
+}
+
 function runtime_terminate_children {
     local pid attempt any_alive
+    local -a owned_pids=("${runtime_child_pids[@]}")
 
-    for pid in "${runtime_child_pids[@]}"; do
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] && owned_pids+=("$pid")
+    done < <(runtime_descendant_pids "${runtime_child_pids[@]}")
+
+    for pid in "${owned_pids[@]}"; do
         kill -TERM "$pid" 2>/dev/null || true
     done
     for (( attempt = 0; attempt < 25; ++attempt )); do
         any_alive=
-        for pid in "${runtime_child_pids[@]}"; do
+        for pid in "${owned_pids[@]}"; do
             if kill -0 "$pid" 2>/dev/null; then
                 any_alive=1
                 break
@@ -77,7 +105,7 @@ function runtime_terminate_children {
         [[ -n "$any_alive" ]] || break
         sleep 0.01
     done
-    for pid in "${runtime_child_pids[@]}"; do
+    for pid in "${owned_pids[@]}"; do
         kill -KILL "$pid" 2>/dev/null || true
     done
     for pid in "${runtime_child_pids[@]}"; do
