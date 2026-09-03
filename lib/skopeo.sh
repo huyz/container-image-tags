@@ -254,12 +254,11 @@ function skopeo_policy_attempt {
     if output=$(skopeo_tags_by_digest \
             "${request_ref[display_repository]}" \
             "${request_ref[digest]}" "$authfile"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function skopeo_policy_attempt_session {

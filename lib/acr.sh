@@ -170,7 +170,7 @@ function acr_tags_from_manifest_metadata {
     [[ "$returned_digest" == "$digest" ]] || return "$LOOKUP_UNAVAILABLE"
     matching_tags=$("$JQ" -r \
         '[(.manifest.tags // .tags // [])[]?] | unique | .[]' <<<"$metadata")
-    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags"
 }
 
 function acr_policy_attempt_metadata {
@@ -205,12 +205,11 @@ function acr_policy_attempt_metadata {
     fi
     if output=$(acr_tags_from_manifest_metadata \
             "$metadata" "${request_ref[digest]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function acr_policy_attempt_public {

@@ -179,6 +179,18 @@ function lookup_and_log {
     assert_output_exact stable
 }
 
+@test "COMMON-019 any-durable distinguishes exhaustion from lookup failure" {
+    load_common
+    registry_tag_scan=any-durable
+    registry_direct_tag=latest
+    registry_direct_tag_confirmed=1
+
+    run select_matching_tags_for_scan \
+        $'stable\nedge' $'latest\nstable\nedge'
+    assert_status "$SCAN_SELECTION_EXHAUSTED"
+    assert_output_exact $'latest\nstable\nedge'
+}
+
 @test "COMMON-013 durable heuristic accepts short hashes anywhere in a tag" {
     load_common
 
@@ -489,4 +501,17 @@ function lookup_pool_terminal {
         progress worker lookup_from_tag 1
     assert_status "$LOOKUP_UNAVAILABLE"
     assert_output_exact 1.2
+}
+
+@test "POOL-018 any-durable reports complete exhaustion with floating matches" {
+    load_common
+    registry_tag_scan=any-durable
+    registry_durable_semver_precision=3
+    registry_seed_matching_tags=latest
+    candidates=(match 1.2)
+
+    run tags_by_digest_with_rolling_pool repo sha256:wanted candidates 2 \
+        progress worker lookup_from_tag 1
+    assert_status "$SCAN_SELECTION_EXHAUSTED"
+    assert_output_exact $'latest\nmatch\n1.2'
 }

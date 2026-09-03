@@ -296,6 +296,7 @@ function docker_hub_tags_by_digest {
     local page_started_ms page_finished_ms page_elapsed_ms total_tag_count total_pages
     local remaining_pages
     local pagination_cost_checked=
+    local bounded_goal_found=
     local -a request_args
 
     digest="${digest#sha256:}"
@@ -380,6 +381,7 @@ function docker_hub_tags_by_digest {
                     -n "$registry_direct_tag" ]] &&
                     tag_is_assumed_durable "$registry_direct_tag" "$durable_precision"; then
                 registry_tags="$registry_direct_tag"
+                bounded_goal_found=1
                 break
             fi
             if [[ -n "${registry_direct_tag_confirmed-}" &&
@@ -422,6 +424,7 @@ function docker_hub_tags_by_digest {
             registry_tags+="${registry_tags:+$'\n'}$matching_tags"
             if [[ "$registry_tag_scan" == any ||
                     "$registry_tag_scan" == any-durable && -n "$durable_found" ]]; then
+                [[ "$registry_tag_scan" != any-durable ]] || bounded_goal_found=1
                 break
             fi
         fi
@@ -436,6 +439,10 @@ function docker_hub_tags_by_digest {
         esac
     done
     rm -f "$response_tmp"
+    if [[ "$registry_tag_scan" == any-durable &&
+            -z "$bounded_goal_found" ]]; then
+        return "$SCAN_SELECTION_EXHAUSTED"
+    fi
 }
 
 function docker_hub_policy_session_is_available {
@@ -466,12 +473,12 @@ function docker_hub_policy_attempt_api {
     if docker_hub_tags_by_digest \
             "${request_ref[repository]}" "${request_ref[digest]}" \
             "${request_ref[display_repository]}"; then
-        result_ref[tags]="$registry_tags"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result \
+        "$request_name" "$result_name" "$registry_tags" "$status"
 }
 
 function docker_hub_policy_attempt_environment {

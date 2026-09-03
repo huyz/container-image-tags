@@ -14,6 +14,7 @@ function result_init {
     result_ref[remote_check_digest]=
     result_ref[scan_mode]=
     result_ref[scan_status]=not_requested
+    result_ref[scan_completion]=not_requested
     result_ref[scan_backend]=
     result_ref[provider_metadata]=
     result_ref[tags]=
@@ -45,6 +46,7 @@ function result_capture_scan {
     result_ref[scan_backend]="${context_ref[backend]-}"
     result_ref[provider_metadata]="${context_ref[metadata]-}"
     result_ref[tags]="${context_ref[tags]-}"
+    result_ref[scan_completion]="${context_ref[completion]-}"
 }
 
 function render_result_header_human {
@@ -99,13 +101,14 @@ function render_scan_human {
     case "${result_ref[scan_status]}" in
     not_requested | declined | skipped) return ;;
     esac
-    if [[ "${result_ref[scan_mode]}" == any ||
-            "${result_ref[scan_mode]}" == any-durable ]]; then
-        echo "Remote tags (partial scan):"
-    else
-        echo "Other remote tags:"
-    fi
+    echo "Matching remote tags:"
     printf '%s\n' "${result_ref[tags]:-<none>}"
+    case "${result_ref[scan_completion]}" in
+    complete) echo "Scan completion: all candidates checked" ;;
+    first_match) echo "Scan completion: stopped after the first match" ;;
+    durable_match) echo "Scan completion: stopped after a durable match" ;;
+    exhausted) echo "Scan completion: all candidates checked; bounded goal not found" ;;
+    esac
     registry_print_metadata "$result_name"
 }
 
@@ -131,6 +134,7 @@ function result_to_json {
         --arg remote_check_digest "${result_ref[remote_check_digest]}" \
         --arg scan_mode "${result_ref[scan_mode]}" \
         --arg scan_status "${result_ref[scan_status]}" \
+        --arg scan_completion "${result_ref[scan_completion]}" \
         --arg tags "${result_ref[tags]}" \
         --arg scan_backend "${result_ref[scan_backend]}" \
         --arg provider_metadata "${result_ref[provider_metadata]}" '
@@ -161,6 +165,7 @@ function result_to_json {
                 tag_scan: {
                     mode: $scan_mode,
                     status: $scan_status,
+                    completion: $scan_completion,
                     backend: ($scan_backend | nullable),
                     provider_metadata: (
                         if $provider_metadata == "" then null

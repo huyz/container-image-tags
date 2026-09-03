@@ -111,11 +111,13 @@ function policy_attempt_confirmed_direct_tag {
         -n "${request_ref[direct_tag]-}" ]] || return "$LOOKUP_UNAVAILABLE"
     if [[ "${request_ref[scan_mode]}" == any ]]; then
         result_ref[tags]="${request_ref[direct_tag]}"
+        result_ref[completion]=first_match
         return "$LOOKUP_SUCCEEDED"
     fi
     if [[ "${request_ref[scan_mode]}" == any-durable ]] &&
             tag_is_assumed_durable "${request_ref[direct_tag]}"; then
         result_ref[tags]="${request_ref[direct_tag]}"
+        result_ref[completion]=durable_match
         return "$LOOKUP_SUCCEEDED"
     fi
     return "$LOOKUP_UNAVAILABLE"

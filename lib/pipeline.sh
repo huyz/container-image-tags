@@ -252,6 +252,7 @@ function process_resolved_subject {
         if [[ "$tag_scan_mode" == none ]]; then
             result_ref[scan_mode]=ask
             result_ref[scan_status]=declined
+            result_ref[scan_completion]=declined
             [[ -z "$opt_json" ]] || append_json_result "$result_name"
             return
         fi
@@ -266,6 +267,7 @@ function process_resolved_subject {
     result_capture_scan "$result_name" scan_lookup
     if [[ -n "${scan_lookup[skip]}" ]]; then
         result_ref[scan_status]=skipped
+        result_ref[scan_completion]=skipped
     fi
     if [[ -n "$opt_json" ]]; then
         append_json_result "$result_name"

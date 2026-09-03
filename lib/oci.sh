@@ -560,8 +560,11 @@ function oci_tags_by_digest_from_list {
         lookup_status=$?
     fi
     rm -f "$request_headers"
-    (( lookup_status == LOOKUP_SUCCEEDED )) || return "$lookup_status"
-    printf '%s' "$tags"
+    if (( lookup_status == LOOKUP_SUCCEEDED ||
+            lookup_status == SCAN_SELECTION_EXHAUSTED )); then
+        printf '%s' "$tags"
+    fi
+    return "$lookup_status"
 }
 
 function oci_tags_by_digest {
@@ -610,12 +613,11 @@ function oci_policy_attempt_public {
     if output=$(oci_tags_by_digest_anonymously \
             "$registry" "${request_ref[repository]}" \
             "${request_ref[digest]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function oci_register_policy_attempts {

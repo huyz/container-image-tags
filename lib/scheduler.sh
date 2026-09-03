@@ -157,4 +157,8 @@ function tags_by_digest_with_rolling_pool {
                 -z "$bounded_match_found" ]]; then
         return "$LOOKUP_UNAVAILABLE"
     fi
+    if [[ "$registry_tag_scan" == any-durable &&
+            -z "$bounded_match_found" ]]; then
+        return "$SCAN_SELECTION_EXHAUSTED"
+    fi
 }

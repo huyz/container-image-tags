@@ -280,7 +280,8 @@ fully qualified SHA-256 repository digests are supported.
 
 `--json` writes one array to standard output; diagnostics go to standard error.
 Each resolved image has its input, source, repository digest, local metadata
-when available, direct tag-check status, and scan mode, status, backend, and tags.
+when available, direct tag-check status, and scan mode, status, completion,
+backend, and tags.
 Wildcard inputs can produce multiple results.
 
 Inspect `remote_tag_check.status` and `tag_scan.status`, not just the exit code:
@@ -297,7 +298,10 @@ an exhaustive scan ran. A completed `any` scan is still only a partial search.
 - `not_applicable`: the subject has no tag to check.
 
 `tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
-`skipped`. The backend values are listed below. Null references, digests,
+`skipped`. `tag_scan.completion` explains how far a requested scan got:
+`complete`, `first_match`, `durable_match`, or `exhausted`; when no scan ran it
+is `not_requested`, `declined`, or `skipped`. The backend values are listed
+below. Null references, digests,
 backends, and metadata mean that the corresponding operation did not apply or
 did not run. Consumers should ignore unknown object fields; new optional fields
 may be added without changing the major CLI version.
@@ -341,6 +345,7 @@ local image (digests and version are placeholders):
     "tag_scan": {
       "mode": "any",
       "status": "completed",
+      "completion": "first_match",
       "backend": "direct-tag-check",
       "provider_metadata": null,
       "tags": ["17"]

@@ -121,7 +121,7 @@ function gcr_tags_by_digest_from_metadata {
     matching_tags=$("$JQ" -r --arg digest "$digest" \
         '.manifest[$digest].tag[]?' <<<"$metadata")
     observed_tags=$("$JQ" -r '.manifest[].tag[]?' <<<"$metadata")
-    select_matching_tags_for_scan "$matching_tags" "$observed_tags" || true
+    select_matching_tags_for_scan "$matching_tags" "$observed_tags"
 }
 
 function gcr_tags_by_digest_anonymously {
@@ -154,12 +154,11 @@ function gcr_policy_attempt_public {
     if output=$(gcr_tags_by_digest_anonymously \
             "${request_ref[registry]}" "${request_ref[repository]}" \
             "${request_ref[digest]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function gcr_policy_attempt_google_token {
@@ -184,12 +183,11 @@ function gcr_policy_attempt_google_token {
     if output=$(gcr_tags_by_digest_with_bearer_token \
             "${request_ref[registry]}" "${request_ref[repository]}" \
             "${request_ref[digest]}" "$token"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function gcr_register_policy_attempts {

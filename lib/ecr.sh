@@ -233,7 +233,7 @@ function ecr_tags_by_digest_api {
             | unique
             | .[]
         ' <<<"$response")
-    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags"
 }
 
 function ecr_public_tags_by_digest_api {
@@ -269,7 +269,7 @@ function ecr_public_tags_by_digest_api {
             | unique
             | .[]
         ' <<<"$response")
-    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags"
 }
 
 function ecr_authenticate {
@@ -344,20 +344,18 @@ function ecr_policy_attempt_api {
     if [[ "${request_ref[registry]}" == public.ecr.aws ]]; then
         if output=$(ecr_public_tags_by_digest_api \
                 "${request_ref[repository]}" "${request_ref[digest]}"); then
-            result_ref[tags]="$output"
-            return "$LOOKUP_SUCCEEDED"
+            status=$LOOKUP_SUCCEEDED
         else
             status=$?
         fi
     elif output=$(ecr_tags_by_digest_api \
             "${request_ref[registry]}" "${request_ref[repository]}" \
             "${request_ref[digest]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function ecr_register_policy_attempts {

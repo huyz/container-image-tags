@@ -145,9 +145,12 @@ function matching_tags_through_first_durable {
     return 1
 }
 
-# Print selected matches. In any-durable mode, return 1 with matches still printed
-# if none is durable; this is a selection result, not a lookup failure.
-# Complete-metadata callers intentionally ignore it because no scan work remains.
+# Print selected matches. In any-durable mode, return the internal exhausted
+# status with matches still printed if none is durable. This is a completed
+# selection result, not a lookup failure; provider adapters translate it into
+# the public result contract.
+readonly SCAN_SELECTION_EXHAUSTED=6
+
 function select_matching_tags_for_scan {
     local matching_tags="$1"
     local observed_tags="${2-$matching_tags}"
@@ -175,7 +178,41 @@ function select_matching_tags_for_scan {
         seed_tag="$registry_direct_tag"
     fi
     matching_tags_through_first_durable \
-        "$matching_tags" "$observed_tags" "$seed_tag"
+        "$matching_tags" "$observed_tags" "$seed_tag" ||
+        return "$SCAN_SELECTION_EXHAUSTED"
+}
+
+function capture_tag_scan_result {
+    local request_name="$1"
+    local result_name="$2"
+    local tags="$3"
+    local selection_status="$4"
+    local -n request_ref="$request_name"
+    local -n result_ref="$result_name"
+
+    if (( selection_status != LOOKUP_SUCCEEDED &&
+            selection_status != SCAN_SELECTION_EXHAUSTED )); then
+        return "$selection_status"
+    fi
+    result_ref[tags]="$tags"
+    case "${request_ref[scan_mode]}" in
+    all) result_ref[completion]=complete ;;
+    any)
+        if [[ -n "$tags" ]]; then
+            result_ref[completion]=first_match
+        else
+            result_ref[completion]=exhausted
+        fi
+        ;;
+    any-durable)
+        if (( selection_status == SCAN_SELECTION_EXHAUSTED )); then
+            result_ref[completion]=exhausted
+        else
+            result_ref[completion]=durable_match
+        fi
+        ;;
+    esac
+    return "$LOOKUP_SUCCEEDED"
 }
 
 function choose_remote_tag_scan {

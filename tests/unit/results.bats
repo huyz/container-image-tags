@@ -29,6 +29,7 @@ function load_results {
     result[remote_check_digest]='sha256:full'
     result[scan_mode]=any
     result[scan_status]=completed
+    result[scan_completion]=first_match
     result[scan_backend]=oci-registry-api
     result[provider_metadata]=
     result[tags]=$'latest\n1.2.3'
@@ -36,7 +37,8 @@ function load_results {
     run result_to_json result
     assert_status 0
     assert_valid_json
-    assert_json '.tag_scan.tags == ["latest", "1.2.3"] and .subject_source == "remote"'
+    assert_json '.tag_scan.tags == ["latest", "1.2.3"] and
+        .tag_scan.completion == "first_match" and .subject_source == "remote"'
 }
 
 @test "RESULT-002 scan context is copied into the canonical result" {
@@ -45,6 +47,7 @@ function load_results {
     result_init result
     scan[result]=completed
     scan[backend]=gcr-api
+    scan[completion]=exhausted
     scan[metadata]='{"source":"provider"}'
     scan[tags]=$'stable\n2026-08-27'
 
@@ -52,4 +55,5 @@ function load_results {
     [[ "${result[scan_backend]}" == gcr-api ]]
     [[ "${result[provider_metadata]}" == '{"source":"provider"}' ]]
     [[ "${result[tags]}" == $'stable\n2026-08-27' ]]
+    [[ "${result[scan_completion]}" == exhausted ]]
 }

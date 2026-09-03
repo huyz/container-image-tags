@@ -299,6 +299,7 @@ Implement these cases in `tests/unit/common.bats`:
 | COMMON-016 | P0 | Floating channels and incomplete date-like sequences — Channel names remain non-durable case-insensitively; incomplete date-like sequences do not match |
 | COMMON-017 | P0 | Embedded hash/date matches with an incompatible observed semver precision — Hash/date classification takes precedence over semver precision; an embedded semver does not |
 | COMMON-018 | P0 | `any-durable` encounters an embedded hash or date — Results stop after and include the first tag containing the durable sequence |
+| COMMON-019 | P0 | `any-durable` exhausts only floating matches — Matches are preserved with a distinct exhausted status rather than reported as lookup failure |
 | POOL-001 | P0 | More candidates than workers — Active workers never exceed the supplied cap |
 | POOL-002 | P0 | Workers complete out of order — Matching tags are emitted in candidate order |
 | POOL-003 | P0 | `any-durable` finds a durable match — No new work is scheduled afterward; in-flight work drains |
@@ -315,6 +316,8 @@ Implement these cases in `tests/unit/common.bats`:
 | POOL-014 | P0 | `any` sees a matching floating tag — Only the first match is returned; later candidates are not scheduled |
 | POOL-015 | P0 | Worker process dies before writing its completion marker — Scheduler returns `LOOKUP_UNAVAILABLE` without hanging |
 | POOL-016 | P0 | Exhaustive scan sees a vanished candidate or a denied candidate — Not-found churn is ignored; denial remains distinguishable while matching output is preserved |
+| POOL-017 | P0 | `any-durable` sees a worker failure before finding a durable match — Partial floating matches do not become a successful bounded result |
+| POOL-018 | P0 | `any-durable` completes with only floating matches — Matches are returned with a distinct exhausted status |
 
 The stress tier repeats the concurrency contracts with varied deterministic
 delays: `STRESS-001` preserves candidate ordering, `STRESS-002` stops new work
@@ -422,6 +425,8 @@ Classification inputs must include:
 | DISPATCH-014 | P0 | Direct adapter returns through an explicit context — Status, digest, and error are copied exactly |
 | DISPATCH-015 | P0 | Reverse adapter returns through an explicit context — Result, backend, metadata, and ordered tags are copied exactly |
 | DISPATCH-016 | P0 | `any` with a confirmed floating direct tag — Context contains the direct tag and backend without invoking a reverse backend |
+| DISPATCH-017 | P0 | Registry classification — No authentication setup or filesystem writes occur |
+| DISPATCH-018 | P0 | Completed `any-durable` exhaustion — Floating matches and exhausted completion are preserved in the lookup context |
 | DISPATCH-010 | P1 | Provider metadata unsupported — Metadata remains empty/null |
 
 ## Docker Hub

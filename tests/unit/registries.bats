@@ -252,6 +252,7 @@ function assert_classification {
     dispatch_find_tags_by_digest alpine sha256:one any-durable 1.2.3 1
     [[ "${dispatch_lookup[tags]}" == 1.2.3 ]]
     [[ "${dispatch_lookup[backend]}" == direct-tag-check ]]
+    [[ "${dispatch_lookup[completion]}" == durable_match ]]
     refute_file_exists "$CALLS_DIR/scanned"
 }
 
@@ -264,6 +265,7 @@ function assert_classification {
     dispatch_find_tags_by_digest alpine sha256:one any latest 1
     [[ "${dispatch_lookup[tags]}" == latest ]]
     [[ "${dispatch_lookup[backend]}" == direct-tag-check ]]
+    [[ "${dispatch_lookup[completion]}" == first_match ]]
     refute_file_exists "$CALLS_DIR/scanned"
 }
 
@@ -274,6 +276,21 @@ function assert_classification {
 
     dispatch_find_tags_by_digest alpine sha256:one all '<none>'
     [[ -z "${dispatch_lookup[metadata]}" ]]
+}
+
+@test "DISPATCH-018 completed bounded exhaustion is preserved in lookup context" {
+    load_registry_dispatch
+    function docker_hub_tags_by_digest {
+        registry_tags=$'latest\nstable'
+        return "$SCAN_SELECTION_EXHAUSTED"
+    }
+    registry_classify alpine
+
+    dispatch_find_tags_by_digest alpine sha256:one any-durable '<none>'
+    [[ "${dispatch_lookup[result]}" == completed ]]
+    [[ "${dispatch_lookup[tags]}" == $'latest\nstable' ]]
+    [[ "${dispatch_lookup[completion]}" == exhausted ]]
+    [[ "${dispatch_lookup[backend]}" == docker-hub-api ]]
 }
 
 @test "DISPATCH-011 ACR unavailable reverse API records Skopeo fallback backend" {

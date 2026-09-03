@@ -247,13 +247,18 @@ function ghcr_continue_package_version_by_digest {
 
 function ghcr_use_package_metadata {
     local metadata="$1"
-    local package_tags
+    local package_tags status
 
     registry_metadata="$metadata"
     registry_lookup_backend=github-packages-api
     package_tags=$("$JQ" -r '.metadata.container.tags[]?' <<<"$registry_metadata")
-    registry_tags=$(select_matching_tags_for_scan \
-        "$package_tags" "$package_tags" || true)
+    if registry_tags=$(select_matching_tags_for_scan \
+            "$package_tags" "$package_tags"); then
+        status=$LOOKUP_SUCCEEDED
+    else
+        status=$?
+    fi
+    return "$status"
 }
 
 # The adaptive GHCR probe measures both remaining paths, then advertises those
@@ -264,7 +269,7 @@ function ghcr_policy_attempt_adaptive_probe {
     local result_name="$2"
     local -n request_ref="$request_name"
     local -n result_ref="$result_name"
-    local package_estimated_ms remaining_package_pages
+    local package_estimated_ms remaining_package_pages status
     local tag_count=0 parallel_jobs oci_estimated_ms oci_status tag
     local package_cost=11 oci_cost=12
     local -A oci_inventory=()
@@ -273,10 +278,15 @@ function ghcr_policy_attempt_adaptive_probe {
     ghcr_probe_package_version_by_digest \
         "${request_ref[repository]}" "${request_ref[digest]}" package_probe || return $?
     if [[ -n "${package_probe[match]}" ]]; then
-        ghcr_use_package_metadata "${package_probe[match]}"
-        result_ref[tags]="$registry_tags"
+        if ghcr_use_package_metadata "${package_probe[match]}"; then
+            status=$LOOKUP_SUCCEEDED
+        else
+            status=$?
+        fi
         result_ref[metadata]="$registry_metadata"
-        return "$LOOKUP_SUCCEEDED"
+        capture_tag_scan_result \
+            "$request_name" "$result_name" "$registry_tags" "$status"
+        return $?
     fi
     [[ -z "${package_probe[complete]}" ]] || return "$LOOKUP_NOT_FOUND"
 
@@ -296,6 +306,7 @@ function ghcr_policy_attempt_adaptive_probe {
         if [[ -n "${oci_inventory[direct_tag_durable]}" ]]; then
             result_ref[tags]="${request_ref[direct_tag]}"
             result_ref[backend]=oci-registry-api
+            result_ref[completion]=durable_match
             return "$LOOKUP_SUCCEEDED"
         fi
     else
@@ -344,10 +355,15 @@ function ghcr_policy_attempt_packages_continuation {
     if package_metadata=$(ghcr_continue_package_version_by_digest \
             "${request_ref[digest]}" "${request_ref[ghcr_package_endpoint_base]}" \
             "${request_ref[ghcr_package_next]}"); then
-        ghcr_use_package_metadata "$package_metadata"
-        result_ref[tags]="$registry_tags"
+        if ghcr_use_package_metadata "$package_metadata"; then
+            status=$LOOKUP_SUCCEEDED
+        else
+            status=$?
+        fi
         result_ref[metadata]="$registry_metadata"
-        return "$LOOKUP_SUCCEEDED"
+        capture_tag_scan_result \
+            "$request_name" "$result_name" "$registry_tags" "$status"
+        return $?
     else
         status=$?
     fi
@@ -369,12 +385,11 @@ function ghcr_policy_attempt_oci_inventory {
     notice "Selecting the anonymous OCI scan for ${request_ref[display_repository]} after comparing its measured cost with the Packages continuation."
     if output=$(oci_tags_by_digest_from_list \
             ghcr.io "${request_ref[repository]}" "${request_ref[digest]}" inventory); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 # Keep the terminal attachment in one helper so both direct and reverse
@@ -453,12 +468,11 @@ function ghcr_policy_attempt_public_oci {
     fi
     if output=$(oci_tags_by_digest_anonymously \
             ghcr.io "${request_ref[repository]}" "${request_ref[digest]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function ghcr_policy_attempt_packages {
@@ -483,11 +497,16 @@ function ghcr_policy_attempt_packages {
     if metadata=$(ghcr_package_version_by_digest \
             "${request_ref[repository]}" "${request_ref[digest]}"); then
         package_tags=$("$JQ" -r '.metadata.container.tags[]?' <<<"$metadata")
-        output=$(select_matching_tags_for_scan \
-            "$package_tags" "$package_tags" || true)
-        result_ref[tags]="$output"
+        if output=$(select_matching_tags_for_scan \
+                "$package_tags" "$package_tags"); then
+            status=$LOOKUP_SUCCEEDED
+        else
+            status=$?
+        fi
         result_ref[metadata]="$metadata"
-        return "$LOOKUP_SUCCEEDED"
+        capture_tag_scan_result \
+            "$request_name" "$result_name" "$output" "$status"
+        return $?
     else
         status=$?
     fi

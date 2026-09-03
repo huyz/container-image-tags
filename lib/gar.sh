@@ -148,7 +148,7 @@ function gar_tags_by_digest_api {
         | reduce .[] as $tag ([]; if index($tag) then . else . + [$tag] end)
         | .[]
     ' <<<"$metadata")
-    select_matching_tags_for_scan "$matching_tags" "$matching_tags" || true
+    select_matching_tags_for_scan "$matching_tags" "$matching_tags"
 }
 
 # Skopeo reports only the HTTP status for some Google registry token failures,
@@ -214,12 +214,11 @@ function gar_policy_attempt_oci_token {
     if output=$(oci_tags_by_digest_with_bearer_token \
             "${request_ref[registry]}" "${request_ref[repository]}" \
             "${request_ref[digest]}" "${request_ref[provider_token]}"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function gar_policy_attempt_api {
@@ -237,12 +236,11 @@ function gar_policy_attempt_api {
     if output=$(gar_tags_by_digest_api \
             "${request_ref[registry]}" "${request_ref[display_repository]}" \
             "${request_ref[digest]}" "$token"); then
-        result_ref[tags]="$output"
-        return "$LOOKUP_SUCCEEDED"
+        status=$LOOKUP_SUCCEEDED
     else
         status=$?
     fi
-    return "$status"
+    capture_tag_scan_result "$request_name" "$result_name" "$output" "$status"
 }
 
 function gar_policy_attempt_api_with_token {

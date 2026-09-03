@@ -147,6 +147,7 @@ function registry_find_tags_by_digest {
     context_ref[backend]="${attempt_result[backend]-}"
     context_ref[metadata]="${attempt_result[metadata]-}"
     context_ref[tags]="${attempt_result[tags]-}"
+    context_ref[completion]="${attempt_result[completion]-}"
     context_ref[skip]="${attempt_result[skip]-}"
     case "$status" in
     "$LOOKUP_SUCCEEDED") context_ref[result]=completed ;;
