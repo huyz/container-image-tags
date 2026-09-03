@@ -186,7 +186,7 @@ function check_subject_remote_tag {
         result_ref[remote_check_reference]="${result_ref[repository]}:${result_ref[local_tag]}"
         result_ref[remote_check_digest]="${result_ref[digest]}"
     elif [[ "${result_ref[local_tag]}" == '<none>' ]]; then
-        result_ref[remote_check_status]=unavailable
+        result_ref[remote_check_status]=not_applicable
     else
         remote_tag_reference="${result_ref[repository]}:${result_ref[local_tag]}"
         registry_resolve_tag_digest \

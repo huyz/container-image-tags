@@ -698,7 +698,7 @@ JSON tests must parse stdout with jq and assert fields semantically:
 | JSON-001 | P0 | stdout is one valid array and stderr remains separate. |
 | JSON-002 | P0 | one object per resolved image in input/expansion order. |
 | JSON-003 | P0 | local and remote subject fields have correct nullability. |
-| JSON-004 | P0 | direct check statuses cover resolved, match, mismatch, not-found, and unavailable. |
+| JSON-004 | P0 | direct check statuses cover resolved, match, mismatch, not-found, and not-applicable. |
 | JSON-005 | P0 | scan statuses cover completed, not-found, not-requested, declined, and skipped. |
 | JSON-006 | P0 | backend is one of `acr-api`, `direct-tag-check`, `docker-hub-api`, `ecr-api`, `gar-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, `skopeo`, or null where no scan ran. |
 | JSON-007 | P0 | backend changes to the actual fallback backend. |

@@ -190,7 +190,7 @@ function choose_remote_tag_scan {
     echo "  [a] Find all matching tags" >&2
     echo "  [n] Do not scan" >&2
     while true; do
-        printf 'Choose [1/d/a/n]: ' >&2
+        printf 'Choose [1/d/a/N]: ' >&2
         IFS= read -r choice </dev/tty || return 1
         if action=$(remote_tag_scan_choice "$choice"); then
             printf '%s\n' "$action"

@@ -287,6 +287,27 @@ Inspect `remote_tag_check.status` and `tag_scan.status`, not just the exit code:
 a successful invocation does not mean the original tag still matches, or that
 an exhaustive scan ran. A completed `any` scan is still only a partial search.
 
+`subject_source` is `local`, `remote`, or `input`. Registry `kind` is
+`docker-hub`, `ghcr`, `acr`, `gcr`, `gar`, `ecr`, or `other`.
+`remote_tag_check.status` has these values:
+
+- `resolved`: the input tag was resolved remotely and produced this digest;
+- `match` or `mismatch`: a locally known tag was checked against the registry;
+- `not_found`: the locally known tag no longer exists at the registry;
+- `not_applicable`: the subject has no tag to check.
+
+`tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
+`skipped`. The backend values are listed below. Null references, digests,
+backends, and metadata mean that the corresponding operation did not apply or
+did not run. Consumers should ignore unknown object fields; new optional fields
+may be added without changing the major CLI version.
+
+Exit status is 0 when every requested input was processed, 2 for command-line
+syntax errors, and 130 for an interrupt. Resolution, dependency, denied-access,
+and registry lookup failures use status 1. Result states such as `mismatch`,
+`not_found`, `not_applicable`, and an empty completed tag scan are represented
+in JSON and do not by themselves make the command fail.
+
 <details>
 <summary>Example JSON and scan status fields</summary>
 
@@ -328,8 +349,7 @@ local image (digests and version are placeholders):
 ]
 ```
 
-`tag_scan.status` is `completed`, `not_found`, `not_requested`, `declined`, or
-`skipped`. `tag_scan.backend` is `acr-api`, `direct-tag-check`, `docker-hub-api`,
+`tag_scan.backend` is `acr-api`, `direct-tag-check`, `docker-hub-api`,
 `ecr-api`, `gar-api`, `github-packages-api`, `gcr-api`, `oci-registry-api`, or
 `skopeo`; it is `null` when no scan ran. `provider_metadata` currently contains
 additional data for successful GitHub Packages API lookups, otherwise `null`.

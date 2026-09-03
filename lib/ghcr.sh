@@ -420,7 +420,7 @@ function choose_ghcr_fallback {
     echo "$SCRIPT_NAME: GitHub Packages API credentials with read:packages scope are unavailable." >&2
     [[ -n "$can_refresh" ]] || return 1
     echo "  [r] Run 'gh auth refresh -s read:packages', then retry" >&2
-    echo "  [s] Skip GHCR lookup and exit" >&2
+    echo "  [s] Skip this input" >&2
     while true; do
         printf "Choose [r/s]: " >&2
         IFS= read -r choice </dev/tty || return 1

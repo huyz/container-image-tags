@@ -280,7 +280,7 @@ EOF
     assert_json '.[0].subject_source == "input"'
 }
 
-@test "JSON-004 direct check statuses cover resolved match mismatch not-found and unavailable" {
+@test "JSON-004 direct check statuses cover resolved match mismatch not-found and not-applicable" {
     install_local_output_fixtures
 
     run_cli --json --tag-resolution=remote --tag-scan=never registry.example/app:stable
@@ -304,7 +304,7 @@ EOF
     export REMOTE_CODE=200 LOCAL_REPO_TAGS=
     run_cli --json --tag-resolution=local --tag-scan=never registry.example/app:stable
     assert_status 0
-    assert_json '.[0].remote_tag_check.status == "unavailable"'
+    assert_json '.[0].remote_tag_check.status == "not_applicable"'
 }
 
 @test "JSON-005 never scan reports not requested with null backend" {

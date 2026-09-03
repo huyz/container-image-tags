@@ -223,7 +223,7 @@ EOF
         "registry.example/team/app@sha256:$DIGEST"
     assert_status 0
     assert_output_contains 'Scan remote tags?'
-    assert_output_contains 'Choose [1/d/a/n]:'
+    assert_output_contains 'Choose [1/d/a/N]:'
     refute_output_contains 'Other remote tags:'
     assert_file_exists "$TEST_ROOT/tty-stdout"
     [[ $(<"$TEST_ROOT/tty-stdout") == *'Repository:'* ]] ||
