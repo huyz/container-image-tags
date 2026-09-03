@@ -322,7 +322,23 @@ function docker_hub_tags_by_digest {
         request_headers=
         error_message=$(registry_json_error_message "$response_tmp")
         case "$http_code" in
-        200) ;;
+        200)
+            if ! "$JQ" -e '
+                    type == "object" and
+                    (.results | type == "array") and
+                    (all(.results[];
+                        (.name | type == "string") and
+                        ((.digest // "") | type == "string"))) and
+                    (.next == null or (.next | type == "string")) and
+                    (.count == null or
+                        ((.count | type == "number") and
+                        .count >= 0 and .count == (.count | floor)))
+                ' "$response_tmp" >/dev/null 2>&1; then
+                debug "Docker Hub tag listing returned an invalid response for $display_repository"
+                rm -f "$response_tmp"
+                return "$LOOKUP_UNAVAILABLE"
+            fi
+            ;;
         401 | 403)
             debug "Docker Hub tag listing returned HTTP $http_code for $display_repository${error_message:+: $error_message}"
             rm -f "$response_tmp"

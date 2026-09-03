@@ -224,6 +224,13 @@ EOF
         library/app "sha256:$DIGEST" app
     assert_status "$LOOKUP_UNAVAILABLE"
     assert_output_exact ''
+
+    install_hub_response 200 not-json
+    run --separate-stderr docker_hub_tags_by_digest \
+        library/app "sha256:$DIGEST" app
+    assert_status "$LOOKUP_UNAVAILABLE"
+    assert_output_exact ''
+    assert_stderr_exact ''
 }
 
 @test "HUB-017 HTTP 429 is normalized as stopped" {
