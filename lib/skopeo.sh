@@ -78,7 +78,7 @@ function skopeo_digest_for_tag_worker {
     local tag="$2"
     local authfile="${3-}"
 
-    skopeo_digest_for_tag "$repository:$tag" "$authfile"
+    skopeo_digest_for_tag_with_status "$repository:$tag" "$authfile"
 }
 
 function skopeo_format_estimated_duration {
@@ -155,7 +155,7 @@ function skopeo_tags_by_digest {
         "$repository" "$digest" candidate_tags "$parallel_jobs" \
         'Searching registry tags with skopeo' \
         'Resolving registry tag with skopeo' \
-        skopeo_digest_for_tag_worker '' "$authfile"
+        skopeo_digest_for_tag_worker 1 "$authfile"
 }
 
 # Resolve one tag while distinguishing a missing manifest from an access

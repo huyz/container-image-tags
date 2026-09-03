@@ -190,3 +190,69 @@ EOF
     assert_status 0
     assert_stderr_exact ''
 }
+
+@test "SKOPEO-017 exhaustive scans reject partial results after an inspect failure" {
+    load_skopeo
+    registry_tag_scan=all
+    registry_direct_tag=
+    write_stub skopeo <<'EOF'
+case "$1" in
+list-tags)
+    printf '%s\n' '{"Tags":["match","failed"]}'
+    ;;
+manifest-digest)
+    if IFS= read -r manifest; then
+        printf '%s\n' sha256:wanted
+    else
+        exit 1
+    fi
+    ;;
+*)
+    reference="${!#}"
+    if [[ "$reference" == *:failed ]]; then
+        printf '%s\n' 'network failure' >&2
+        exit 1
+    fi
+    printf '%s\n' '{}'
+    ;;
+esac
+EOF
+    function skopeo_expensive_scan_preflight { return 0; }
+
+    run skopeo_tags_by_digest registry.example/app sha256:wanted
+    assert_status "$LOOKUP_UNAVAILABLE"
+    assert_output_exact match
+}
+
+@test "SKOPEO-018 exhaustive scans ignore tags that vanished during inspection" {
+    load_skopeo
+    registry_tag_scan=all
+    registry_direct_tag=
+    write_stub skopeo <<'EOF'
+case "$1" in
+list-tags)
+    printf '%s\n' '{"Tags":["match","vanished"]}'
+    ;;
+manifest-digest)
+    if IFS= read -r manifest; then
+        printf '%s\n' sha256:wanted
+    else
+        exit 1
+    fi
+    ;;
+*)
+    reference="${!#}"
+    if [[ "$reference" == *:vanished ]]; then
+        printf '%s\n' 'manifest unknown' >&2
+        exit 1
+    fi
+    printf '%s\n' '{}'
+    ;;
+esac
+EOF
+    function skopeo_expensive_scan_preflight { return 0; }
+
+    run skopeo_tags_by_digest registry.example/app sha256:wanted
+    assert_status 0
+    assert_output_exact match
+}
