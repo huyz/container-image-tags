@@ -2,6 +2,34 @@
 
 All notable changes to `container-image-tags` are documented in this file.
 
+## v0.3.0 — 2026-09-07
+
+### Added
+
+- Explicit scan-completion results in human and JSON output, distinguishing a
+  complete scan, first match, durable match, and exhausted bounded search.
+- Stronger policy-attempt contracts, runtime process-tree cleanup, live OCI
+  validation, and regression coverage for incomplete or malformed responses.
+
+### Changed
+
+- Scoped registry lookup and input-resolution state to individual requests and
+  snapshots local Docker image metadata with one inspection.
+- Consolidated Google authentication, delayed Skopeo session setup until an
+  eligible attempt needs it, and separated fast reusable sessions from
+  denial-gated credential fallbacks.
+- Improved startup dependency diagnostics, option errors, installation
+  guidance, test-plan status, and benchmark provenance.
+
+### Fixed
+
+- Prevented incomplete Skopeo scans and bounded scans without a durable match
+  from being reported as successful goal completion.
+- Rejected malformed Docker Hub tag responses and cross-repository pagination,
+  and preserved interrupted GHCR pagination as non-authoritative.
+- Prevented stale cross-input state, renderer dependence on lookup globals,
+  orphaned worker descendants, and unset AWS command failures.
+
 ## v0.2.0 — 2026-09-01
 
 ### Added
