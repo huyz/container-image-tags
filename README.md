@@ -378,8 +378,9 @@ additional data for successful GitHub Packages API lookups, otherwise `null`.
 ## Development
 
 See [releases](https://github.com/huyz/container-image-tags/releases) for release
-notes and [architecture](docs/architecture.md) for the complete per-provider
-attempt order and implementation contracts.
+notes, the [codebase reading and verification guide](docs/codebase-guide.md) for
+a guided tour and spot-check recipes, and [architecture](docs/architecture.md)
+for the complete per-provider attempt order and implementation contracts.
 
 The executable and `lib/` are Bash source. Provider adapters implement registry
 operations; a shared policy engine controls credential eligibility, attempt
