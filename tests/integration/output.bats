@@ -167,14 +167,23 @@ EOF
     assert_output_contains 'Scan completion: all candidates checked'
 }
 
-@test "OUTPUT-005 completed scan with no matches prints an explicit none marker" {
+@test "OUTPUT-005 completed scan with no matches prints a bulleted none marker" {
     install_local_output_fixtures
 
     run_cli --tag-resolution=remote --tag-scan=all \
         "registry.example/app@sha256:$DIGEST_A"
     assert_status 0
-    assert_output_contains 'Matching remote tags:'
-    assert_output_contains '<none>'
+    assert_output_contains $'Matching remote tags:\n- <none>\n\nScan completion:'
+}
+
+@test "OUTPUT-010 matching remote tags are rendered as an ordered bulleted list" {
+    install_local_output_fixtures
+    export REMOTE_TAGS='["stable","1.2.3"]'
+
+    run_cli --tag-resolution=remote --tag-scan=all \
+        "registry.example/app@sha256:$DIGEST_A"
+    assert_status 0
+    assert_output_contains $'Matching remote tags:\n- stable\n- 1.2.3\n\nScan completion:'
 }
 
 @test "OUTPUT-009 confirmed durable direct tag satisfies any-durable without reverse scan" {
@@ -185,7 +194,7 @@ EOF
     assert_status 0
     assert_output_contains 'Matching remote tags:'
     assert_output_contains 'Scan completion: stopped after a durable match'
-    assert_output_contains '1.2.3'
+    assert_output_contains $'Matching remote tags:\n- 1.2.3\n\nScan completion:'
     ! grep -aFq '/tags/list' "$CALLS_DIR/curl.args"
 
     run_cli --json --tag-resolution=local --tag-scan=any-durable \

@@ -2,6 +2,16 @@
 
 All notable changes to `container-image-tags` are documented in this file.
 
+## v0.4.0 — 2026-09-25
+
+### Changed
+
+- Render matching remote tags as an ordered bulleted list, with clearer spacing
+  between results and scan-completion details.
+- Use Homebrew's `util-linux` `getopt` on macOS, matching the current formula
+  location.
+- Add a Codebase Guide and a direct manifest-digest example to the README.
+
 ## v0.3.0 — 2026-09-07
 
 ### Added

@@ -17,6 +17,9 @@ container-image-tags postgres:17
 
 # Find every current tag at the registry for that container's image
 container-image-tags --tag-scan=all my-postgres-container
+
+# Find the tags given an image manifest digest
+container-image-tags busybox@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
 ```
 
 This is a metadata lookup tool: it does not pull image layers, start containers,
@@ -269,7 +272,8 @@ Requests go to registry/provider APIs and their authentication services.
 ## More examples
 
 ```sh
-# Query a digest directly, without requiring a local Docker.
+# Find tags for a specific digest at a specific registry,
+# without bothering to check local metadata
 container-image-tags --tag-resolution=remote \
   'ghcr.io/example/app@sha256:<64-hex-digit-digest>'
 

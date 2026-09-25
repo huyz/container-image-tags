@@ -101,8 +101,11 @@ function render_scan_human {
     case "${result_ref[scan_status]}" in
     not_requested | declined | skipped) return ;;
     esac
+    echo
     echo "Matching remote tags:"
-    printf '%s\n' "${result_ref[tags]:-<none>}"
+    printf '%s\n' "${result_ref[tags]:-<none>}" | sed 's/^/- /'
+    echo
+
     case "${result_ref[scan_completion]}" in
     complete) echo "Scan completion: all candidates checked" ;;
     first_match) echo "Scan completion: stopped after the first match" ;;
